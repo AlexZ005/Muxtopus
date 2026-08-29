@@ -19,6 +19,20 @@
 #   cycle is precisely what makes a terminal blink.
 set -uo pipefail
 
+# The frame maths counts CHARACTERS, so a UTF-8 locale is REQUIRED. Under
+# POSIX, bash's ${#s} counts BYTES -- each sparkline glyph is three of them --
+# so every framed row came up short of its own border. Measured on this box:
+# the string of three block glyphs is 9 under POSIX and 3 under C.UTF-8.
+# SSH does not forward a locale here (LC_CTYPE arrives as POSIX), so set one.
+if [ -z "${LC_ALL:-}" ]; then
+  if locale -a 2>/dev/null | grep -qx 'C.utf8'; then
+    export LC_ALL=C.utf8
+  else
+    _u=$(locale -a 2>/dev/null | grep -iE 'utf-?8' | head -1)
+    [ -n "$_u" ] && export LC_ALL="$_u"
+  fi
+fi
+
 INTERVAL=2; ONCE=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -38,6 +52,7 @@ SPARK=($'▁' $'▂' $'▃' $'▄' $'▅' $'▆' $'▇' $'█')
 declare -a PREV_IDLE PREV_TOT
 NOTICE=""; NOTICE_AT=0
 FRAME=""; W=78; COLS=80
+VER=$(cat "$(dirname "$(readlink -f "$0")")/VERSION" 2>/dev/null || echo "?")
 
 vislen() { local s; s=$(printf '%s' "$1" | sed "s/${E}\[[0-9;]*m//g"); printf '%s' "${#s}"; }
 
@@ -104,7 +119,7 @@ lane_of() { local c
 
 compose() {
   COLS=$(tput cols 2>/dev/null || echo 100)
-  [ "$COLS" -gt 112 ] && COLS=112
+  [ "$COLS" -gt 160 ] && COLS=160
   [ "$COLS" -lt 64 ] && COLS=64
   W=$(( COLS - 2 ))
   FRAME=""
@@ -128,7 +143,7 @@ compose() {
   else mode="?"; fi
 
   top "deck"
-  row "  ${D}$(uname -n) . ${cores} threads . ${mode} mode${R}"
+  row "  ${D}$(uname -n) . ${cores} threads . ${mode} mode${R}${D} . v${VER}${R}"
   row "  ${B}MEM${R}  $(gauge "$pct" 24)  ${B}${avail}${R} of ${total} GiB free   ${D}${pct}% used${R}"
   row "  ${B}SWP${R}  ${D}${swu} of ${swt} GiB zram${R}"
   row "  ${B}CPU${R}  $(cpu_spark)  ${D}load${R} ${load}   ${D}${temp}C${R}   ${D}${st}${R} ${cap}%"
