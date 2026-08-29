@@ -218,7 +218,7 @@ compose() {
   else
     FRAME+="${E}[K"$'\n'
   fi
-  FRAME+=" ${D}q${R} quit  ${D}r${R} refresh  ${D}s${R} stop extras  ${D}S${R} start  ${D}p${R} btop  ${D}?${R} help${E}[K"$'\n'
+  FRAME+=" ${D}q${R} quit  ${D}r${R} refresh  ${D}R${R} reload  ${D}s${R} stop extras  ${D}S${R} start  ${D}p${R} btop  ${D}?${R} help${E}[K"$'\n'
   FRAME+="${E}[J"
 }
 
@@ -269,7 +269,10 @@ while :; do
   fi
   case "${k:-}" in
     q|Q) break ;;
-    r|R) : ;;
+    r)   : ;;
+    # A running pane holds the copy it started with, so re-exec to pick
+    # up an edited script without respawning the tmux window.
+    R)   exec "$0" --int "$INTERVAL" ;;
     '?') helpscreen ;;
     p|P) printf '%s' "${E}[?1049l"; btop 2>/dev/null || htop 2>/dev/null || true; printf '%s' "${E}[?1049h" ;;
     s)   NOTICE="stopping desktop extras..."; NOTICE_AT=$(date +%s); paint
