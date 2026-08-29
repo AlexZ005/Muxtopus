@@ -41,7 +41,7 @@ warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '    \033[31mx %s\033[0m\n' "$*" >&2; exit 1; }
 
 # --- 1. Shell environment ----------------------------------------------------
-step "1/10  Shell environment (~/.bashrc)"
+step "1/11  Shell environment (~/.bashrc)"
 need_path=1; need_gh=1; need_node=1
 grep -q '\.local/bin'   "$HOME/.bashrc" 2>/dev/null && need_path=0
 grep -q 'GH_CONFIG_DIR'  "$HOME/.bashrc" 2>/dev/null && need_gh=0
@@ -86,14 +86,14 @@ export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh}"
 [ -d "$HOME/.local/node/bin" ] && export PATH="$HOME/.local/node/bin:$PATH"
 
 # --- 2. Preinstalled tools ---------------------------------------------------
-step "2/10  Checking preinstalled tools"
+step "2/11  Checking preinstalled tools"
 for t in git tmux curl jq python3 ssh; do
   if command -v "$t" >/dev/null 2>&1; then ok "$t $(command -v $t)"
   else warn "$t MISSING - unexpected on SteamOS"; fi
 done
 
 # --- 3. GitHub CLI -----------------------------------------------------------
-step "3/10  GitHub CLI (gh)"
+step "3/11  GitHub CLI (gh)"
 if [ -x "$BIN/gh" ]; then
   skip "gh $("$BIN/gh" --version | head -1 | awk '{print $3}') already at $BIN/gh"
 else
@@ -121,7 +121,7 @@ else
 fi
 
 # --- 4. Claude Code CLI ------------------------------------------------------
-step "4/10  Claude Code CLI"
+step "4/11  Claude Code CLI"
 if [ -x "$BIN/claude" ]; then
   skip "claude $("$BIN/claude" --version 2>/dev/null | awk '{print $1}') already at $BIN/claude"
 else
@@ -156,7 +156,7 @@ else
 fi
 
 # --- 5. tmux config ----------------------------------------------------------
-step "5/10  tmux config (shared multi-client sessions)"
+step "5/11  tmux config (shared multi-client sessions)"
 if [ -f "$HOME/.tmux.conf" ] && grep -q 'window-size latest' "$HOME/.tmux.conf"; then
   skip "~/.tmux.conf already configured"
 else
@@ -193,7 +193,7 @@ TMUXCONF
 fi
 
 # --- 6. cc launcher ----------------------------------------------------------
-step "6/10  cc launcher (shared Claude Code session)"
+step "6/11  cc launcher (shared Claude Code session)"
 cat > "$BIN/cc" <<'CCEOF'
 #!/usr/bin/env bash
 # cc -- attach to (or create) a shared Claude Code tmux session.
@@ -238,7 +238,7 @@ CCEOF
 chmod +x "$BIN/cc" && ok "$BIN/cc written"
 
 # --- 7. Repos ----------------------------------------------------------------
-step "7/10  Org repositories (~/.code/$ORG)"
+step "7/11  Org repositories (~/.code/$ORG)"
 mkdir -p "$HOME/.code/scripts"
 cat > "$HOME/.code/scripts/clone-org.sh" <<'CLONEEOF'
 #!/usr/bin/env bash
@@ -300,7 +300,7 @@ else
 fi
 
 # --- 8. SSH access -----------------------------------------------------------
-step "8/10  SSH access (remote/phone attach)"
+step "8/11  SSH access (remote/phone attach)"
 mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
 touch "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys"
 ok "~/.ssh prepared (700 / 600)"
@@ -345,7 +345,7 @@ fi
 
 # --- Summary -----------------------------------------------------------------
 # --- 9. Playwright browsers --------------------------------------------------
-step "9/10  Playwright browsers (e2e suites)"
+step "9/11  Playwright browsers (e2e suites)"
 CORE="$HOME/.code/$ORG/core"
 if ! command -v node >/dev/null 2>&1; then
   warn "node not on PATH - open a new shell, then re-run"
@@ -364,7 +364,7 @@ else
 fi
 
 # --- 10. e2e hosts mapping ---------------------------------------------------
-step "10/10  e2e hosts mapping (needs sudo)"
+step "10/11  e2e hosts mapping (needs sudo)"
 # Its own helper, because a SteamOS update REPLACES the root partition and
 # reverts /etc/hosts - after-update.sh re-runs this same script.
 if [ -x "$HOME/.code/scripts/apply-hosts.sh" ]; then
@@ -372,6 +372,26 @@ if [ -x "$HOME/.code/scripts/apply-hosts.sh" ]; then
 else
   warn "~/.code/scripts/apply-hosts.sh missing - e2e cannot resolve theprototype.app"
 fi
+
+# --- 11. Dashboard runtime ---------------------------------------------------
+step "11/11  Dashboard runtime (rich)"
+# deck-status.sh renders through rich when this venv exists and falls back to
+# its own bash renderer when it does not, so this step is an optimisation and
+# never a hard dependency. 27 MB, kept out of git.
+VENV="$HOME/.code/scripts/.venv"
+if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c 'import rich' 2>/dev/null; then
+  skip "venv already usable"
+elif ! command -v python3 >/dev/null 2>&1; then
+  warn "python3 missing - deck-status.sh will use its bash renderer"
+else
+  rm -rf "$VENV"
+  if python3 -m venv "$VENV" >/dev/null 2>&1 && "$VENV/bin/pip" install --quiet rich >/dev/null 2>&1; then
+    ok "rich installed ($(du -sh "$VENV" 2>/dev/null | cut -f1))"
+  else
+    warn "could not build the venv - deck-status.sh will use its bash renderer"
+  fi
+fi
+
 
 IP="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
 cat <<SUMMARY

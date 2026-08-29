@@ -19,6 +19,15 @@
 #   cycle is precisely what makes a terminal blink.
 set -uo pipefail
 
+# Prefer the Rich implementation: measured 12.9 ms and 2 forks per frame
+# against this file's 216 ms and 248. If the interpreter or rich is missing we
+# fall through to the bash renderer below -- the dashboard must never itself be
+# the broken thing. Placed before argument parsing so "$@" is still intact.
+_D="$(dirname "$(readlink -f "$0")")"
+if [ -x "$_D/.venv/bin/python" ] && [ -f "$_D/deck_status.py" ]    && "$_D/.venv/bin/python" -c 'import rich' 2>/dev/null; then
+  exec "$_D/.venv/bin/python" "$_D/deck_status.py" "$@"
+fi
+
 # The frame maths counts CHARACTERS, so a UTF-8 locale is REQUIRED. Under
 # POSIX, bash's ${#s} counts BYTES -- each sparkline glyph is three of them --
 # so every framed row came up short of its own border. Measured on this box:

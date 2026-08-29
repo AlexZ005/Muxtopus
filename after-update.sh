@@ -34,7 +34,7 @@ warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 
 NEEDS_SETUP=0
 
-step "1/4  Home-side tooling (should all have survived)"
+step "1/5  Home-side tooling (should all have survived)"
 for pair in "node:$HOME/.local/node/bin/node" "claude:$HOME/.local/bin/claude" \
             "cc:$HOME/.local/bin/cc" "gh:$HOME/.local/bin/gh"; do
   n="${pair%%:*}"; f="${pair#*:}"
@@ -45,14 +45,32 @@ done
 ls "$HOME/.cache/ms-playwright" 2>/dev/null | grep -q chromium- \
   && ok "Playwright browsers intact" || warn "Playwright browsers missing - see setup-deck.sh step 9"
 
-step "2/4  /etc/hosts mapping for e2e"
+step "2/5  Dashboard runtime"
+# A venv is pinned to the python it was built from, so a SteamOS update that
+# moves python3 breaks it. deck-status.sh falls back to bash either way, but
+# rebuild it here so the good renderer comes back automatically.
+VENV="$HOME/.code/scripts/.venv"
+if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c 'import rich' 2>/dev/null; then
+  ok "rich venv intact"
+elif command -v python3 >/dev/null 2>&1; then
+  rm -rf "$VENV"
+  if python3 -m venv "$VENV" >/dev/null 2>&1 && "$VENV/bin/pip" install --quiet rich >/dev/null 2>&1; then
+    ok "rich venv rebuilt"
+  else
+    warn "venv rebuild failed - deck-status.sh will use its bash renderer"
+  fi
+else
+  warn "python3 missing - deck-status.sh will use its bash renderer"
+fi
+
+step "3/5  /etc/hosts mapping for e2e"
 if [ -x "$HOME/.code/scripts/apply-hosts.sh" ]; then
   "$HOME/.code/scripts/apply-hosts.sh" || NEEDS_SETUP=1
 else
   warn "~/.code/scripts/apply-hosts.sh missing"; NEEDS_SETUP=1
 fi
 
-step "3/4  Account password (sudo + SSH)"
+step "4/5  Account password (sudo + SSH)"
 PWSTATE="$(passwd -S "$USER" 2>/dev/null | awk '{print $2}')"
 if [ "$PWSTATE" = "P" ]; then
   ok "password still set for $USER"
@@ -62,7 +80,7 @@ else
   NEEDS_SETUP=1
 fi
 
-step "4/4  sshd"
+step "5/5  sshd"
 if systemctl is-active --quiet sshd 2>/dev/null; then
   ok "sshd running"
   systemctl is-enabled --quiet sshd 2>/dev/null \
