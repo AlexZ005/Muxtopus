@@ -295,10 +295,10 @@ cmd_show() {
   # help, because logind tracks by cgroup. Over SSH the dialog therefore has to
   # be handed to the USER MANAGER via a transient scope, which outlives us.
   if [ -n "${SSH_CONNECTION:-}" ] && command -v systemd-run >/dev/null 2>&1; then
-    systemd-run --user --scope --quiet --collect       zenity --text-info --filename="$f" --title="Deck status" --width=560 --height=620 --ok-label="Back to Game Mode" >/dev/null 2>&1 &
+    systemd-run --user --scope --quiet --collect       zenity --text-info --filename="$f" --title="Deck status" --width=560 --height=620 --ok-label="Back to Game Mode" --timeout=90 >/dev/null 2>&1 &
     zpid=""
   else
-    zenity --text-info --filename="$f" --title="Deck status" --width=560 --height=620 --ok-label="Back to Game Mode" >/dev/null 2>&1 &
+    zenity --text-info --filename="$f" --title="Deck status" --width=560 --height=620 --ok-label="Back to Game Mode" --timeout=90 >/dev/null 2>&1 &
     zpid=$!
   fi
 
@@ -330,8 +330,9 @@ cmd_show() {
 case "${1:-status}" in
   status) cmd_status ;;
   show)   cmd_show ;;
+  hide)   pkill -x zenity 2>/dev/null && ok "panel closed" || skip "no panel open" ;;
   stop)   cmd_stop ;;
   start)  cmd_start ;;
   -h|--help) sed -n '2,15p' "$0" ;;
-  *) echo "usage: $(basename "$0") {status|show|stop|start}" >&2; exit 2 ;;
+  *) echo "usage: $(basename "$0") {status|show|hide|stop|start}" >&2; exit 2 ;;
 esac

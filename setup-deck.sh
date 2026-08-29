@@ -215,8 +215,19 @@ DIR="${2:-$HOME}"
 if tmux has-session -t "=$SESSION" 2>/dev/null; then
   exec tmux attach-session -t "=$SESSION"
 fi
-# 'exec bash' keeps the window alive if claude exits, so the session survives.
-exec tmux new-session -s "$SESSION" -c "$DIR" "claude $RESUME; exec bash"
+
+# A NEW session gets two windows: 0 = the live status dashboard (the landing
+# page), 1 = Claude. Attaching lands on 0, so the state of the machine is the
+# first thing you see; Ctrl-b 1 switches to Claude. Re-attaching to an
+# existing session returns you to whichever window you left, untouched.
+#
+# 'exec bash' keeps each window alive if its program exits, so a stray Ctrl-C
+# never destroys the session.
+STATUS="$HOME/.code/scripts/deck-status.sh"
+tmux new-session -d -s "$SESSION" -c "$DIR" -n status "if [ -x \"$STATUS\" ]; then \"$STATUS\"; else echo 'deck-status.sh not found'; fi; exec bash"
+tmux new-window -t "=$SESSION" -c "$DIR" -n claude "claude $RESUME; exec bash"
+tmux select-window -t "=$SESSION:0"
+exec tmux attach-session -t "=$SESSION"
 CCEOF
 chmod +x "$BIN/cc" && ok "$BIN/cc written"
 
