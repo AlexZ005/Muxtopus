@@ -161,6 +161,11 @@ if [ -f "$HOME/.tmux.conf" ] && grep -q 'window-size latest' "$HOME/.tmux.conf";
   skip "~/.tmux.conf already configured"
 else
   [ -f "$HOME/.tmux.conf" ] && cp "$HOME/.tmux.conf" "$HOME/.tmux.conf.bak"
+  if [ -f "$HOME/.code/scripts/tmux.conf" ]; then
+    # The versioned copy is canonical. The heredoc below stays as the
+    # fallback for a machine being rebuilt before ~/.code exists.
+    cp "$HOME/.code/scripts/tmux.conf" "$HOME/.tmux.conf"
+  else
   cat > "$HOME/.tmux.conf" <<'TMUXCONF'
 # Shared sessions across the Deck, phone, and other machines.
 # Size to the most recently active client, so a phone attaching with a tiny
@@ -183,6 +188,7 @@ set  -g status-left  "#[bold] #S #[default]"
 set  -g status-right " #{session_attached} client(s)  %H:%M "
 set  -g status-style "bg=colour236,fg=colour250"
 TMUXCONF
+  fi
   ok "~/.tmux.conf written"
 fi
 
