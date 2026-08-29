@@ -86,51 +86,34 @@ cmd_status() {
 # The dialog runs DETACHED so `deck-ram.sh stop` returns immediately, and Steam
 # is restarted when it exits FOR ANY REASON, including failing to appear. That
 # is the rollback: a broken dialog restores Steam rather than stranding you.
+# STOPPING STEAM IN GAME MODE DOES NOT WORK, and must not be attempted.
+#
+# MEASURED: `systemctl --user stop steam-launcher.service` never even takes
+# effect -- the unit reads `active` again within 2 seconds, with no script
+# involved, because in Game Mode Steam IS the session and the session manager
+# relaunches it. That relaunch is the same mechanism that recovers a crashed
+# Game Mode, so defeating it would mean masking a unit: a persistent system
+# change, and the one thing this machine is explicitly not to have.
+#
+# It would buy almost nothing anyway. Game Mode loads no KDE, so it already
+# sits near 19 GiB available, and stopping Steam frees ~0.2 GiB. Desktop Mode
+# is where the ~3.8 GiB actually is, and that path works.
+#
+# (An on-screen zenity dialog with a restart button was built and tested here.
+# The dialog itself works -- gamescope keeps running and zenity draws on
+# WAYLAND_DISPLAY=gamescope-0 -- but it is pointless when the thing it offers
+# to undo undoes itself in two seconds.)
 game_stop() {
-  local before avail freed runner=/tmp/deck-ram-restore.sh
-  before=$(avail_gb)
-  if ! systemctl --user is-active --quiet "$GAME_STEAM_UNIT" 2>/dev/null; then
-    skip "Steam already stopped"; return 0
-  fi
-  systemctl --user stop "$GAME_STEAM_UNIT" 2>/dev/null
-  for _ in $(seq 1 20); do
-    systemctl --user is-active --quiet "$GAME_STEAM_UNIT" 2>/dev/null || break
-    sleep 1
-  done
-  sleep 2
-  avail=$(avail_gb)
-  freed=$(awk -v a="$before" -v b="$avail" 'BEGIN{printf "%.1f", b-a}')
-  ok "Steam stopped (freed ${freed} GiB; ${avail} GiB available)"
-
-  if ! pgrep -x gamescope >/dev/null; then
-    warn "gamescope went down too - restarting Steam so you are not left blind"
-    systemctl --user start "$GAME_STEAM_UNIT"
-    return 1
-  fi
-
-  cat > /tmp/deck-ram-msg.txt <<MSG
-Steam is stopped to free memory for dev work.
-
-Available now:   ${avail} GiB      (freed ${freed} GiB)
-
-The compositor is still running - that is why you can see this.
-Nothing on disk was changed; a reboot returns to normal Game Mode.
-
-Tap the button when you want Steam back.
-Over SSH you can also run:  ~/.code/scripts/deck-ram.sh start
-MSG
-
-  cat > "$runner" <<'RUNNER'
-#!/usr/bin/env bash
-export XDG_RUNTIME_DIR=/run/user/$(id -u)
-export WAYLAND_DISPLAY=gamescope-0
-zenity --info --title='Memory freed for dev work' --width=470 --ok-label='Start Steam again' --text="$(cat /tmp/deck-ram-msg.txt)" >/dev/null 2>&1
-systemctl --user start steam-launcher.service
-RUNNER
-  chmod +x "$runner"
-  setsid bash "$runner" >/dev/null 2>&1 &
-  disown 2>/dev/null || true
-  ok "on-screen restart button shown; Steam returns when it is tapped"
+  warn "Game Mode: Steam is the session and is relaunched automatically"
+  warn "measured: the unit reads active again ~2s after a stop"
+  warn "suppressing that needs a masked unit - a persistent system change"
+  skip "little to reclaim here anyway ($(avail_gb) GiB already available)"
+  printf '
+    For real savings switch to Desktop Mode and run this there.
+'
+  printf '    Otherwise just work over SSH: Game Mode is already the leaner session.
+'
+  return 0
 }
 
 cmd_stop() {
