@@ -1,0 +1,3 @@
+# Superseded by git history (see VERSION and `git log`).
+*.bak
+*.bak-*

@@ -3,9 +3,9 @@
 # reset, reimage, or major update. Idempotent: safe to re-run any time;
 # anything already in place is reported and skipped.
 #
-#   bash ~/.code/setup-deck.sh              full run
-#   bash ~/.code/setup-deck.sh --no-ssh     skip the passwd + sshd steps
-#   bash ~/.code/setup-deck.sh --no-clone   skip cloning the org repos
+#   bash ~/.code/scripts/setup-deck.sh              full run
+#   bash ~/.code/scripts/setup-deck.sh --no-ssh     skip the passwd + sshd steps
+#   bash ~/.code/scripts/setup-deck.sh --no-clone   skip cloning the org repos
 #
 # Everything installs under $HOME, which lives on the `home` partition and is
 # NOT touched by SteamOS A/B updates. Nothing is written to / or /usr, which
@@ -41,11 +41,12 @@ warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '    \033[31mx %s\033[0m\n' "$*" >&2; exit 1; }
 
 # --- 1. Shell environment ----------------------------------------------------
-step "1/8  Shell environment (~/.bashrc)"
-need_path=1; need_gh=1
+step "1/10  Shell environment (~/.bashrc)"
+need_path=1; need_gh=1; need_node=1
 grep -q '\.local/bin'   "$HOME/.bashrc" 2>/dev/null && need_path=0
 grep -q 'GH_CONFIG_DIR'  "$HOME/.bashrc" 2>/dev/null && need_gh=0
-if [ "$need_path" = 0 ] && [ "$need_gh" = 0 ]; then
+grep -q 'local/node/bin' "$HOME/.bashrc" 2>/dev/null && need_node=0
+if [ "$need_path" = 0 ] && [ "$need_gh" = 0 ] && [ "$need_node" = 0 ]; then
   skip "already configured"
 else
   [ -f "$HOME/.bashrc" ] && cp "$HOME/.bashrc" "$HOME/.bashrc.bak"
@@ -64,25 +65,35 @@ else
       printf '%s\n' '# VSCode Flatpak redirects XDG_CONFIG_HOME; pin gh at the real config.' \
         'export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh}"'
     fi
+    if [ "$need_node" = 1 ]; then
+      echo '# Node toolchain: node/npm/npx live here, NOT in ~/.local/bin.'
+      echo '# npm and npx are /usr/bin/env node scripts and cannot start without this.'
+      echo 'case ":$PATH:" in'
+      echo '  *":$HOME/.local/node/bin:"*) ;;'
+      echo '  *) [ -d "$HOME/.local/node/bin" ] && export PATH="$HOME/.local/node/bin:$PATH" ;;'
+      echo 'esac'
+    fi
     echo
     cat "$HOME/.bashrc" 2>/dev/null
   } > "$HOME/.bashrc.new" && mv "$HOME/.bashrc.new" "$HOME/.bashrc"
   [ "$need_path" = 1 ] && ok "PATH prepended"
   [ "$need_gh"   = 1 ] && ok "GH_CONFIG_DIR prepended"
+  [ "$need_node" = 1 ] && ok "node PATH prepended"
   ok "backup at ~/.bashrc.bak"
 fi
 export PATH="$BIN:$PATH"
 export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh}"
+[ -d "$HOME/.local/node/bin" ] && export PATH="$HOME/.local/node/bin:$PATH"
 
 # --- 2. Preinstalled tools ---------------------------------------------------
-step "2/8  Checking preinstalled tools"
+step "2/10  Checking preinstalled tools"
 for t in git tmux curl jq python3 ssh; do
   if command -v "$t" >/dev/null 2>&1; then ok "$t $(command -v $t)"
   else warn "$t MISSING - unexpected on SteamOS"; fi
 done
 
 # --- 3. GitHub CLI -----------------------------------------------------------
-step "3/8  GitHub CLI (gh)"
+step "3/10  GitHub CLI (gh)"
 if [ -x "$BIN/gh" ]; then
   skip "gh $("$BIN/gh" --version | head -1 | awk '{print $3}') already at $BIN/gh"
 else
@@ -110,7 +121,7 @@ else
 fi
 
 # --- 4. Claude Code CLI ------------------------------------------------------
-step "4/8  Claude Code CLI"
+step "4/10  Claude Code CLI"
 if [ -x "$BIN/claude" ]; then
   skip "claude $("$BIN/claude" --version 2>/dev/null | awk '{print $1}') already at $BIN/claude"
 else
@@ -129,8 +140,23 @@ fi
   && ok "existing Claude credentials found (no re-login needed)" \
   || warn "no credentials yet - first 'claude' run will ask you to log in"
 
+# Wait out a usage limit and carry on, instead of stopping the session dead.
+# Applies to sessions STARTED AFTER this is written -- a running claude will
+# not pick it up, so restart any open session after a first-time run.
+CS="$HOME/.claude/settings.json"
+mkdir -p "$HOME/.claude"
+[ -f "$CS" ] || echo '{}' > "$CS"
+if [ "$(jq -r '.autoContinueAtUsageLimit // false' "$CS" 2>/dev/null)" = "true" ]; then
+  skip "autoContinueAtUsageLimit already enabled"
+elif jq '.autoContinueAtUsageLimit = true' "$CS" > "$CS.new" 2>/dev/null && mv "$CS.new" "$CS"; then
+  ok "autoContinueAtUsageLimit enabled (waits for the reset, then continues)"
+else
+  rm -f "$CS.new"
+  warn "could not update $CS - set autoContinueAtUsageLimit to true by hand"
+fi
+
 # --- 5. tmux config ----------------------------------------------------------
-step "5/8  tmux config (shared multi-client sessions)"
+step "5/10  tmux config (shared multi-client sessions)"
 if [ -f "$HOME/.tmux.conf" ] && grep -q 'window-size latest' "$HOME/.tmux.conf"; then
   skip "~/.tmux.conf already configured"
 else
@@ -161,7 +187,7 @@ TMUXCONF
 fi
 
 # --- 6. cc launcher ----------------------------------------------------------
-step "6/8  cc launcher (shared Claude Code session)"
+step "6/10  cc launcher (shared Claude Code session)"
 cat > "$BIN/cc" <<'CCEOF'
 #!/usr/bin/env bash
 # cc -- attach to (or create) a shared Claude Code tmux session.
@@ -195,8 +221,9 @@ CCEOF
 chmod +x "$BIN/cc" && ok "$BIN/cc written"
 
 # --- 7. Repos ----------------------------------------------------------------
-step "7/8  Org repositories (~/.code/$ORG)"
-cat > "$HOME/.code/clone-org.sh" <<'CLONEEOF'
+step "7/10  Org repositories (~/.code/$ORG)"
+mkdir -p "$HOME/.code/scripts"
+cat > "$HOME/.code/scripts/clone-org.sh" <<'CLONEEOF'
 #!/usr/bin/env bash
 # Clone every repo from an org into <script dir>/<org>/. Idempotent:
 # existing clones are fetched/updated instead of re-cloned.
@@ -242,21 +269,21 @@ for r in "${REPOS[@]}"; do
 done
 echo; echo "==> cloned: $cloned   updated: $updated   failed: $failed"
 CLONEEOF
-chmod +x "$HOME/.code/clone-org.sh"; ok "~/.code/clone-org.sh written"
+chmod +x "$HOME/.code/scripts/clone-org.sh"; ok "~/.code/scripts/clone-org.sh written"
 
 if [ "$DO_CLONE" = 1 ]; then
   if gh auth status >/dev/null 2>&1; then
-    bash "$HOME/.code/clone-org.sh" "$ORG" | sed 's/^/    /'
+    bash "$HOME/.code/scripts/clone-org.sh" "$ORG" | sed 's/^/    /'
   else
     warn "gh not authenticated - run 'gh auth login' (choose SSH), then:"
-    warn "   bash ~/.code/clone-org.sh $ORG"
+    warn "   bash ~/.code/scripts/clone-org.sh $ORG"
   fi
 else
   skip "--no-clone given"
 fi
 
 # --- 8. SSH access -----------------------------------------------------------
-step "8/8  SSH access (remote/phone attach)"
+step "8/10  SSH access (remote/phone attach)"
 mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
 touch "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys"
 ok "~/.ssh prepared (700 / 600)"
@@ -300,6 +327,35 @@ else
 fi
 
 # --- Summary -----------------------------------------------------------------
+# --- 9. Playwright browsers --------------------------------------------------
+step "9/10  Playwright browsers (e2e suites)"
+CORE="$HOME/.code/$ORG/core"
+if ! command -v node >/dev/null 2>&1; then
+  warn "node not on PATH - open a new shell, then re-run"
+elif [ ! -d "$CORE/node_modules" ]; then
+  warn "$CORE/node_modules missing - run npm install there first, then re-run"
+elif ls "$HOME/.cache/ms-playwright" 2>/dev/null | grep -q chromium-; then
+  skip "chromium already installed"
+else
+  # Playwright ships no SteamOS build and falls back to its ubuntu24.04 one.
+  # That binary runs fine here - verified with a real headless launch.
+  if ( cd "$CORE" && npx playwright install chromium ); then
+    ok "chromium installed"
+  else
+    warn "playwright install failed - run it by hand in $CORE"
+  fi
+fi
+
+# --- 10. e2e hosts mapping ---------------------------------------------------
+step "10/10  e2e hosts mapping (needs sudo)"
+# Its own helper, because a SteamOS update REPLACES the root partition and
+# reverts /etc/hosts - after-update.sh re-runs this same script.
+if [ -x "$HOME/.code/scripts/apply-hosts.sh" ]; then
+  "$HOME/.code/scripts/apply-hosts.sh"
+else
+  warn "~/.code/scripts/apply-hosts.sh missing - e2e cannot resolve theprototype.app"
+fi
+
 IP="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
 cat <<SUMMARY
 
