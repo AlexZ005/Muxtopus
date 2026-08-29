@@ -19,6 +19,7 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 SHELL_UNIT="plasma-plasmashell.service"
 STEAM_UNIT="app-steam@autostart.service"
+GAME_STEAM_UNIT="steam-launcher.service"   # Steam in Game Mode (NOT the compositor)
 NOTIFIER_UNIT="app-org.kde.discover.notifier@autostart.service"
 
 ok()   { printf '    \033[32m+\033[0m %s\n' "$*"; }
@@ -71,16 +72,74 @@ cmd_status() {
   step "Session"
   case "$(session_mode)" in
     desktop) ok "Desktop Mode (kwin_wayland alive; Steam is stoppable)" ;;
-    game)    warn "Game Mode - Steam IS the session here and will not be stopped" ;;
+    game)    ok   "Game Mode - stopping Steam leaves an on-screen button to restore it" ;;
     *)       warn "session mode unknown - Steam will not be stopped" ;;
   esac
+}
+
+
+# In GAME MODE Steam is the only visible client, so stopping it leaves a black
+# screen. But gamescope-session.service (the compositor) is a SEPARATE unit and
+# steam-launcher.service is only PartOf=graphical-session.target, so stopping
+# Steam alone leaves gamescope running -- there is still something to draw on.
+#
+# The dialog runs DETACHED so `deck-ram.sh stop` returns immediately, and Steam
+# is restarted when it exits FOR ANY REASON, including failing to appear. That
+# is the rollback: a broken dialog restores Steam rather than stranding you.
+game_stop() {
+  local before avail freed runner=/tmp/deck-ram-restore.sh
+  before=$(avail_gb)
+  if ! systemctl --user is-active --quiet "$GAME_STEAM_UNIT" 2>/dev/null; then
+    skip "Steam already stopped"; return 0
+  fi
+  systemctl --user stop "$GAME_STEAM_UNIT" 2>/dev/null
+  for _ in $(seq 1 20); do
+    systemctl --user is-active --quiet "$GAME_STEAM_UNIT" 2>/dev/null || break
+    sleep 1
+  done
+  sleep 2
+  avail=$(avail_gb)
+  freed=$(awk -v a="$before" -v b="$avail" 'BEGIN{printf "%.1f", b-a}')
+  ok "Steam stopped (freed ${freed} GiB; ${avail} GiB available)"
+
+  if ! pgrep -x gamescope >/dev/null; then
+    warn "gamescope went down too - restarting Steam so you are not left blind"
+    systemctl --user start "$GAME_STEAM_UNIT"
+    return 1
+  fi
+
+  cat > /tmp/deck-ram-msg.txt <<MSG
+Steam is stopped to free memory for dev work.
+
+Available now:   ${avail} GiB      (freed ${freed} GiB)
+
+The compositor is still running - that is why you can see this.
+Nothing on disk was changed; a reboot returns to normal Game Mode.
+
+Tap the button when you want Steam back.
+Over SSH you can also run:  ~/.code/scripts/deck-ram.sh start
+MSG
+
+  cat > "$runner" <<'RUNNER'
+#!/usr/bin/env bash
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export WAYLAND_DISPLAY=gamescope-0
+zenity --info --title='Memory freed for dev work' --width=470 --ok-label='Start Steam again' --text="$(cat /tmp/deck-ram-msg.txt)" >/dev/null 2>&1
+systemctl --user start steam-launcher.service
+RUNNER
+  chmod +x "$runner"
+  setsid bash "$runner" >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+  ok "on-screen restart button shown; Steam returns when it is tapped"
 }
 
 cmd_stop() {
   local before; before=$(avail_gb)
   MODE="$(session_mode)"
-  if [ "$MODE" != desktop ]; then
-    warn "not in Desktop Mode ($MODE) - leaving Steam alone; it may be the session"
+  if [ "$MODE" = game ]; then
+    game_stop; return 0
+  elif [ "$MODE" != desktop ]; then
+    warn "session mode unknown - leaving Steam alone; it may be the session"
   fi
   step "Stopping Steam"
   if [ "$MODE" != desktop ]; then
@@ -135,25 +194,36 @@ cmd_stop() {
 
 cmd_start() {
   local before; before=$(avail_gb)
-  step "Starting the Plasma shell"
-  if running "$SHELL_UNIT"; then skip "already running"
-  else systemctl --user start "$SHELL_UNIT" 2>/dev/null && ok "plasmashell started" \
-       || warn "could not start $SHELL_UNIT (try: kstart plasmashell)"; fi
+  MODE="$(session_mode)"
 
   step "Starting Steam"
-  if running "$STEAM_UNIT"; then skip "already running"
-  else systemctl --user start "$STEAM_UNIT" 2>/dev/null && ok "Steam started" \
-       || warn "could not start $STEAM_UNIT (launch it from the menu)"; fi
+  if [ "$MODE" = game ]; then
+    if systemctl --user is-active --quiet "$GAME_STEAM_UNIT"; then skip "already running"
+    elif systemctl --user start "$GAME_STEAM_UNIT" 2>/dev/null; then ok "Steam started"
+    else warn "could not start $GAME_STEAM_UNIT"; fi
+  elif running "$STEAM_UNIT"; then skip "already running"
+  elif systemctl --user start "$STEAM_UNIT" 2>/dev/null; then ok "Steam started"
+  else warn "could not start $STEAM_UNIT (launch it from the menu)"; fi
 
-  step "Starting the Discover notifier"
-  if running "$NOTIFIER_UNIT"; then skip "already running"
-  else systemctl --user start "$NOTIFIER_UNIT" 2>/dev/null && ok "notifier started" \
-       || warn "could not start $NOTIFIER_UNIT"; fi
-  # The Discover GUI itself is transient and deliberately not relaunched.
+  if [ "$MODE" = game ]; then
+    skip "Plasma shell and Discover are Desktop Mode only"
+  else
+    step "Starting the Plasma shell"
+    if running "$SHELL_UNIT"; then skip "already running"
+    elif systemctl --user start "$SHELL_UNIT" 2>/dev/null; then ok "plasmashell started"
+    else warn "could not start $SHELL_UNIT (try: kstart plasmashell)"; fi
+
+    step "Starting the Discover notifier"
+    if running "$NOTIFIER_UNIT"; then skip "already running"
+    elif systemctl --user start "$NOTIFIER_UNIT" 2>/dev/null; then ok "notifier started"
+    else warn "could not start $NOTIFIER_UNIT"; fi
+    # The Discover GUI itself is transient and deliberately not relaunched.
+  fi
 
   sleep 2
   step "Result"
   printf '    available: %s GiB -> %s GiB\n' "$before" "$(avail_gb)"
+  return 0
 }
 
 case "${1:-status}" in
