@@ -209,10 +209,129 @@ cmd_start() {
   return 0
 }
 
+
+# ---------------------------------------------------------------------------
+# `show` -- put a read-only status panel on the Deck's own screen.
+#
+# Works in BOTH sessions: zenity draws on whichever compositor is running
+# (gamescope-0 in Game Mode, the Plasma display in Desktop Mode). Nothing is
+# started or stopped, so this is safe at any time; the button just closes the
+# panel and hands the screen back.
+# ---------------------------------------------------------------------------
+
+# Total RSS of the process group owning a listening port, in MB. npm and vite
+# are separate processes, so summing the GROUP is what gives the real figure.
+port_mb() {
+  local pid pgid
+  pid=$(ss -lptnH "sport = :$1" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1)
+  [ -z "$pid" ] && return 1
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  [ -z "$pgid" ] && return 1
+  ps -eo pgid,rss --no-headers | awk -v g="$pgid" '$1==g {s+=$2} END {printf "%d", s/1024}'
+}
+
+build_report() {
+  local total avail cap st tmp mb found=0
+  total=$(awk '/^MemTotal:/     {printf "%.1f", $2/1048576}' /proc/meminfo)
+  avail=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
+
+  echo "MEMORY"
+  echo "  available    $avail GiB of $total GiB"
+  echo "  session      $(session_mode)"
+  echo
+  echo "DEV SERVERS"
+  for prt in 5173 5174 5175 5176 5177 5178 5179 5180; do
+    if mb=$(port_mb "$prt"); then
+      echo "  :$prt        $mb MB"
+      found=1
+    fi
+  done
+  [ "$found" = 0 ] && echo "  (none listening on 5173-5180)"
+  echo
+  echo "TOP MEMORY"
+  ps -eo rss,comm --no-headers --sort=-rss | head -6 | while read -r r c; do
+    echo "  $(printf '%-16s' "$c") $((r / 1024)) MB"
+  done
+  echo
+  echo "CLAUDE"
+  echo "  sessions     $(pgrep -cx claude 2>/dev/null | head -1)"
+  echo
+  echo "DISK"
+  echo "  /home        $(df -h /home --output=avail 2>/dev/null | tail -1 | tr -d ' ') free"
+  echo
+  echo "SYSTEM"
+  cap=$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -1)
+  st=$(cat /sys/class/power_supply/BAT*/status 2>/dev/null | head -1)
+  tmp=$(for z in /sys/class/thermal/thermal_zone*/temp; do cat "$z" 2>/dev/null; done | sort -rn | head -1 | awk '{printf "%.0f", $1/1000}')
+  echo "  battery      ${cap:-?}% ${st:-?}"
+  echo "  cpu temp     ${tmp:-?} C"
+  echo "  uptime       $(uptime -p 2>/dev/null | sed 's/^up //')"
+}
+
+cmd_show() {
+  local f=/tmp/deck-ram-report.txt zpid w
+  build_report > "$f"
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+  if ! command -v zenity >/dev/null 2>&1; then
+    warn "zenity not installed - printing here instead"
+    cat "$f"
+    return 0
+  fi
+
+  # In GAME MODE gamescope composites ONLY the focused app, so an ordinary
+  # window is invisible. The way over that is the same one mangoapp uses: be
+  # an X11 client on :0 and set GAMESCOPE_EXTERNAL_OVERLAY=1 on the window,
+  # which gamescope then draws OVER the game. That atom is an X11 property,
+  # so we must force the X11 backend -- leaving WAYLAND_DISPLAY set would put
+  # zenity on Wayland where the atom cannot be applied at all.
+  if [ "$(session_mode)" = game ]; then
+    unset WAYLAND_DISPLAY
+    export GDK_BACKEND=x11 DISPLAY="${DISPLAY:-:0}"
+  fi
+
+  # SteamOS sets logind KillUserProcesses=True, so anything spawned from an
+  # SSH login session is reaped the moment that session ends -- setsid does not
+  # help, because logind tracks by cgroup. Over SSH the dialog therefore has to
+  # be handed to the USER MANAGER via a transient scope, which outlives us.
+  if [ -n "${SSH_CONNECTION:-}" ] && command -v systemd-run >/dev/null 2>&1; then
+    systemd-run --user --scope --quiet --collect       zenity --text-info --filename="$f" --title="Deck status" --width=560 --height=620 --ok-label="Back to Game Mode" >/dev/null 2>&1 &
+    zpid=""
+  else
+    zenity --text-info --filename="$f" --title="Deck status" --width=560 --height=620 --ok-label="Back to Game Mode" >/dev/null 2>&1 &
+    zpid=$!
+  fi
+
+  if [ "$(session_mode)" = game ]; then
+    for _ in $(seq 1 25); do
+      w=$(for c in $(xwininfo -root -children 2>/dev/null | grep -oE '0x[0-9a-f]{5,}'); do
+            xprop -id "$c" WM_CLASS 2>/dev/null | grep -qi zenity && echo "$c" && break
+          done)
+      [ -n "$w" ] && break
+      sleep 0.3
+    done
+    if [ -n "$w" ]; then
+      xprop -id "$w" -f GAMESCOPE_EXTERNAL_OVERLAY 32c -set GAMESCOPE_EXTERNAL_OVERLAY 1 2>/dev/null \
+        && ok "panel shown as a gamescope overlay ($w)" \
+        || warn "could not set the overlay atom - the panel may be hidden behind Steam"
+    else
+      warn "no zenity window found - the panel may be hidden behind Steam"
+    fi
+  fi
+
+  if [ -n "$zpid" ]; then
+    wait "$zpid" 2>/dev/null
+    ok "panel closed"
+  else
+    ok "panel left running in its own scope (it survives this SSH session)"
+  fi
+}
+
 case "${1:-status}" in
   status) cmd_status ;;
+  show)   cmd_show ;;
   stop)   cmd_stop ;;
   start)  cmd_start ;;
   -h|--help) sed -n '2,15p' "$0" ;;
-  *) echo "usage: $(basename "$0") {status|stop|start}" >&2; exit 2 ;;
+  *) echo "usage: $(basename "$0") {status|show|stop|start}" >&2; exit 2 ;;
 esac
