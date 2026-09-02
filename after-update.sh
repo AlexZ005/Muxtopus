@@ -9,8 +9,10 @@
 #       lowerdir=/new_root/etc
 #       upperdir=/new_root/var/lib/overlays/etc/upper
 #   So anything written under /etc can revert on a major update: the deck
-#   password (/etc/shadow), sshd's config and its enable symlink, and the
-#   /etc/hosts entry the e2e suites need.
+#   password (/etc/shadow), sshd's config and its enable symlink, the
+#   /etc/hosts entry the e2e suites need, and the logind drop-in that stops
+#   tmux being killed on disconnect (whose linger marker sits on the var
+#   partition too).
 #
 # WHAT NEVER NEEDS REDOING
 #   /home is a separate partition and is untouched, so all of this survives:
@@ -34,7 +36,7 @@ warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 
 NEEDS_SETUP=0
 
-step "1/5  Home-side tooling (should all have survived)"
+step "1/6  Home-side tooling (should all have survived)"
 for pair in "node:$HOME/.local/node/bin/node" "claude:$HOME/.local/bin/claude" \
             "cc:$HOME/.local/bin/cc" "gh:$HOME/.local/bin/gh"; do
   n="${pair%%:*}"; f="${pair#*:}"
@@ -45,7 +47,7 @@ done
 ls "$HOME/.cache/ms-playwright" 2>/dev/null | grep -q chromium- \
   && ok "Playwright browsers intact" || warn "Playwright browsers missing - see setup-deck.sh step 9"
 
-step "2/5  Dashboard runtime"
+step "2/6  Dashboard runtime"
 # A venv is pinned to the python it was built from, so a SteamOS update that
 # moves python3 breaks it. deck-status.sh falls back to bash either way, but
 # rebuild it here so the good renderer comes back automatically.
@@ -63,14 +65,23 @@ else
   warn "python3 missing - deck-status.sh will use its bash renderer"
 fi
 
-step "3/5  /etc/hosts mapping for e2e"
+step "3/6  /etc/hosts mapping for e2e"
 if [ -x "$HOME/.code/scripts/apply-hosts.sh" ]; then
   "$HOME/.code/scripts/apply-hosts.sh" || NEEDS_SETUP=1
 else
   warn "~/.code/scripts/apply-hosts.sh missing"; NEEDS_SETUP=1
 fi
 
-step "4/5  Account password (sudo + SSH)"
+step "4/6  tmux session persistence"
+# The drop-in lives on the /etc overlay and the linger marker on /var, so an
+# update can revert either and silently take detached tmux sessions with it.
+if [ -x "$HOME/.code/scripts/apply-logind.sh" ]; then
+  "$HOME/.code/scripts/apply-logind.sh" || NEEDS_SETUP=1
+else
+  warn "~/.code/scripts/apply-logind.sh missing"; NEEDS_SETUP=1
+fi
+
+step "5/6  Account password (sudo + SSH)"
 PWSTATE="$(passwd -S "$USER" 2>/dev/null | awk '{print $2}')"
 if [ "$PWSTATE" = "P" ]; then
   ok "password still set for $USER"
@@ -80,7 +91,7 @@ else
   NEEDS_SETUP=1
 fi
 
-step "5/5  sshd"
+step "6/6  sshd"
 if systemctl is-active --quiet sshd 2>/dev/null; then
   ok "sshd running"
   systemctl is-enabled --quiet sshd 2>/dev/null \
