@@ -23,7 +23,14 @@ if [ -f /.flatpak-info ] && command -v flatpak-spawn >/dev/null 2>&1; then
   exec flatpak-spawn --host bash "$0" "$@"
 fi
 
-RULE="/etc/sudoers.d/99-$USER-nopasswd"
+# 'zz-' so it sorts LAST, which is the whole difference between this working
+# and not. sudo reads /etc/sudoers.d in lexical order and the LAST matching
+# rule wins, and SteamOS ships a 'wheel' file giving this account ordinary
+# password-required sudo. A '99-' prefix reads like it sorts late and does the
+# opposite -- digits come before letters -- so the first attempt installed
+# 99-deck-nopasswd, watched 'wheel' override it, and sudo went on asking.
+RULE="/etc/sudoers.d/zz-$USER-nopasswd"
+LEGACY="/etc/sudoers.d/99-$USER-nopasswd"
 # Staged under a name containing a dot: sudo's includedir SKIPS such files, so
 # a half-written or invalid staging file can never be read as policy.
 STAGE="$RULE.staging"
@@ -65,16 +72,23 @@ else
   warn "could not install $RULE"; sudo rm -f "$STAGE"; exit 1
 fi
 sudo rm -f "$STAGE"
+if [ -e "$LEGACY" ]; then
+  sudo rm -f "$LEGACY" && ok "removed the superseded $(basename "$LEGACY")"
+fi
 
-# Prove it, rather than assume it: a distribution that does not include
-# /etc/sudoers.d from its main sudoers file would take the write and change
-# nothing. sudo caches a recent authentication for a few minutes, so drop that
-# first or this reads as a pass either way.
+# Prove it, rather than assume it. Two things can take the write and change
+# nothing -- a file later in the sort order that matches the same user, or a
+# main sudoers that never includes the directory -- and neither shows up
+# anywhere except in whether sudo actually stops asking. Drop the cached
+# authentication first, or this passes on the credential the install just used.
 sudo -k
 if sudo -n true 2>/dev/null; then
   ok "verified: sudo now runs without a password"
 else
-  warn "rule installed but sudo still asks -- check that /etc/sudoers has:"
-  warn "   @includedir /etc/sudoers.d"
+  warn "rule installed but sudo still asks. In order of likelihood:"
+  warn "   - a file sorting after $(basename "$RULE") in /etc/sudoers.d matches"
+  warn "     $USER too, and the LAST match wins:"
+  ls -1 /etc/sudoers.d/ 2>/dev/null | LC_ALL=C sort | sed 's/^/       /'
+  warn "   - /etc/sudoers has no '@includedir /etc/sudoers.d' line"
   exit 1
 fi
