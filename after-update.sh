@@ -10,9 +10,9 @@
 #       upperdir=/new_root/var/lib/overlays/etc/upper
 #   So anything written under /etc can revert on a major update: the deck
 #   password (/etc/shadow), sshd's config and its enable symlink, the
-#   /etc/hosts entry the e2e suites need, and the logind drop-in that stops
-#   tmux being killed on disconnect (whose linger marker sits on the var
-#   partition too).
+#   /etc/hosts entry the e2e suites need, the sudoers.d rule for passwordless
+#   sudo, and the logind drop-in that stops tmux being killed on disconnect
+#   (whose linger marker sits on the var partition too).
 #
 # WHAT NEVER NEEDS REDOING
 #   /home is a separate partition and is untouched, so all of this survives:
@@ -36,7 +36,7 @@ warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 
 NEEDS_SETUP=0
 
-step "1/6  Home-side tooling (should all have survived)"
+step "1/7  Home-side tooling (should all have survived)"
 for pair in "node:$HOME/.local/node/bin/node" "claude:$HOME/.local/bin/claude" \
             "cc:$HOME/.local/bin/cc" "gh:$HOME/.local/bin/gh"; do
   n="${pair%%:*}"; f="${pair#*:}"
@@ -45,9 +45,9 @@ done
 [ -f "$HOME/.claude/.credentials.json" ] && ok "Claude credentials intact" \
   || warn "Claude credentials gone - run: claude  (it will ask you to log in)"
 ls "$HOME/.cache/ms-playwright" 2>/dev/null | grep -q chromium- \
-  && ok "Playwright browsers intact" || warn "Playwright browsers missing - see setup-deck.sh step 9"
+  && ok "Playwright browsers intact" || warn "Playwright browsers missing - see setup-deck.sh step 10"
 
-step "2/6  Dashboard runtime"
+step "2/7  Dashboard runtime"
 # A venv is pinned to the python it was built from, so a SteamOS update that
 # moves python3 breaks it. deck-status.sh falls back to bash either way, but
 # rebuild it here so the good renderer comes back automatically.
@@ -65,14 +65,23 @@ else
   warn "python3 missing - deck-status.sh will use its bash renderer"
 fi
 
-step "3/6  /etc/hosts mapping for e2e"
+step "3/7  Passwordless sudo"
+# First, because the two steps after it write /etc: with the rule in place they
+# run unattended even over a bare 'ssh deck bash ~/.code/scripts/after-update.sh'.
+if [ -x "$HOME/.code/scripts/apply-sudo.sh" ]; then
+  "$HOME/.code/scripts/apply-sudo.sh" || NEEDS_SETUP=1
+else
+  warn "~/.code/scripts/apply-sudo.sh missing"; NEEDS_SETUP=1
+fi
+
+step "4/7  /etc/hosts mapping for e2e"
 if [ -x "$HOME/.code/scripts/apply-hosts.sh" ]; then
   "$HOME/.code/scripts/apply-hosts.sh" || NEEDS_SETUP=1
 else
   warn "~/.code/scripts/apply-hosts.sh missing"; NEEDS_SETUP=1
 fi
 
-step "4/6  tmux session persistence"
+step "5/7  tmux session persistence"
 # The drop-in lives on the /etc overlay and the linger marker on /var, so an
 # update can revert either and silently take detached tmux sessions with it.
 if [ -x "$HOME/.code/scripts/apply-logind.sh" ]; then
@@ -81,7 +90,7 @@ else
   warn "~/.code/scripts/apply-logind.sh missing"; NEEDS_SETUP=1
 fi
 
-step "5/6  Account password (sudo + SSH)"
+step "6/7  Account password (sudo + SSH)"
 PWSTATE="$(passwd -S "$USER" 2>/dev/null | awk '{print $2}')"
 if [ "$PWSTATE" = "P" ]; then
   ok "password still set for $USER"
@@ -91,7 +100,7 @@ else
   NEEDS_SETUP=1
 fi
 
-step "6/6  sshd"
+step "7/7  sshd"
 if systemctl is-active --quiet sshd 2>/dev/null; then
   ok "sshd running"
   systemctl is-enabled --quiet sshd 2>/dev/null \
