@@ -219,6 +219,24 @@ compose() {
 
   top "system"
   row "  ${B}claude${R} ${cn} . $(human_mb "${cm:-0}")     ${B}playwright${R} ${pws}     ${B}/home${R} ${dsk} free"
+
+  # Deliberately one LINE here, not the python renderer's full panel with its
+  # context bars: this is the fallback, and a second implementation of the same
+  # table is a second thing to drift. It still has to say whether the watchdog
+  # is alive, because "no panel" and "watchdog dead" must not look the same.
+  local wdd="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog" wds wdn wdd_age
+  if [ -f "$wdd/status.tsv" ]; then
+    wdd_age=$(( $(date +%s) - $(stat -c %Y "$wdd/status.tsv" 2>/dev/null || echo 0) ))
+    wdn=$(grep -c . "$wdd/status.tsv" 2>/dev/null || echo 0)
+    if   [ "$wdd_age" -gt 75 ];       then wds="${RED}not running${R}"
+    elif [ -f "$wdd/enabled" ];       then wds="${GRN}armed${R}"
+    else                                   wds="${D}disarmed${R}"
+    fi
+    row "  ${B}watchdog${R} ${wds}   ${D}${wdn} session(s); w toggles, --status for the table${R}"
+    grep -P '\tdue\t|\tlimited\t' "$wdd/status.tsv" 2>/dev/null | while IFS=$'\t' read -r _ win _ _ _ state reset _; do
+      row "    ${YEL}${win}${R} ${state} ${reset}"
+    done
+  fi
   row "  ${B}desktop extras${R} $(human_mb "${ex:-0}")  ${D}reclaimable with s, desktop mode only${R}"
   bot
 
@@ -227,7 +245,7 @@ compose() {
   else
     FRAME+="${E}[K"$'\n'
   fi
-  FRAME+=" ${D}q${R} quit  ${D}r${R} refresh  ${D}R${R} reload  ${D}s${R} stop extras  ${D}S${R} start  ${D}p${R} btop  ${D}?${R} help${E}[K"$'\n'
+  FRAME+=" ${D}q${R} quit  ${D}r${R} refresh  ${D}R${R} reload  ${D}s${R} stop extras  ${D}S${R} start  ${D}w${R} watchdog  ${D}p${R} btop  ${D}?${R} help${E}[K"$'\n'
   FRAME+="${E}[J"
 }
 
@@ -286,6 +304,12 @@ while :; do
     p|P) printf '%s' "${E}[?1049l"; btop 2>/dev/null || htop 2>/dev/null || true; printf '%s' "${E}[?1049h" ;;
     s)   NOTICE="stopping desktop extras..."; NOTICE_AT=$(date +%s); paint
          notice_from "$HOME/.code/scripts/deck-ram.sh" stop ;;
+    w|W) if [ -f "${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog/enabled" ]; then
+           rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog/enabled"; NOTICE="watchdog disarmed"
+         else
+           mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog"
+           : > "${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog/enabled"; NOTICE="watchdog armed"
+         fi; NOTICE_AT=$(date +%s) ;;
     S)   NOTICE="starting desktop extras..."; NOTICE_AT=$(date +%s); paint
          notice_from "$HOME/.code/scripts/deck-ram.sh" start ;;
   esac

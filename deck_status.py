@@ -54,6 +54,17 @@ EXTRA_HINTS = ("plasmashell", "plasma-discover", "steamwebhelper", "Steam/ubuntu
 GREEN, YELLOW, RED = "#7ec699", "#d6b26b", "#d47f7f"
 DIM, FRAME = "grey42", "grey30"
 
+STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local" / "state")))
+WATCHDOG_DIR = STATE_HOME / "claude-watchdog"
+WATCHDOG_STATUS = WATCHDOG_DIR / "status.tsv"
+WATCHDOG_ENABLED = WATCHDOG_DIR / "enabled"
+# Both sessions on this machine run a 1M-context model. There is no way to ask
+# a running session what its window is, so this is an assumption the bar is
+# drawn against, overridable rather than hidden.
+CONTEXT_WINDOW = int(os.environ.get("CLAUDE_CONTEXT_WINDOW", "1000000"))
+# The watchdog republishes every 30s; past double that it is not running.
+STALE_AFTER = 75.0
+
 
 # --------------------------------------------------------------------------
 # collectors -- all of these read /proc; none of them fork
@@ -195,6 +206,45 @@ def ports_for(pids: list[int], inodes: dict[int, int]) -> dict[int, int]:
         except OSError:
             continue
     return out
+
+
+class ClaudeSession:
+    __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action")
+
+    def __init__(self, sid, window, pane, ver, ctx, state, reset, action):
+        self.sid, self.window, self.pane, self.ver = sid, window, pane, ver
+        self.ctx, self.state, self.reset, self.action = ctx, state, reset, action
+
+
+def claude_sessions() -> tuple[list[ClaudeSession], float]:
+    """Rows published by claude-watchdog.sh, plus the age of that file.
+
+    Reading a file rather than capturing tmux panes here is the whole reason
+    this stays cheap: the dashboard redraws every 2s at 2 forks a frame, and a
+    capture-pane per window would multiply that on a battery-powered handheld.
+    The watchdog already polls, so it publishes and this only reads.
+    """
+    try:
+        raw = WATCHDOG_STATUS.read_text()
+        age = time.time() - WATCHDOG_STATUS.stat().st_mtime
+    except OSError:
+        return [], -1.0
+    out = []
+    for line in raw.splitlines():
+        f = line.split("\t")
+        if len(f) < 7:
+            continue
+        try:
+            ctx = int(f[4])
+        except ValueError:
+            ctx = 0
+        out.append(ClaudeSession(f[0], f[1], f[2], f[3], ctx, f[5], f[6],
+                                 f[7] if len(f) > 7 else ""))
+    return out, age
+
+
+def human_tokens(n: int) -> str:
+    return f"{n / 1_000_000:.2f}M" if n >= 1_000_000 else f"{n // 1000}k" if n >= 1000 else str(n)
 
 
 def session_mode(procs: list[Proc]) -> str:
@@ -356,6 +406,42 @@ class Dashboard:
         if not groups:
             lanes.add_row(Text("—", style=DIM), "", "", Text("no dev servers running", style=DIM), "")
 
+        # ---- claude sessions ----------------------------------------------
+        sessions, sess_age = claude_sessions()
+        wd_on = WATCHDOG_ENABLED.exists()
+        wd_stale = sess_age < 0 or sess_age > STALE_AFTER
+
+        ct = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
+                   header_style=DIM, border_style=FRAME)
+        ct.add_column("WINDOW", overflow="ellipsis", ratio=1)
+        ct.add_column("CONTEXT", width=32)
+        ct.add_column("STATE", width=18)
+
+        for s in sorted(sessions, key=lambda x: -x.ctx):
+            pct = min(100.0, s.ctx * 100.0 / CONTEXT_WINDOW) if CONTEXT_WINDOW else 0.0
+            bar = Text.assemble(gauge(pct, 16), " ",
+                                (f"{pct:3.0f}%", pressure(pct)), " ",
+                                (human_tokens(s.ctx), DIM))
+            if s.state == "due":
+                st_txt = Text("due " + s.reset, style=RED)
+            elif s.state == "limited":
+                st_txt = Text("limited " + s.reset, style=YELLOW)
+            elif s.state == "working":
+                st_txt = Text("working", style=GREEN)
+            else:
+                st_txt = Text(s.state, style=DIM)
+            ct.add_row(Text(s.window), bar, st_txt)
+
+        if not sessions:
+            ct.add_row(Text("—", style=DIM),
+                       Text("no claude sessions" if not wd_stale else "watchdog not running",
+                            style=DIM), "")
+
+        wd_label = ("watchdog on", GREEN) if wd_on else ("watchdog off", DIM)
+        if wd_stale:
+            wd_label = ("watchdog not running", RED)
+        ctitle = Text.assemble(("claude", "bold"), (f" · {len(sessions)} session(s) · ", DIM), wd_label)
+
         # ---- system -------------------------------------------------------
         claude = [p for p in procs if p.comm == "claude"]
         pw = sum(p.rss_mb for p in procs if "ms-playwright" in p.cmdline)
@@ -377,7 +463,7 @@ class Dashboard:
         keys = Text.assemble(
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " stop extras  ", ("S", DIM), " start  ",
-            ("p", DIM), " btop  ", ("?", DIM), " help",
+            ("w", DIM), " watchdog  ", ("p", DIM), " btop  ", ("?", DIM), " help",
         )
         if self.notice and time.time() - self.notice_at < 8:
             keys = Text.assemble((" " + self.notice, "#c9a0dc"), "\n", keys)
@@ -388,6 +474,8 @@ class Dashboard:
             Panel(lanes,
                   title=f"[bold]lanes[/] [{DIM}]· {len(groups)} server(s) · {human_mb(total_mb)}",
                   title_align="left", border_style=FRAME, box=box.ROUNDED),
+            Panel(ct, title=ctitle, title_align="left",
+                  border_style=FRAME, box=box.ROUNDED),
             Panel(sysrow, title="[bold]system", title_align="left",
                   border_style=FRAME, box=box.ROUNDED),
             keys,
@@ -399,7 +487,22 @@ HELP = f"""
 
   [bold]q[/] quit        [bold]r[/] redraw now      [bold]R[/] reload this script
   [bold]s[/] stop extras [bold]S[/] start extras    (deck-ram.sh, desktop mode only)
-  [bold]p[/] btop        [bold]?[/] this screen
+  [bold]w[/] watchdog    [bold]p[/] btop            [bold]?[/] this screen
+
+  [{DIM}]CLAUDE[/]
+    The bar is each session's context against {CONTEXT_WINDOW // 1000}k
+    (set CLAUDE_CONTEXT_WINDOW if yours differs -- a running session cannot be
+    asked what its window is). Read from claude-watchdog.sh's published table,
+    so this panel costs no forks and no tokens.
+
+    [{YELLOW}]limited[/]  stopped at a usage limit, waiting for the reset
+    [{RED}]due[/]      the reset has passed and it is still sitting there
+
+    [bold]w[/] arms the watchdog: an IDLE window that hit a limit is prompted to
+    continue once its reset time passes, once per limit. It never types into a
+    window that is working. Disarmed, the panel still reports; nothing is sent.
+    Measured twice here: autoContinueAtUsageLimit does NOT resume after the
+    5-hour session limit, and /loop dies on its first refused wakeup.
 
   [{DIM}]LANE STATE[/]
     [{GREEN}]fresh[/]    under 6h
@@ -418,6 +521,21 @@ HELP = f"""
 def read_key(timeout: float) -> str | None:
     r, _, _ = select.select([sys.stdin], [], [], timeout)
     return sys.stdin.read(1) if r else None
+
+
+def toggle_watchdog() -> str:
+    """Arm or disarm the re-prompt. The watchdog keeps polling and publishing
+    either way -- the flag only decides whether it is allowed to TYPE into a
+    window, which is the part that spends tokens."""
+    try:
+        WATCHDOG_DIR.mkdir(parents=True, exist_ok=True)
+        if WATCHDOG_ENABLED.exists():
+            WATCHDOG_ENABLED.unlink()
+            return "watchdog off — limited windows will be left alone"
+        WATCHDOG_ENABLED.touch()
+        return "watchdog on — an idle limited window is prompted once its limit resets"
+    except OSError as exc:
+        return f"watchdog toggle failed: {exc}"
 
 
 def run_deck_ram(action: str) -> str:
@@ -481,6 +599,8 @@ def main() -> int:
                     subprocess.run(["btop"] if os.path.exists("/usr/bin/btop") else ["htop"])
                     tty.setcbreak(fd)
                     live.start()
+                elif key in ("w", "W"):
+                    dash.say(toggle_watchdog())
                 elif key == "s":
                     dash.say("stopping desktop extras…")
                     live.update(dash.build(), refresh=True)

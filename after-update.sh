@@ -36,7 +36,7 @@ warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 
 NEEDS_SETUP=0
 
-step "1/7  Home-side tooling (should all have survived)"
+step "1/8  Home-side tooling (should all have survived)"
 for pair in "node:$HOME/.local/node/bin/node" "claude:$HOME/.local/bin/claude" \
             "cc:$HOME/.local/bin/cc" "gh:$HOME/.local/bin/gh"; do
   n="${pair%%:*}"; f="${pair#*:}"
@@ -47,7 +47,7 @@ done
 ls "$HOME/.cache/ms-playwright" 2>/dev/null | grep -q chromium- \
   && ok "Playwright browsers intact" || warn "Playwright browsers missing - see setup-deck.sh step 10"
 
-step "2/7  Dashboard runtime"
+step "2/8  Dashboard runtime"
 # A venv is pinned to the python it was built from, so a SteamOS update that
 # moves python3 breaks it. deck-status.sh falls back to bash either way, but
 # rebuild it here so the good renderer comes back automatically.
@@ -65,7 +65,7 @@ else
   warn "python3 missing - deck-status.sh will use its bash renderer"
 fi
 
-step "3/7  Passwordless sudo"
+step "3/8  Passwordless sudo"
 # First, because the two steps after it write /etc: with the rule in place they
 # run unattended even over a bare 'ssh deck bash ~/.code/scripts/after-update.sh'.
 if [ -x "$HOME/.code/scripts/apply-sudo.sh" ]; then
@@ -74,14 +74,14 @@ else
   warn "~/.code/scripts/apply-sudo.sh missing"; NEEDS_SETUP=1
 fi
 
-step "4/7  /etc/hosts mapping for e2e"
+step "4/8  /etc/hosts mapping for e2e"
 if [ -x "$HOME/.code/scripts/apply-hosts.sh" ]; then
   "$HOME/.code/scripts/apply-hosts.sh" || NEEDS_SETUP=1
 else
   warn "~/.code/scripts/apply-hosts.sh missing"; NEEDS_SETUP=1
 fi
 
-step "5/7  tmux session persistence"
+step "5/8  tmux session persistence"
 # The drop-in lives on the /etc overlay and the linger marker on /var, so an
 # update can revert either and silently take detached tmux sessions with it.
 if [ -x "$HOME/.code/scripts/apply-logind.sh" ]; then
@@ -90,7 +90,7 @@ else
   warn "~/.code/scripts/apply-logind.sh missing"; NEEDS_SETUP=1
 fi
 
-step "6/7  Account password (sudo + SSH)"
+step "6/8  Account password (sudo + SSH)"
 PWSTATE="$(passwd -S "$USER" 2>/dev/null | awk '{print $2}')"
 if [ "$PWSTATE" = "P" ]; then
   ok "password still set for $USER"
@@ -100,7 +100,7 @@ else
   NEEDS_SETUP=1
 fi
 
-step "7/7  sshd"
+step "7/8  sshd"
 if systemctl is-active --quiet sshd 2>/dev/null; then
   ok "sshd running"
   systemctl is-enabled --quiet sshd 2>/dev/null \
@@ -109,6 +109,22 @@ if systemctl is-active --quiet sshd 2>/dev/null; then
 else
   warn "sshd is down - run: sudo systemctl enable --now sshd"
   NEEDS_SETUP=1
+fi
+
+step "8/8  Usage-limit watchdog"
+# The unit lives in ~/.config (home, so it survives), but its ENABLE symlink is
+# written by systemctl into the same tree -- what an update can take away is the
+# lingering it needs, which step 5 restores. Re-running --install is idempotent.
+if [ ! -x "$HOME/.code/scripts/claude-watchdog.sh" ]; then
+  warn "~/.code/scripts/claude-watchdog.sh missing"; NEEDS_SETUP=1
+elif systemctl --user is-active --quiet claude-watchdog.service 2>/dev/null; then
+  ok "watchdog running"
+  [ -f "${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog/enabled" ] \
+    && ok "watchdog armed" \
+    || warn "watchdog is DISARMED - it reports but will not prompt (w on the dashboard)"
+else
+  warn "watchdog not running - reinstalling"
+  "$HOME/.code/scripts/claude-watchdog.sh" --install | sed 's/^/    /' || NEEDS_SETUP=1
 fi
 
 echo

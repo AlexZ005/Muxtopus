@@ -41,7 +41,7 @@ warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '    \033[31mx %s\033[0m\n' "$*" >&2; exit 1; }
 
 # --- 1. Shell environment ----------------------------------------------------
-step "1/13  Shell environment (~/.bashrc)"
+step "1/14  Shell environment (~/.bashrc)"
 need_path=1; need_gh=1; need_node=1
 grep -q '\.local/bin'   "$HOME/.bashrc" 2>/dev/null && need_path=0
 grep -q 'GH_CONFIG_DIR'  "$HOME/.bashrc" 2>/dev/null && need_gh=0
@@ -86,14 +86,14 @@ export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh}"
 [ -d "$HOME/.local/node/bin" ] && export PATH="$HOME/.local/node/bin:$PATH"
 
 # --- 2. Preinstalled tools ---------------------------------------------------
-step "2/13  Checking preinstalled tools"
+step "2/14  Checking preinstalled tools"
 for t in git tmux curl jq python3 ssh; do
   if command -v "$t" >/dev/null 2>&1; then ok "$t $(command -v $t)"
   else warn "$t MISSING - unexpected on SteamOS"; fi
 done
 
 # --- 3. GitHub CLI -----------------------------------------------------------
-step "3/13  GitHub CLI (gh)"
+step "3/14  GitHub CLI (gh)"
 if [ -x "$BIN/gh" ]; then
   skip "gh $("$BIN/gh" --version | head -1 | awk '{print $3}') already at $BIN/gh"
 else
@@ -121,7 +121,7 @@ else
 fi
 
 # --- 4. Claude Code CLI ------------------------------------------------------
-step "4/13  Claude Code CLI"
+step "4/14  Claude Code CLI"
 if [ -x "$BIN/claude" ]; then
   skip "claude $("$BIN/claude" --version 2>/dev/null | awk '{print $1}') already at $BIN/claude"
 else
@@ -156,7 +156,7 @@ else
 fi
 
 # --- 5. tmux config ----------------------------------------------------------
-step "5/13  tmux config (shared multi-client sessions)"
+step "5/14  tmux config (shared multi-client sessions)"
 if [ -f "$HOME/.tmux.conf" ] && grep -q 'window-size latest' "$HOME/.tmux.conf"; then
   skip "~/.tmux.conf already configured"
 else
@@ -193,7 +193,7 @@ TMUXCONF
 fi
 
 # --- 6. cc launcher ----------------------------------------------------------
-step "6/13  cc launcher (shared Claude Code session)"
+step "6/14  cc launcher (shared Claude Code session)"
 cat > "$BIN/cc" <<'CCEOF'
 #!/usr/bin/env bash
 # cc -- attach to (or create) a shared Claude Code tmux session.
@@ -238,7 +238,7 @@ CCEOF
 chmod +x "$BIN/cc" && ok "$BIN/cc written"
 
 # --- 7. Repos ----------------------------------------------------------------
-step "7/13  Org repositories (~/.code/$ORG)"
+step "7/14  Org repositories (~/.code/$ORG)"
 mkdir -p "$HOME/.code/scripts"
 cat > "$HOME/.code/scripts/clone-org.sh" <<'CLONEEOF'
 #!/usr/bin/env bash
@@ -300,7 +300,7 @@ else
 fi
 
 # --- 8. SSH access -----------------------------------------------------------
-step "8/13  SSH access (remote/phone attach)"
+step "8/14  SSH access (remote/phone attach)"
 mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
 touch "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys"
 ok "~/.ssh prepared (700 / 600)"
@@ -344,7 +344,7 @@ else
 fi
 
 # --- 9. Passwordless sudo ----------------------------------------------------
-step "9/13  Passwordless sudo (needs the password once)"
+step "9/14  Passwordless sudo (needs the password once)"
 # Deliberately BEFORE the three steps that write /etc: with this in place they
 # run unattended, here and from after-update.sh over a bare ssh command.
 if [ "$DO_SSH" = 0 ]; then
@@ -357,7 +357,7 @@ fi
 
 # --- Summary -----------------------------------------------------------------
 # --- 10. Playwright browsers --------------------------------------------------
-step "10/13  Playwright browsers (e2e suites)"
+step "10/14  Playwright browsers (e2e suites)"
 CORE="$HOME/.code/$ORG/core"
 if ! command -v node >/dev/null 2>&1; then
   warn "node not on PATH - open a new shell, then re-run"
@@ -376,7 +376,7 @@ else
 fi
 
 # --- 11. e2e hosts mapping ---------------------------------------------------
-step "11/13  e2e hosts mapping (needs sudo)"
+step "11/14  e2e hosts mapping (needs sudo)"
 # Its own helper, because a SteamOS update REPLACES the root partition and
 # reverts /etc/hosts - after-update.sh re-runs this same script.
 if [ -x "$HOME/.code/scripts/apply-hosts.sh" ]; then
@@ -386,7 +386,7 @@ else
 fi
 
 # --- 12. tmux session persistence --------------------------------------------
-step "12/13  tmux session persistence (needs sudo)"
+step "12/14  tmux session persistence (needs sudo)"
 # Its own helper for the same reason as the hosts step: it writes /etc and /var
 # state that a SteamOS update reverts, so after-update.sh re-runs it. Without
 # it, logind kills the whole tmux server -- every window with it -- the moment
@@ -398,7 +398,7 @@ else
 fi
 
 # --- 13. Dashboard runtime ---------------------------------------------------
-step "13/13  Dashboard runtime (rich)"
+step "13/14  Dashboard runtime (rich)"
 # deck-status.sh renders through rich when this venv exists and falls back to
 # its own bash renderer when it does not, so this step is an optimisation and
 # never a hard dependency. 27 MB, kept out of git.
@@ -416,6 +416,17 @@ else
   fi
 fi
 
+
+# --- 14. Usage-limit watchdog ------------------------------------------------
+step "14/14  Usage-limit watchdog"
+# Installs a systemd USER service, so it depends on the lingering that step 12
+# turns on. Without that it would die at logout -- the same failure it exists
+# to work around, one layer down.
+if [ -x "$HOME/.code/scripts/claude-watchdog.sh" ]; then
+  "$HOME/.code/scripts/claude-watchdog.sh" --install | sed 's/^/    /'
+else
+  warn "~/.code/scripts/claude-watchdog.sh missing - a limited window will sit idle"
+fi
 
 IP="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
 cat <<SUMMARY
