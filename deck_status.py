@@ -58,6 +58,7 @@ STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local" / "state"
 WATCHDOG_DIR = STATE_HOME / "claude-watchdog"
 WATCHDOG_STATUS = WATCHDOG_DIR / "status.tsv"
 WATCHDOG_ENABLED = WATCHDOG_DIR / "enabled"
+WATCHDOG_OPTOUT = WATCHDOG_DIR / "optout"
 # Both sessions on this machine run a 1M-context model. There is no way to ask
 # a running session what its window is, so this is an assumption the bar is
 # drawn against, overridable rather than hidden.
@@ -209,11 +210,15 @@ def ports_for(pids: list[int], inodes: dict[int, int]) -> dict[int, int]:
 
 
 class ClaudeSession:
-    __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action")
+    __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action",
+                 "resumed", "spent", "cached", "optout", "model")
 
-    def __init__(self, sid, window, pane, ver, ctx, state, reset, action):
+    def __init__(self, sid, window, pane, ver, ctx, state, reset, action,
+                 resumed=0, spent=0, cached=0, optout=False, model="-"):
         self.sid, self.window, self.pane, self.ver = sid, window, pane, ver
         self.ctx, self.state, self.reset, self.action = ctx, state, reset, action
+        self.resumed, self.spent, self.cached = resumed, spent, cached
+        self.optout, self.model = optout, model
 
 
 def claude_sessions() -> tuple[list[ClaudeSession], float]:
@@ -229,22 +234,38 @@ def claude_sessions() -> tuple[list[ClaudeSession], float]:
         age = time.time() - WATCHDOG_STATUS.stat().st_mtime
     except OSError:
         return [], -1.0
+    def num(fields, i):
+        try:
+            return int(fields[i])
+        except (IndexError, ValueError):
+            return 0
+
     out = []
     for line in raw.splitlines():
         f = line.split("\t")
         if len(f) < 7:
             continue
-        try:
-            ctx = int(f[4])
-        except ValueError:
-            ctx = 0
-        out.append(ClaudeSession(f[0], f[1], f[2], f[3], ctx, f[5], f[6],
-                                 f[7] if len(f) > 7 else ""))
+        out.append(ClaudeSession(
+            f[0], f[1], f[2], f[3], num(f, 4), f[5], f[6],
+            f[7] if len(f) > 7 else "",
+            num(f, 8), num(f, 9), num(f, 10),
+            (len(f) > 11 and f[11] == "1"),
+            f[12] if len(f) > 12 else "-",
+        ))
     return out, age
 
 
 def human_tokens(n: int) -> str:
     return f"{n / 1_000_000:.2f}M" if n >= 1_000_000 else f"{n // 1000}k" if n >= 1000 else str(n)
+
+
+def when(epoch: int) -> str:
+    """A resume stamp, shown as a time today and a date before that."""
+    if not epoch:
+        return "—"
+    now = time.time()
+    return time.strftime("%H:%M" if now - epoch < 57600 else "%b %-d %H:%M",
+                         time.localtime(epoch))
 
 
 def session_mode(procs: list[Proc]) -> str:
@@ -316,10 +337,47 @@ class Dashboard:
         self.interval = interval
         self.notice: str | None = None
         self.notice_at = 0.0
+        self.cursor = ""            # session id under the row cursor
+        self.sids: list[str] = []   # last rendered order, for the arrow keys
         self.version = (SCRIPTS / "VERSION").read_text().strip() if (SCRIPTS / "VERSION").exists() else "?"
 
     def say(self, msg: str) -> None:
         self.notice, self.notice_at = msg, time.time()
+
+    def move(self, delta: int) -> None:
+        if not self.sids:
+            return
+        try:
+            i = self.sids.index(self.cursor)
+        except ValueError:
+            i = 0
+        self.cursor = self.sids[max(0, min(len(self.sids) - 1, i + delta))]
+
+    def toggle_selected(self) -> str:
+        """Opt one session out of being restarted, or back in.
+
+        The watchdog reads this file, so the choice survives a dashboard
+        restart and applies whether or not this screen is open. Absent from
+        the file means enabled, so a brand new session is covered without
+        anyone having to opt it in."""
+        if not self.cursor:
+            return "no session selected"
+        try:
+            WATCHDOG_DIR.mkdir(parents=True, exist_ok=True)
+            lines = []
+            if WATCHDOG_OPTOUT.exists():
+                lines = [l for l in WATCHDOG_OPTOUT.read_text().splitlines() if l.strip()]
+            short = self.cursor[:8]
+            if self.cursor in lines:
+                lines.remove(self.cursor)
+                msg = f"{short} will be restarted after a limit"
+            else:
+                lines.append(self.cursor)
+                msg = f"{short} will be left alone"
+            WATCHDOG_OPTOUT.write_text("".join(l + "\n" for l in lines))
+            return msg
+        except OSError as exc:
+            return f"toggle failed: {exc}"
 
     def build(self) -> Group:
         mem = meminfo()
@@ -411,17 +469,33 @@ class Dashboard:
         wd_on = WATCHDOG_ENABLED.exists()
         wd_stale = sess_age < 0 or sess_age > STALE_AFTER
 
+        ordered = sorted(sessions, key=lambda x: -x.ctx)
+        # The cursor is tracked by session id, not by row index: the table is
+        # sorted by context and that order changes under you as sessions work.
+        self.sids = [s.sid for s in ordered]
+        if self.cursor not in self.sids:
+            self.cursor = self.sids[0] if self.sids else ""
+
         ct = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
                    header_style=DIM, border_style=FRAME)
+        ct.add_column("", width=3)
         ct.add_column("WINDOW", overflow="ellipsis", ratio=1)
-        ct.add_column("CONTEXT", width=32)
-        ct.add_column("STATE", width=18)
+        ct.add_column("MODEL", width=11, overflow="ellipsis")
+        ct.add_column("CONTEXT", width=29)
+        ct.add_column("SPENT", justify="right", width=8)
+        ct.add_column("STATE", width=15)
+        ct.add_column("RESUMED", width=11)
 
-        for s in sorted(sessions, key=lambda x: -x.ctx):
+        for s in ordered:
             pct = min(100.0, s.ctx * 100.0 / CONTEXT_WINDOW) if CONTEXT_WINDOW else 0.0
-            bar = Text.assemble(gauge(pct, 16), " ",
+            bar = Text.assemble(gauge(pct, 14), " ",
                                 (f"{pct:3.0f}%", pressure(pct)), " ",
                                 (human_tokens(s.ctx), DIM))
+            mark = Text()
+            mark.append("▸" if s.sid == self.cursor else " ",
+                        style="bold #c9a0dc")
+            mark.append("✔" if not s.optout else "·",
+                        style=DIM if s.optout else GREEN)
             if s.state == "due":
                 st_txt = Text("due " + s.reset, style=RED)
             elif s.state == "limited":
@@ -430,17 +504,23 @@ class Dashboard:
                 st_txt = Text("working", style=GREEN)
             else:
                 st_txt = Text(s.state, style=DIM)
-            ct.add_row(Text(s.window), bar, st_txt)
+            ct.add_row(mark, Text(s.window), Text(s.model, style=DIM), bar,
+                       Text(human_tokens(s.spent), style=DIM), st_txt,
+                       Text(when(s.resumed), style=DIM if s.resumed else FRAME))
 
         if not sessions:
-            ct.add_row(Text("—", style=DIM),
+            ct.add_row("", Text("—", style=DIM), "",
                        Text("no claude sessions" if not wd_stale else "watchdog not running",
-                            style=DIM), "")
+                            style=DIM), "", "", "")
 
         wd_label = ("watchdog on", GREEN) if wd_on else ("watchdog off", DIM)
         if wd_stale:
             wd_label = ("watchdog not running", RED)
-        ctitle = Text.assemble(("claude", "bold"), (f" · {len(sessions)} session(s) · ", DIM), wd_label)
+        spent_all = sum(s.spent for s in sessions)
+        ctitle = Text.assemble(("claude", "bold"),
+                               (f" · {len(sessions)} session(s) · ", DIM),
+                               (human_tokens(spent_all), "bold"), (" spent · ", DIM),
+                               wd_label)
 
         # ---- system -------------------------------------------------------
         claude = [p for p in procs if p.comm == "claude"]
@@ -463,7 +543,8 @@ class Dashboard:
         keys = Text.assemble(
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " stop extras  ", ("S", DIM), " start  ",
-            ("w", DIM), " watchdog  ", ("p", DIM), " btop  ", ("?", DIM), " help",
+            ("w", DIM), " watchdog  ", ("↑↓", DIM), " pick  ", ("space", DIM), " skip  ",
+            ("p", DIM), " btop  ", ("?", DIM), " help",
         )
         if self.notice and time.time() - self.notice_at < 8:
             keys = Text.assemble((" " + self.notice, "#c9a0dc"), "\n", keys)
@@ -488,12 +569,16 @@ HELP = f"""
   [bold]q[/] quit        [bold]r[/] redraw now      [bold]R[/] reload this script
   [bold]s[/] stop extras [bold]S[/] start extras    (deck-ram.sh, desktop mode only)
   [bold]w[/] watchdog    [bold]p[/] btop            [bold]?[/] this screen
+  [bold]up/down[/] pick a session   [bold]space[/] include or skip it
 
   [{DIM}]CLAUDE[/]
-    The bar is each session's context against {CONTEXT_WINDOW // 1000}k
+    [bold]CONTEXT[/] is the session's live context against {CONTEXT_WINDOW // 1000}k
     (set CLAUDE_CONTEXT_WINDOW if yours differs -- a running session cannot be
-    asked what its window is). Read from claude-watchdog.sh's published table,
-    so this panel costs no forks and no tokens.
+    asked what its window is). [bold]SPENT[/] is that session's lifetime input +
+    cache writes + output, the parts billed at or above full rate; cache READS
+    are excluded because they cost about a tenth and would swamp the number.
+    Subagent tokens are NOT included -- they never enter the parent transcript.
+    [bold]RESUMED[/] is when the watchdog last restarted that session.
 
     [{YELLOW}]limited[/]  stopped at a usage limit, waiting for the reset
     [{RED}]due[/]      the reset has passed and it is still sitting there
@@ -503,6 +588,14 @@ HELP = f"""
     window that is working. Disarmed, the panel still reports; nothing is sent.
     Measured twice here: autoContinueAtUsageLimit does NOT resume after the
     5-hour session limit, and /loop dies on its first refused wakeup.
+
+    [bold]space[/] excludes ONE session (the [{GREEN}]checkmark[/] becomes a dot). The choice
+    lives in the watchdog's own file, so it holds whether or not this dashboard
+    is open, and survives a restart. Everything is included by default, so a
+    session started tomorrow is covered without being opted in.
+
+  [{DIM}]All of it is read from files claude-watchdog.sh publishes: no API calls,
+  no tokens, and no tmux captures from this process.[/]
 
   [{DIM}]LANE STATE[/]
     [{GREEN}]fresh[/]    under 6h
@@ -519,8 +612,28 @@ HELP = f"""
 
 
 def read_key(timeout: float) -> str | None:
+    """One keypress, with the arrows decoded.
+
+    An arrow arrives as the three bytes ESC [ A. Nothing else typed here starts
+    with ESC, and a bare Escape simply finds no follow-up inside the short
+    second poll, so it falls through as itself rather than eating the next key.
+    """
     r, _, _ = select.select([sys.stdin], [], [], timeout)
-    return sys.stdin.read(1) if r else None
+    if not r:
+        return None
+    ch = sys.stdin.read(1)
+    if ch != "\x1b":
+        return ch
+    for expect in ("[", None):
+        r, _, _ = select.select([sys.stdin], [], [], 0.05)
+        if not r:
+            return "\x1b"
+        nxt = sys.stdin.read(1)
+        if expect is None:
+            return {"A": "UP", "B": "DOWN"}.get(nxt, "\x1b")
+        if nxt != expect:
+            return "\x1b"
+    return "\x1b"
 
 
 def toggle_watchdog() -> str:
@@ -599,6 +712,12 @@ def main() -> int:
                     subprocess.run(["btop"] if os.path.exists("/usr/bin/btop") else ["htop"])
                     tty.setcbreak(fd)
                     live.start()
+                elif key == "UP":
+                    dash.move(-1)
+                elif key == "DOWN":
+                    dash.move(1)
+                elif key == " ":
+                    dash.say(dash.toggle_selected())
                 elif key in ("w", "W"):
                     dash.say(toggle_watchdog())
                 elif key == "s":

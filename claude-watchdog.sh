@@ -7,6 +7,8 @@
 #   claude-watchdog.sh --daemon      poll forever (the systemd unit uses this)
 #   claude-watchdog.sh --status      print the state table it publishes
 #   claude-watchdog.sh --on|--off    enable/disable acting (the dashboard's 'w')
+#   claude-watchdog.sh --optout ID   never prompt that session (dashboard: space)
+#   claude-watchdog.sh --optin ID    undo it
 #   claude-watchdog.sh --install     install + start the systemd user service
 #   claude-watchdog.sh --uninstall   stop and remove it
 #
@@ -35,6 +37,10 @@ STATUS="$STATE_DIR/status.tsv"
 PROMPTED="$STATE_DIR/prompted"
 LOG="$STATE_DIR/log"
 MSGFILE="$STATE_DIR/message"
+# Per-session opt-out, one session id per line. ABSENT MEANS ENABLED, so a
+# session that has never been touched is covered without anyone opting in.
+OPTOUT="$STATE_DIR/optout"
+TOKDIR="$STATE_DIR/tokens"
 
 DEFAULT_MSG="The usage limit has reset. Continue from where you left off."
 INTERVAL="${WATCHDOG_INTERVAL:-30}"
@@ -53,8 +59,15 @@ case "${1:---once}" in
   --status)  [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
   --on)      : > "$ENABLED"; echo "watchdog enabled"; exit 0 ;;
   --off)     rm -f "$ENABLED"; echo "watchdog disabled"; exit 0 ;;
+  --optout)  [ -n "${2:-}" ] || { echo "need a session id" >&2; exit 2; }
+             grep -qxF "$2" "$OPTOUT" 2>/dev/null || printf '%s\n' "$2" >> "$OPTOUT"
+             echo "watchdog will leave $2 alone"; exit 0 ;;
+  --optin)   [ -n "${2:-}" ] || { echo "need a session id" >&2; exit 2; }
+             if [ -f "$OPTOUT" ]; then grep -vxF "$2" "$OPTOUT" > "$OPTOUT.tmp" || true
+                                       mv "$OPTOUT.tmp" "$OPTOUT"; fi
+             echo "watchdog will resume $2"; exit 0 ;;
   --install|--uninstall) MODE="${1#--}" ;;
-  -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
   *) echo "unknown option: $1" >&2; exit 2 ;;
 esac
 
@@ -149,6 +162,56 @@ context_tokens() {
   printf '%s' "${v:-0}"
 }
 
+# Lifetime tokens for a session, scanned INCREMENTALLY: the byte offset and the
+# running totals are cached, so only bytes appended since the last poll are
+# read. The first sight of a session costs one full scan (~1-2s on a 15 MB
+# transcript); every poll after it reads a few KB.
+#
+# Transcripts are append-only whole lines, so the previous size is a line
+# boundary. A poll that lands mid-write starts mid-line, and that one record is
+# skipped -- worth knowing, not worth a lock.
+#
+# SPENT is input + cache writes + output: the parts billed at or above full
+# rate. Cache READS are counted separately because they are ~10% of the price,
+# and lumping them in makes an efficient long session look ruinous.
+token_totals() {
+  local sid="$1" f="$2" cache="$TOKDIR/$sid"
+  local off=0 spent=0 rd=0 size add_s add_r
+  mkdir -p "$TOKDIR"
+  [ -f "$cache" ] && read -r off spent rd < "$cache" 2>/dev/null
+  off="${off:-0}"; spent="${spent:-0}"; rd="${rd:-0}"
+  size="$(stat -c %s "$f" 2>/dev/null || echo 0)"
+  if [ "$size" -lt "$off" ]; then off=0; spent=0; rd=0; fi   # replaced/truncated
+  if [ "$size" -gt "$off" ]; then
+    read -r add_s add_r < <(
+      tail -c +$(( off + 1 )) "$f" 2>/dev/null | grep '"usage"' \
+        | jq -r '[ (.message.usage.input_tokens // 0)
+                  + (.message.usage.cache_creation_input_tokens // 0)
+                  + (.message.usage.output_tokens // 0),
+                  (.message.usage.cache_read_input_tokens // 0) ] | @tsv' 2>/dev/null \
+        | awk -F'\t' '{a+=$1; b+=$2} END{printf "%d %d", a+0, b+0}')
+    spent=$(( spent + ${add_s:-0} )); rd=$(( rd + ${add_r:-0} ))
+    printf '%s %s %s\n' "$size" "$spent" "$rd" > "$cache"
+  fi
+  printf '%s %s' "$spent" "$rd"
+}
+
+# Last time we prompted this session, as an epoch. The prompted file is the
+# dedupe ledger and now carries the moment too, so one file answers both
+# "have we already handled this limit" and "when did it last get restarted".
+last_resumed() {
+  awk -F'\t' -v s="$1" '$1==s && $3!="" {v=$3} END{print (v?v:"-")}' "$PROMPTED" 2>/dev/null || echo -
+}
+
+model_of() {
+  local f="$1" m
+  m="$(tail -c 400000 "$f" 2>/dev/null | grep '"usage"' | tail -5 \
+       | jq -r '.message.model // empty' 2>/dev/null \
+       | grep -v '^<' | tail -1)"
+  # claude-opus-4-8 -> opus-4-8; the vendor prefix is the same on every row.
+  printf '%s' "${m#claude-}"
+}
+
 pass() {
   local enabled=0; [ -f "$ENABLED" ] && enabled=1
   local msg; msg="$(head -1 "$MSGFILE" 2>/dev/null)"; msg="${msg:-$DEFAULT_MSG}"
@@ -156,6 +219,7 @@ pass() {
   local tmp="$STATUS.tmp"; : > "$tmp"
 
   local f pid sid pane paneid ver st cwd tr ctx name text reset epoch state acted
+  local spent rd resumed model optout
   for f in "$HOME"/.claude/sessions/*.json; do
     [ -f "$f" ] || continue
     pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
@@ -167,8 +231,15 @@ pass() {
     [ -n "$sid" ] || continue
 
     paneid="${pane##*.}"                            # claude:@1.%1 -> %1
-    ctx=0; tr="$(transcript_of "$sid")" && ctx="$(context_tokens "$tr")"
-    ctx="${ctx:-0}"
+    ctx=0; spent=0; rd=0; model="-"
+    if tr="$(transcript_of "$sid")"; then
+      ctx="$(context_tokens "$tr")"
+      read -r spent rd < <(token_totals "$sid" "$tr")
+      model="$(model_of "$tr")"
+    fi
+    ctx="${ctx:-0}"; spent="${spent:-0}"; rd="${rd:-0}"; model="${model:--}"
+    resumed="$(last_resumed "$sid")"
+    optout=0; grep -qxF "$sid" "$OPTOUT" 2>/dev/null && optout=1
 
     name="-"; text=""
     if [ -n "$paneid" ]; then
@@ -198,8 +269,11 @@ pass() {
 
     acted=""
     if [ "$state" = "due" ]; then
-      if grep -qx "$sid	$epoch" "$PROMPTED" 2>/dev/null; then
+      if awk -F'\t' -v s="$sid" -v e="$epoch" '$1==s && $2==e{f=1} END{exit !f}' \
+           "$PROMPTED" 2>/dev/null; then
         acted="already-prompted"; state="limited"
+      elif [ "$optout" = 1 ]; then
+        acted="opted-out"
       elif [ "$enabled" != 1 ]; then
         acted="watchdog-off"
       elif [ "$DRY" = 1 ]; then
@@ -208,21 +282,24 @@ pass() {
         tmux send-keys -t "$paneid" "$msg" 2>/dev/null
         sleep 1
         tmux send-keys -t "$paneid" Enter 2>/dev/null
-        printf '%s\t%s\n' "$sid" "$epoch" >> "$PROMPTED"
-        acted="prompted"
+        printf '%s\t%s\t%s\n' "$sid" "$epoch" "$now" >> "$PROMPTED"
+        acted="prompted"; resumed="$now"
         log "prompted ${sid:0:8} in $name (pane $paneid) after reset $reset"
         state="working"
       fi
     fi
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "${sid:0:8}" "$name" "$paneid" "$ver" "$ctx" "$state" "$reset" "$acted" >> "$tmp"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$sid" "$name" "$paneid" "$ver" "$ctx" "$state" "$reset" "$acted" \
+      "$resumed" "$spent" "$rd" "$optout" "$model" >> "$tmp"
   done
 
   mv "$tmp" "$STATUS"
   if [ "$DRY" = 1 ]; then
-    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\n'; cat "$STATUS"; } \
-      | column -t -s $'\t'
+    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\n'
+      awk -F'\t' 'BEGIN{OFS="\t"} {$1=substr($1,1,8);
+        if ($9!="-" && $9!="") $9=strftime("%m-%d %H:%M",$9); print}' "$STATUS"
+    } | column -t -s $'\t'
   fi
   return 0
 }
