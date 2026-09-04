@@ -60,6 +60,7 @@ WATCHDOG_STATUS = WATCHDOG_DIR / "status.tsv"
 WATCHDOG_ENABLED = WATCHDOG_DIR / "enabled"
 WATCHDOG_OPTOUT = WATCHDOG_DIR / "optout"
 WATCHDOG_REPOS = WATCHDOG_DIR / "repos.tsv"
+WATCHDOG_USAGE = WATCHDOG_DIR / "usage.tsv"
 # Both sessions on this machine run a 1M-context model. There is no way to ask
 # a running session what its window is, so this is an assumption the bar is
 # drawn against, overridable rather than hidden.
@@ -269,6 +270,69 @@ def opted_out() -> set[str]:
         return set()
 
 
+def usage_limits() -> dict[str, str]:
+    """The last reading claude-usage.sh took. Never scraped from here: that
+    costs a throwaway session and ~4s, which has no business on a 2s frame."""
+    out: dict[str, str] = {}
+    try:
+        for line in WATCHDOG_USAGE.read_text().splitlines():
+            k, _, v = line.partition("\t")
+            out[k] = v
+    except OSError:
+        pass
+    return out
+
+
+def usage_rows() -> list[Text]:
+    """Three lines for the header's right edge, or one saying how to get them."""
+    u = usage_limits()
+    if not u.get("at"):
+        return [Text("usage unknown", style=DIM), Text("press u to read it", style=DIM), Text()]
+
+    def pct(key: str) -> float:
+        try:
+            return float(u.get(key) or 0)
+        except ValueError:
+            return 0.0
+
+    def row(label: str, pkey: str, rkey: str, tail: str = "") -> Text:
+        v = u.get(pkey) or "?"
+        t = Text()
+        t.append(f"{label} ", style=DIM)
+        t.append(f"{v}%", style=pressure(pct(pkey)))
+        if u.get(rkey):
+            t.append(f" · resets {u[rkey]}", style=DIM)
+        if tail:
+            t.append(tail, style=DIM)
+        return t
+
+    try:
+        seen = time.strftime("%H:%M", time.localtime(int(u["at"])))
+    except (ValueError, KeyError):
+        seen = "?"
+    model = (u.get("model") or "model").capitalize()
+    return [
+        row("Session", "session_pct", "session_reset"),
+        row("Week", "week_pct", "week_reset"),
+        row(model, "model_pct", "", f" · read {seen}"),
+    ]
+
+
+def refresh_usage() -> str:
+    """Fire the scrape and return immediately -- it spawns a Claude session and
+    takes a few seconds, and blocking the frame for that would freeze the whole
+    dashboard. The panel picks the result up on a later frame."""
+    script = SCRIPTS / "claude-usage.sh"
+    if not script.exists():
+        return "claude-usage.sh not found"
+    try:
+        subprocess.Popen([str(script), "--refresh"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return "reading usage limits…"
+    except OSError as exc:
+        return f"usage refresh failed: {exc}"
+
+
 def dirty_repos() -> list[tuple[str, int]]:
     """(name, changed files) for every repo the watchdog found dirty."""
     out = []
@@ -426,20 +490,27 @@ class Dashboard:
         power = {"Charging": "chg", "Discharging": "bat"}.get(status, "ac")
 
         # ---- header -------------------------------------------------------
-        head = Table.grid(padding=(0, 1))
+        # Machine on the left, account limits on the right: they are the two
+        # ceilings a long run can hit, and neither is much use without the other.
+        urows = usage_rows()
+        head = Table.grid(padding=(0, 1), expand=True)
         head.add_column(width=5)
-        head.add_column()
+        head.add_column(ratio=1)
+        head.add_column(justify="right", width=34)
         head.add_row(Text("MEM", style="bold"),
                      Text.assemble(gauge(used_pct), "  ",
                                    (f"{avail:.1f}", "bold"), f" of {total:.1f} GiB free   ",
-                                   (f"{used_pct:.0f}% used", DIM)))
+                                   (f"{used_pct:.0f}% used", DIM)),
+                     urows[0])
         head.add_row(Text("SWP", style="bold"),
-                     Text(f"{sw_used:.1f} of {sw_total:.1f} GiB zram", style=DIM))
+                     Text(f"{sw_used:.1f} of {sw_total:.1f} GiB zram", style=DIM),
+                     urows[1])
         head.add_row(Text("CPU", style="bold"),
                      Text.assemble(sparkline(self.cpu.sample()), "  ",
                                    ("load ", DIM), load, "   ",
                                    (f"{hottest_c()}C", DIM), "   ",
-                                   (power + " ", DIM), f"{bat}%"))
+                                   (power + " ", DIM), f"{bat}%"),
+                     urows[2])
 
         subtitle = f"{os.uname().nodename} · {len(os.sched_getaffinity(0))} threads · {mode} mode · v{self.version}"
 
@@ -606,7 +677,7 @@ class Dashboard:
         keys = Text.assemble(
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " stop extras  ", ("S", DIM), " start  ",
-            ("w", DIM), " watchdog  ", ("↑↓", DIM), " pick  ", ("space", DIM), " skip  ",
+            ("w", DIM), " watchdog  ", ("u", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("space", DIM), " skip  ",
             ("p", DIM), " btop  ", ("?", DIM), " help",
         )
         if self.notice and time.time() - self.notice_at < 8:
@@ -632,7 +703,20 @@ HELP = f"""
   [bold]q[/] quit        [bold]r[/] redraw now      [bold]R[/] reload this script
   [bold]s[/] stop extras [bold]S[/] start extras    (deck-ram.sh, desktop mode only)
   [bold]w[/] watchdog    [bold]p[/] btop            [bold]?[/] this screen
-  [bold]up/down[/] pick a session   [bold]space[/] include or skip it
+  [bold]u[/] read usage limits      [bold]up/down[/] pick   [bold]space[/] include or skip
+
+  [{DIM}]USAGE LIMITS (top right)[/]
+    The only numbers here that cannot be computed locally. Claude Code has no
+    usage subcommand and no file holding live limit state, so [bold]u[/] runs
+    claude-usage.sh, which starts a throwaway session, sends /usage, reads the
+    pane and kills it -- about four seconds, no turn taken. It is ON DEMAND for
+    that reason, and the third line carries the time it was read so a stale
+    number cannot pass for a current one.
+
+    The same values are available to scripts and to prompts:
+      claude-usage.sh --brief | --json | --session-pct | --week-pct
+      claude-usage.sh --ensure 15     refresh only if older than 15 minutes
+    Every reading is appended to usage.log with a timestamp.
 
   [{DIM}]CLAUDE[/]
     [bold]CONTEXT[/] is the session's live context against {CONTEXT_WINDOW // 1000}k
@@ -785,6 +869,10 @@ def main() -> int:
                     subprocess.run(["btop"] if os.path.exists("/usr/bin/btop") else ["htop"])
                     tty.setcbreak(fd)
                     live.start()
+                elif key in ("u", "U"):
+                    dash.say(refresh_usage())
+                elif key in ("u", "U"):
+                    dash.say(refresh_usage())
                 elif key == "UP":
                     dash.move(-1)
                 elif key == "DOWN":

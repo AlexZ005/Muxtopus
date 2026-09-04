@@ -260,6 +260,11 @@ pass() {
     ver="$(jq -r '.version // "?"' "$f")"
     st="$(jq -r '.status // "?"' "$f")"
     [ -n "$sid" ] || continue
+    # claude-usage.sh's throwaway probe lives in its own tmux session. It is a
+    # real claude process, so it would otherwise be listed and -- worse -- be
+    # eligible for a restart prompt, turning a read-only measurement into a
+    # session that spends tokens.
+    case "$pane" in cc-usage:*) continue ;; esac
 
     paneid="${pane##*.}"                            # claude:@1.%1 -> %1
     ctx=0; spent=0; rd=0; model="-"
