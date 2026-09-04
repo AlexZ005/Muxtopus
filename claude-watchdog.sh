@@ -41,6 +41,11 @@ MSGFILE="$STATE_DIR/message"
 # session that has never been touched is covered without anyone opting in.
 OPTOUT="$STATE_DIR/optout"
 TOKDIR="$STATE_DIR/tokens"
+REPOS="$STATE_DIR/repos.tsv"
+REPOS_AT="$STATE_DIR/repos.at"
+# Working trees change far more slowly than sessions do, and each one costs a
+# git fork, so the repo sweep runs on its own slower clock.
+REPO_EVERY=120
 
 DEFAULT_MSG="The usage limit has reset. Continue from where you left off."
 INTERVAL="${WATCHDOG_INTERVAL:-30}"
@@ -102,6 +107,10 @@ WantedBy=default.target
 UNITEOF
   systemctl --user daemon-reload
   systemctl --user enable --now claude-watchdog.service >/dev/null 2>&1
+  # RESTART, not just enable: a running daemon is a bash loop holding the copy
+  # of this script it parsed at start, so `enable --now` on an already-active
+  # unit would leave an edited watchdog unused. Same reason deck-status has R.
+  systemctl --user restart claude-watchdog.service >/dev/null 2>&1
   # Armed on install: watching without acting is not what anyone wants from
   # it. Turn it off any time with 'w' on the dashboard, or --off here.
   : > "$ENABLED"
@@ -212,6 +221,28 @@ model_of() {
   printf '%s' "${m#claude-}"
 }
 
+# Uncommitted work, published for the dashboard because that process must not
+# fork per frame. Only DIRTY repos are listed, so the common answer is an empty
+# file. -uno skips untracked scanning, which is the slow half of git status and
+# not what "work I could lose" means here -- an untracked scratch file is noise,
+# a modified tracked file is not.
+sweep_repos() {
+  local last=0 now d n name
+  [ -f "$REPOS_AT" ] && read -r last < "$REPOS_AT" 2>/dev/null
+  now="$(date +%s)"
+  [ $(( now - ${last:-0} )) -lt "$REPO_EVERY" ] && return 0
+  : > "$REPOS.tmp"
+  for d in "$HOME"/.code/*/ "$HOME"/.code/*/*/; do
+    [ -e "$d/.git" ] || continue
+    n="$(git -C "$d" status --porcelain -uno 2>/dev/null | wc -l)"
+    [ "${n:-0}" -gt 0 ] || continue
+    name="${d%/}"; name="${name##*/}"
+    printf '%s\t%s\t%s\n' "${d%/}" "$name" "$n" >> "$REPOS.tmp"
+  done
+  mv "$REPOS.tmp" "$REPOS"
+  printf '%s\n' "$now" > "$REPOS_AT"
+}
+
 pass() {
   local enabled=0; [ -f "$ENABLED" ] && enabled=1
   local msg; msg="$(head -1 "$MSGFILE" 2>/dev/null)"; msg="${msg:-$DEFAULT_MSG}"
@@ -219,7 +250,7 @@ pass() {
   local tmp="$STATUS.tmp"; : > "$tmp"
 
   local f pid sid pane paneid ver st cwd tr ctx name text reset epoch state acted
-  local spent rd resumed model optout
+  local spent rd resumed model optout idle
   for f in "$HOME"/.claude/sessions/*.json; do
     [ -f "$f" ] || continue
     pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
@@ -238,6 +269,12 @@ pass() {
       model="$(model_of "$tr")"
     fi
     ctx="${ctx:-0}"; spent="${spent:-0}"; rd="${rd:-0}"; model="${model:--}"
+    # Seconds since this session last wrote a turn. The transcript's mtime is
+    # the cheapest honest answer, and it separates "quiet because it finished"
+    # from "quiet because it stalled" at a glance.
+    idle=-1
+    [ -n "${tr:-}" ] && [ -f "${tr:-}" ] && \
+      idle=$(( now - $(stat -c %Y "$tr" 2>/dev/null || echo "$now") ))
     resumed="$(last_resumed "$sid")"
     optout=0; grep -qxF "$sid" "$OPTOUT" 2>/dev/null && optout=1
 
@@ -289,14 +326,15 @@ pass() {
       fi
     fi
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s	%s\n' \
       "$sid" "$name" "$paneid" "$ver" "$ctx" "$state" "$reset" "$acted" \
-      "$resumed" "$spent" "$rd" "$optout" "$model" >> "$tmp"
+      "$resumed" "$spent" "$rd" "$optout" "$model" "$idle" >> "$tmp"
   done
 
   mv "$tmp" "$STATUS"
+  sweep_repos
   if [ "$DRY" = 1 ]; then
-    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\n'
+    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\n'
       awk -F'\t' 'BEGIN{OFS="\t"} {$1=substr($1,1,8);
         if ($9!="-" && $9!="") $9=strftime("%m-%d %H:%M",$9); print}' "$STATUS"
     } | column -t -s $'\t'

@@ -59,6 +59,7 @@ WATCHDOG_DIR = STATE_HOME / "claude-watchdog"
 WATCHDOG_STATUS = WATCHDOG_DIR / "status.tsv"
 WATCHDOG_ENABLED = WATCHDOG_DIR / "enabled"
 WATCHDOG_OPTOUT = WATCHDOG_DIR / "optout"
+WATCHDOG_REPOS = WATCHDOG_DIR / "repos.tsv"
 # Both sessions on this machine run a 1M-context model. There is no way to ask
 # a running session what its window is, so this is an assumption the bar is
 # drawn against, overridable rather than hidden.
@@ -211,14 +212,15 @@ def ports_for(pids: list[int], inodes: dict[int, int]) -> dict[int, int]:
 
 class ClaudeSession:
     __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action",
-                 "resumed", "spent", "cached", "optout", "model")
+                 "resumed", "spent", "cached", "optout", "model", "idle")
 
     def __init__(self, sid, window, pane, ver, ctx, state, reset, action,
-                 resumed=0, spent=0, cached=0, optout=False, model="-"):
+                 resumed=0, spent=0, cached=0, optout=False, model="-", idle=-1):
         self.sid, self.window, self.pane, self.ver = sid, window, pane, ver
         self.ctx, self.state, self.reset, self.action = ctx, state, reset, action
         self.resumed, self.spent, self.cached = resumed, spent, cached
         self.optout, self.model = optout, model
+        self.idle = idle
 
 
 def claude_sessions() -> tuple[list[ClaudeSession], float]:
@@ -251,8 +253,36 @@ def claude_sessions() -> tuple[list[ClaudeSession], float]:
             num(f, 8), num(f, 9), num(f, 10),
             (len(f) > 11 and f[11] == "1"),
             f[12] if len(f) > 12 else "-",
+            num(f, 13) if len(f) > 13 else -1,
         ))
     return out, age
+
+
+def opted_out() -> set[str]:
+    """Read the opt-out file DIRECTLY rather than the copy in the published
+    table. This dashboard writes that file, and the watchdog only republishes
+    every 30s -- taking the published value made a press of space appear to do
+    nothing for up to half a minute."""
+    try:
+        return {l.strip() for l in WATCHDOG_OPTOUT.read_text().splitlines() if l.strip()}
+    except OSError:
+        return set()
+
+
+def dirty_repos() -> list[tuple[str, int]]:
+    """(name, changed files) for every repo the watchdog found dirty."""
+    out = []
+    try:
+        for line in WATCHDOG_REPOS.read_text().splitlines():
+            f = line.split("\t")
+            if len(f) >= 3:
+                try:
+                    out.append((f[1], int(f[2])))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+    return out
 
 
 def human_tokens(n: int) -> str:
@@ -442,7 +472,13 @@ class Dashboard:
         lanes.add_column("RAM", justify="right", width=10)
         lanes.add_column("AGE", justify="right", width=6)
         lanes.add_column("LANE", overflow="ellipsis", ratio=1)
+        lanes.add_column("DIRTY", justify="right", width=6)
         lanes.add_column("STATE", width=16)
+
+        # A session's cwd is /home/deck here, which is not a repo, so "has this
+        # work been committed" cannot be answered per SESSION. It can be
+        # answered per lane, because a lane row IS a working tree.
+        dirty = dict(dirty_repos())
 
         total_mb = sum(g["rss"] for g in groups.values())
         for pgid in sorted(groups, key=lambda k: pgid_port.get(k, 99999)):
@@ -454,15 +490,19 @@ class Dashboard:
                 state, style = "ageing", YELLOW
             else:
                 state, style = "fresh", GREEN
+            lname = lane_name(g["pid"])
+            n = dirty.get(lname.rsplit("/", 1)[-1], 0)
             lanes.add_row(
                 Text(str(pgid_port.get(pgid, "—")), style="#8fb8de"),
                 human_mb(g["rss"]),
                 Text(human_age(age), style=style),
-                lane_name(g["pid"]),
+                lname,
+                Text(str(n) if n else "—", style=YELLOW if n else FRAME),
                 Text(state, style=style),
             )
         if not groups:
-            lanes.add_row(Text("—", style=DIM), "", "", Text("no dev servers running", style=DIM), "")
+            lanes.add_row(Text("—", style=DIM), "", "",
+                          Text("no dev servers running", style=DIM), "", "")
 
         # ---- claude sessions ----------------------------------------------
         sessions, sess_age = claude_sessions()
@@ -483,10 +523,13 @@ class Dashboard:
         ct.add_column("MODEL", width=11, overflow="ellipsis")
         ct.add_column("CONTEXT", width=29)
         ct.add_column("SPENT", justify="right", width=8)
+        ct.add_column("IDLE", justify="right", width=6)
         ct.add_column("STATE", width=15)
         ct.add_column("RESUMED", width=11)
 
+        skipped = opted_out()
         for s in ordered:
+            s.optout = s.sid in skipped
             pct = min(100.0, s.ctx * 100.0 / CONTEXT_WINDOW) if CONTEXT_WINDOW else 0.0
             bar = Text.assemble(gauge(pct, 14), " ",
                                 (f"{pct:3.0f}%", pressure(pct)), " ",
@@ -504,14 +547,21 @@ class Dashboard:
                 st_txt = Text("working", style=GREEN)
             else:
                 st_txt = Text(s.state, style=DIM)
+            # An idle window is only interesting once it has been quiet a
+            # while, and only alarming if it is quiet with work in flight.
+            if s.idle < 0:
+                idle_txt = Text("—", style=FRAME)
+            else:
+                idle_style = DIM if (s.idle < 900 or s.state == "working") else YELLOW
+                idle_txt = Text(human_age(s.idle), style=idle_style)
             ct.add_row(mark, Text(s.window), Text(s.model, style=DIM), bar,
-                       Text(human_tokens(s.spent), style=DIM), st_txt,
+                       Text(human_tokens(s.spent), style=DIM), idle_txt, st_txt,
                        Text(when(s.resumed), style=DIM if s.resumed else FRAME))
 
         if not sessions:
             ct.add_row("", Text("—", style=DIM), "",
                        Text("no claude sessions" if not wd_stale else "watchdog not running",
-                            style=DIM), "", "", "")
+                            style=DIM), "", "", "", "")
 
         wd_label = ("watchdog on", GREEN) if wd_on else ("watchdog off", DIM)
         if wd_stale:
@@ -532,7 +582,20 @@ class Dashboard:
         except OSError:
             free = "?"
 
+        # The lanes table only lists trees with a dev server, so a repo holding
+        # uncommitted work and running nothing would be invisible there -- which
+        # is exactly the one you are most likely to lose.
+        lane_names = {lane_name(g["pid"]).rsplit("/", 1)[-1] for g in groups.values()}
+        elsewhere = [(n, c) for n, c in dirty.items() if n not in lane_names]
+        uncommitted = Text()
+        if elsewhere:
+            uncommitted.append("uncommitted ", style="bold")
+            uncommitted.append(", ".join(f"{n} ({c})" for n, c in sorted(elsewhere)),
+                               style=YELLOW)
+            uncommitted.append("     ")
+
         sysrow = Text.assemble(
+            uncommitted,
             ("claude ", "bold"), f"{len(claude)} · {human_mb(sum(p.rss_mb for p in claude))}",
             "     ", ("playwright ", "bold"), (human_mb(pw) if pw else "—"),
             "     ", ("/home ", "bold"), f"{free} free",
@@ -578,7 +641,17 @@ HELP = f"""
     cache writes + output, the parts billed at or above full rate; cache READS
     are excluded because they cost about a tenth and would swamp the number.
     Subagent tokens are NOT included -- they never enter the parent transcript.
+    [bold]IDLE[/] is time since that session last wrote a turn; it goes amber past
+    15 minutes, so a stalled window reads differently from a finished one.
     [bold]RESUMED[/] is when the watchdog last restarted that session.
+
+  [{DIM}]UNCOMMITTED WORK[/]
+    [bold]DIRTY[/] on the lanes table is tracked files changed in that working tree.
+    It is not on the claude table because a session's cwd here is /home/deck,
+    which is not a repo -- the question is only answerable per TREE. A dirty
+    repo with no dev server would then be invisible, so the system line names
+    those separately. Untracked files are ignored: a scratch file is noise, a
+    modified tracked file is work you could lose.
 
     [{YELLOW}]limited[/]  stopped at a usage limit, waiting for the reset
     [{RED}]due[/]      the reset has passed and it is still sitting there
