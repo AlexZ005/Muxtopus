@@ -4,3 +4,7 @@
 
 # 27 MB of interpreter and wheels; rebuilt by setup-deck/after-update.
 .venv/
+
+# Bytecode: regenerated on every run, so it dirties the tree constantly.
+__pycache__/
+*.pyc
