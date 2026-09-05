@@ -31,6 +31,7 @@ CONF="${CLAUDE_NOTIFY_CONF:-$HOME/.config/claude-notify.conf}"
 LOG="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog/notify.log"
 mkdir -p "$(dirname "$LOG")"
 
+TESTING=0
 BACKEND=""; NTFY_TOPIC=""; NTFY_SERVER="https://ntfy.sh"
 PUSHBULLET_TOKEN=""; TELEGRAM_TOKEN=""; TELEGRAM_CHAT=""
 # shellcheck disable=SC1090
@@ -46,7 +47,27 @@ case "${1:-}" in
     fi
     echo "backend: $BACKEND"
     exit 0 ;;
-  --test) set -- "Deck" "Notifications are working." ;;
+  --test) TESTING=1; set -- "Deck" "Notifications are working." ;;
+  --telegram-chat)
+    # The fiddly half of Telegram setup. A bot CANNOT open a conversation with
+    # you, so it has no idea who you are until you message it first -- which is
+    # also why the usual first failure is a 403 rather than a bad token.
+    [ -n "${2:-}" ] || { echo "usage: $0 --telegram-chat <BOT_TOKEN>" >&2; exit 2; }
+    r="$(curl -sS -m 15 "https://api.telegram.org/bot$2/getUpdates" 2>&1)"
+    if [ "$(jq -r '.ok // false' <<<"$r" 2>/dev/null)" != true ]; then
+      echo "Telegram refused that token: $(jq -r '.description // .' <<<"$r" 2>/dev/null || echo "$r")" >&2
+      exit 1
+    fi
+    if [ "$(jq -r '.result | length' <<<"$r")" = 0 ]; then
+      echo "Token is valid, but the bot has never heard from you." >&2
+      echo "Open Telegram, find your bot, send it any message (/start will do)," >&2
+      echo "then run this again." >&2
+      exit 1
+    fi
+    echo "Chat id(s) that have messaged this bot:"
+    jq -r '.result[] | (.message // .edited_message // empty) | .chat
+           | "  TELEGRAM_CHAT=\(.id)    \(.type)  \(.first_name // .title // "")"' <<<"$r" | sort -u
+    exit 0 ;;
   -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
 esac
 
@@ -59,7 +80,7 @@ if [ -z "$BACKEND" ]; then
   exit 0
 fi
 
-rc=1
+rc=1; why=""
 case "$BACKEND" in
   ntfy)
     [ -n "$NTFY_TOPIC" ] || { log "ntfy: NTFY_TOPIC unset"; exit 0; }
@@ -75,15 +96,32 @@ case "$BACKEND" in
   telegram)
     [ -n "$TELEGRAM_TOKEN" ] && [ -n "$TELEGRAM_CHAT" ] || {
       log "telegram: token or chat unset"; exit 0; }
-    curl -fsS -m 15 -X POST \
+    # Read the reply rather than discarding it. Telegram answers a refusal with
+    # HTTP 200 and ok:false, and the description is the only thing that tells
+    # you WHICH mistake you made -- most often "bot can't initiate conversation
+    # with a user", meaning nobody has messaged the bot yet.
+    resp="$(curl -sS -m 15 -X POST \
       "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
       --data-urlencode "chat_id=$TELEGRAM_CHAT" \
       --data-urlencode "text=$TITLE
-$BODY" >/dev/null 2>&1 && rc=0 ;;
+$BODY" 2>&1)"
+    if [ "$(jq -r '.ok // false' <<<"$resp" 2>/dev/null)" = true ]; then
+      rc=0
+    else
+      why="$(jq -r '.description // empty' <<<"$resp" 2>/dev/null)"
+      why="${why:-$resp}"
+    fi ;;
   *)
     log "unknown BACKEND=$BACKEND"; echo "unknown BACKEND: $BACKEND" >&2; exit 0 ;;
 esac
 
-if [ "$rc" = 0 ]; then log "sent via $BACKEND: $TITLE — $BODY"
-else                   log "FAILED via $BACKEND: $TITLE — $BODY"; fi
+if [ "$rc" = 0 ]; then
+  log "sent via $BACKEND: $TITLE — $BODY"
+  [ "$TESTING" = 1 ] && echo "sent via $BACKEND — check your phone"
+else
+  log "FAILED via $BACKEND: ${why:-no detail} — $TITLE"
+  # A background caller gets silence and a log line; a person running --test
+  # gets the reason, because that is the only moment it can be acted on.
+  [ "$TESTING" = 1 ] && echo "FAILED via $BACKEND: ${why:-no detail}" >&2
+fi
 exit 0
