@@ -79,6 +79,7 @@ esac
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT="$UNIT_DIR/claude-watchdog.service"
 SELF="$(readlink -f "$0")"
+SCRIPT_DIR="$(dirname "$SELF")"
 
 if [ "$MODE" = uninstall ]; then
   systemctl --user disable --now claude-watchdog.service 2>/dev/null
@@ -345,6 +346,12 @@ pass() {
 
   mv "$tmp" "$STATUS"
   sweep_repos
+  # Keep the limit figures warm on their own hourly clock. --ensure is a no-op
+  # when the cache is young, so this costs nothing between the hours, and it is
+  # also what catches a limit resetting EARLY: nobody is watching the dashboard
+  # at 4am, and the good surprise is worth a notification.
+  [ -x "$SCRIPT_DIR/claude-usage.sh" ] && \
+    "$SCRIPT_DIR/claude-usage.sh" --ensure 60 >/dev/null 2>&1
   if [ "$DRY" = 1 ]; then
     { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\n'
       awk -F'\t' 'BEGIN{OFS="\t"} {$1=substr($1,1,8);

@@ -36,6 +36,8 @@ RAW="$STATE_DIR/usage.raw"
 # Every reading is appended here, so "when did I ask and what did it say" has an
 # answer after the fact -- the cache only ever holds the latest.
 LOG="$STATE_DIR/usage.log"
+# Touched when a limit resets EARLY; the dashboard shows a flourish and clears it.
+HOORAY="$STATE_DIR/usage.hooray"
 PROBE_SESSION="cc-usage"          # the watchdog skips this tmux session by name
 CLAUDE="$HOME/.local/bin/claude"
 mkdir -p "$STATE_DIR"
@@ -139,15 +141,30 @@ parse() {
   wp="$(fld week_pct)";     wr="$(fld week_reset)"
   mp="$(fld model_pct)";    mn="$(fld model_name)"
 
+  # Read the PREVIOUS reading before overwriting it: an early reset is only
+  # visible as a change between two readings.
+  local prev_pct prev_at prev_due now
+  prev_pct="$(get session_pct)"; prev_due="$(get session_reset_at)"
+  now="$(date +%s)"
+
+  local due=""
+  [ -n "${sr:-}" ] && due="$(date -d "$(tr -d ',' <<<"$sr" | sed -E 's/([ap]m)/ \1/I')" +%s 2>/dev/null)"
+  # A reset time that has already passed names TOMORROW -- the same rule the
+  # watchdog uses on the limit banner, and for the same reason.
+  [ -n "$due" ] && [ "$due" -lt $(( now - 21600 )) ] && due=$(( due + 86400 ))
+
   {
-    printf 'at\t%s\n' "$(date +%s)"
-    printf 'session_pct\t%s\n'   "${sp:-}"
-    printf 'session_reset\t%s\n' "$(to24 "${sr:-}")"
-    printf 'week_pct\t%s\n'      "${wp:-}"
-    printf 'week_reset\t%s\n'    "$(todate "${wr:-}")"
-    printf 'model\t%s\n'         "${mn:-$MODEL_KEY}"
-    printf 'model_pct\t%s\n'     "${mp:-}"
+    printf 'at\t%s\n' "$now"
+    printf 'session_pct\t%s\n'      "${sp:-}"
+    printf 'session_reset\t%s\n'    "$(to24 "${sr:-}")"
+    printf 'session_reset_at\t%s\n' "${due:-}"
+    printf 'week_pct\t%s\n'         "${wp:-}"
+    printf 'week_reset\t%s\n'       "$(todate "${wr:-}")"
+    printf 'model\t%s\n'            "${mn:-$MODEL_KEY}"
+    printf 'model_pct\t%s\n'        "${mp:-}"
   } > "$CACHE.tmp" && mv "$CACHE.tmp" "$CACHE"
+
+  check_early_reset "${prev_pct:-}" "${prev_due:-}" "${sp:-}" "$now"
 
   [ -n "${sp:-}${wp:-}${mp:-}" ] || {
     echo "usage panel captured but nothing parsed -- inspect $RAW" >&2; return 1; }
@@ -156,6 +173,32 @@ parse() {
     "$(date '+%Y-%m-%d %H:%M:%S')" "${sp:-?}" "$(to24 "${sr:-}")" \
     "${wp:-?}" "$(todate "${wr:-}")" "${mn:-$MODEL_KEY}" "${mp:-?}" >> "$LOG"
   return 0
+}
+
+# A budget that empties BEFORE the clock said it would. Worth noticing because
+# it is the one surprise in this system that is good news, and because it means
+# work can start again now rather than at the hour printed on screen.
+#
+# Deliberately narrow: it fires only on a real collapse (was at least half
+# spent, now essentially empty) that happens with real time left on the stated
+# reset. A gentle drift downward is not a reset, and neither is a reading taken
+# a minute after the deadline it was waiting for.
+check_early_reset() {
+  local prev="$1" due="$2" now_pct="$3" now="$4"
+  [ -n "$prev" ] && [ -n "$due" ] && [ -n "$now_pct" ] || return 0
+  case "$prev$now_pct$due" in *[!0-9.]*) return 0 ;; esac
+  [ "${prev%%.*}" -ge 50 ] || return 0
+  [ "${now_pct%%.*}" -le 5 ] || return 0
+  [ "$now" -lt $(( due - 300 )) ] || return 0
+
+  local mins=$(( (due - now) / 60 ))
+  : > "$HOORAY"                      # the dashboard's party hat, cleared on read
+  printf '%s\tEARLY RESET: session %s%% -> %s%% with %sm still on the clock\n' \
+    "$(date '+%Y-%m-%d %H:%M:%S')" "$prev" "$now_pct" "$mins" >> "$LOG"
+  "$(dirname "$(readlink -f "$0")")/claude-notify.sh" \
+    "Limit reset early" \
+    "Session budget went $prev% -> $now_pct% with ${mins}m still on the clock. You can start again now." \
+    >/dev/null 2>&1 &
 }
 
 age_minutes() {

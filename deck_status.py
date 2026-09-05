@@ -61,6 +61,10 @@ WATCHDOG_ENABLED = WATCHDOG_DIR / "enabled"
 WATCHDOG_OPTOUT = WATCHDOG_DIR / "optout"
 WATCHDOG_REPOS = WATCHDOG_DIR / "repos.tsv"
 WATCHDOG_USAGE = WATCHDOG_DIR / "usage.tsv"
+WATCHDOG_HOORAY = WATCHDOG_DIR / "usage.hooray"
+# u refreshes only past this age; U ignores it. The watchdog keeps its own
+# hourly clock, so this is about not starting a probe per keypress.
+USAGE_MAX_AGE = int(os.environ.get("CLAUDE_USAGE_MAX_AGE", "20"))
 # Both sessions on this machine run a 1M-context model. There is no way to ask
 # a running session what its window is, so this is an assumption the bar is
 # drawn against, overridable rather than hidden.
@@ -318,19 +322,40 @@ def usage_rows() -> list[Text]:
     ]
 
 
-def refresh_usage() -> str:
+def refresh_usage(force: bool = False) -> str:
     """Fire the scrape and return immediately -- it spawns a Claude session and
     takes a few seconds, and blocking the frame for that would freeze the whole
-    dashboard. The panel picks the result up on a later frame."""
+    dashboard. The panel picks the result up on a later frame.
+
+    force=False uses --ensure, so leaning on the key does not start a probe per
+    press; force=True is the deliberate 'no, now'."""
     script = SCRIPTS / "claude-usage.sh"
     if not script.exists():
         return "claude-usage.sh not found"
+    args = [str(script), "--refresh"] if force else [str(script), "--ensure", str(USAGE_MAX_AGE)]
     try:
-        subprocess.Popen([str(script), "--refresh"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return "reading usage limits…"
+        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as exc:
         return f"usage refresh failed: {exc}"
+    if force:
+        return "reading usage limits now…"
+    age = usage_limits().get("at")
+    try:
+        mins = int((time.time() - int(age)) // 60)
+    except (TypeError, ValueError):
+        return "reading usage limits…"
+    return ("reading usage limits…" if mins >= USAGE_MAX_AGE
+            else f"usage is {mins}m old, still fresh — U forces a read")
+
+
+def hooray() -> bool:
+    """A limit reset EARLY since the last frame. Read once and cleared, so the
+    flourish shows for one refresh cycle rather than until midnight."""
+    try:
+        WATCHDOG_HOORAY.unlink()
+        return True
+    except OSError:
+        return False
 
 
 def dirty_repos() -> list[tuple[str, int]]:
@@ -431,6 +456,7 @@ class Dashboard:
         self.interval = interval
         self.notice: str | None = None
         self.notice_at = 0.0
+        self.party_at = 0.0
         self.cursor = ""            # session id under the row cursor
         self.sids: list[str] = []   # last rendered order, for the arrow keys
         self.panes: dict[str, str] = {}   # session id -> tmux pane, for Enter
@@ -701,10 +727,20 @@ class Dashboard:
         keys = Text.assemble(
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " stop extras  ", ("S", DIM), " start  ",
-            ("w", DIM), " watchdog  ", ("u", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " skip  ",
+            ("w", DIM), " watchdog  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " skip  ",
             ("p", DIM), " btop  ", ("?", DIM), " help",
         )
-        if self.notice and time.time() - self.notice_at < 8:
+        # The one piece of good news this dashboard can deliver, so it gets to
+        # be loud. Latched on first sight rather than read per frame: hooray()
+        # consumes the flag, and the flag is written by a background process
+        # that has no idea whether anyone is looking.
+        if hooray():
+            self.party_at = time.time()
+        if time.time() - self.party_at < 120:
+            keys = Text.assemble(
+                ("  🎉  A LIMIT RESET EARLY — the clock lied, go again  🎉", "bold #7ec699"),
+                "\n", keys)
+        elif self.notice and time.time() - self.notice_at < 8:
             keys = Text.assemble((" " + self.notice, "#c9a0dc"), "\n", keys)
 
         return Group(
@@ -742,10 +778,21 @@ HELP = f"""
     that reason, and the third line carries the time it was read so a stale
     number cannot pass for a current one.
 
+    [bold]u[/] refreshes only if the figures are over {USAGE_MAX_AGE} minutes old, so leaning
+    on the key costs nothing; [bold]U[/] forces a read now. [bold]R[/] reloads this script and
+    nudges the limits the same way u does. The watchdog also refreshes hourly
+    on its own, so the numbers stay warm with nobody watching.
+
     The same values are available to scripts and to prompts:
       claude-usage.sh --brief | --json | --session-pct | --week-pct
       claude-usage.sh --ensure 15     refresh only if older than 15 minutes
     Every reading is appended to usage.log with a timestamp.
+
+    If a limit ever empties BEFORE the time it promised, that is the one good
+    surprise here, so it is announced loudly and sent to your phone. Configure
+    a backend in ~/.config/claude-notify.conf (ntfy, Pushbullet or Telegram --
+    see the header of claude-notify.sh); with none configured it is logged and
+    nothing is sent.
 
   [{DIM}]CLAUDE[/]
     [bold]CONTEXT[/] is the session's live context against {CONTEXT_WINDOW // 1000}k
@@ -888,6 +935,10 @@ def main() -> int:
                 if key == "R":
                     # A running process holds the copy it started with; re-exec
                     # so an edited script takes effect without respawning tmux.
+                    # Also nudge the limits, but through --ensure: a reload is
+                    # not a reason to start a probe if the figures are minutes
+                    # old, and R gets pressed a lot while editing.
+                    refresh_usage()
                     live.stop()
                     termios.tcsetattr(fd, termios.TCSADRAIN, saved)
                     os.execv(sys.executable, [sys.executable, __file__] + args)
@@ -903,8 +954,10 @@ def main() -> int:
                     subprocess.run(["btop"] if os.path.exists("/usr/bin/btop") else ["htop"])
                     tty.setcbreak(fd)
                     live.start()
-                elif key in ("u", "U"):
+                elif key == "u":
                     dash.say(refresh_usage())
+                elif key == "U":
+                    dash.say(refresh_usage(force=True))
                 elif key == "UP":
                     dash.move(-1)
                 elif key == "DOWN":
