@@ -217,15 +217,15 @@ def ports_for(pids: list[int], inodes: dict[int, int]) -> dict[int, int]:
 
 class ClaudeSession:
     __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action",
-                 "resumed", "spent", "cached", "optout", "model", "idle")
+                 "resumed", "spent", "cached", "optout", "model", "idle", "job")
 
     def __init__(self, sid, window, pane, ver, ctx, state, reset, action,
-                 resumed=0, spent=0, cached=0, optout=False, model="-", idle=-1):
+                 resumed=0, spent=0, cached=0, optout=False, model="-", idle=-1, job=""):
         self.sid, self.window, self.pane, self.ver = sid, window, pane, ver
         self.ctx, self.state, self.reset, self.action = ctx, state, reset, action
         self.resumed, self.spent, self.cached = resumed, spent, cached
         self.optout, self.model = optout, model
-        self.idle = idle
+        self.idle, self.job = idle, job
 
 
 def claude_sessions() -> tuple[list[ClaudeSession], float]:
@@ -259,6 +259,7 @@ def claude_sessions() -> tuple[list[ClaudeSession], float]:
             (len(f) > 11 and f[11] == "1"),
             f[12] if len(f) > 12 else "-",
             num(f, 13) if len(f) > 13 else -1,
+            f[14] if len(f) > 14 else "",
         ))
     return out, age
 
@@ -460,6 +461,7 @@ class Dashboard:
         self.cursor = ""            # session id under the row cursor
         self.sids: list[str] = []   # last rendered order, for the arrow keys
         self.panes: dict[str, str] = {}   # session id -> tmux pane, for Enter
+        self.jobs: dict[str, str] = {}    # session id -> bg job id, for attach
         self.version = (SCRIPTS / "VERSION").read_text().strip() if (SCRIPTS / "VERSION").exists() else "?"
 
     def say(self, msg: str) -> None:
@@ -483,7 +485,11 @@ class Dashboard:
         so it is named instead of failing silently."""
         pane = self.panes.get(self.cursor, "")
         if not pane:
-            return f"{self.cursor[:8]} is a background session — no window to open"
+            job = self.jobs.get(self.cursor, "")
+            # A background job has no window, but it does have a job id, and
+            # that is the whole answer to "how do I see what it is doing".
+            return (f"background job — run:  claude attach {job}" if job
+                    else f"{self.cursor[:8]} is a background session — no window to open")
         try:
             r = subprocess.run(["tmux", "select-window", "-t", pane],
                                capture_output=True, text=True, timeout=5)
@@ -634,13 +640,16 @@ class Dashboard:
         # sorted by context and that order changes under you as sessions work.
         self.sids = [s.sid for s in ordered]
         self.panes = {s.sid: s.pane for s in ordered}
+        self.jobs = {s.sid: s.job for s in ordered}
         if self.cursor not in self.sids:
             self.cursor = self.sids[0] if self.sids else ""
 
         ct = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
                    header_style=DIM, border_style=FRAME)
         ct.add_column("", width=3)
-        ct.add_column("WINDOW", overflow="ellipsis", ratio=1)
+        # no_wrap or a long background-job name wraps and breaks the row;
+        # ellipsis only applies to text that is not allowed to wrap.
+        ct.add_column("WINDOW", overflow="ellipsis", no_wrap=True, ratio=1)
         ct.add_column("MODEL", width=11, overflow="ellipsis")
         ct.add_column("CONTEXT", width=29)
         ct.add_column("SPENT", justify="right", width=8)

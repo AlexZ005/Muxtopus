@@ -251,7 +251,7 @@ pass() {
   local tmp="$STATUS.tmp"; : > "$tmp"
 
   local f pid sid pane paneid ver st kind cwd tr ctx name text reset epoch state acted
-  local spent rd resumed model optout idle
+  local spent rd resumed model optout idle jobid
   for f in "$HOME"/.claude/sessions/*.json; do
     [ -f "$f" ] || continue
     pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
@@ -285,16 +285,18 @@ pass() {
     resumed="$(last_resumed "$sid")"
     optout=0; grep -qxF "$sid" "$OPTOUT" 2>/dev/null && optout=1
 
-    name="-"; text=""
+    name="-"; text=""; jobid=""
     if [ -n "$paneid" ]; then
       name="$(tmux display-message -p -t "$paneid" '#{window_name}' 2>/dev/null || echo -)"
       text="$(tmux capture-pane -p -t "$paneid" 2>/dev/null || true)"
     elif [ "$kind" = bg ]; then
-      # `claude --bg` runs with no terminal at all. It is a real session with a
-      # real context, so it belongs in the table -- but there is no pane to read
-      # a limit banner from and none to type into, so it can never be restarted
-      # from here. Say that, rather than letting send-keys fail into silence.
-      name="(background)"
+      # A background job has no terminal at all: no pane to read a limit banner
+      # from and none to type into, so it can never be restarted from here. It
+      # does carry a descriptive name and a job id, which are the two things
+      # that make it findable -- `claude attach <jobid>` is how you reach it.
+      name="$(jq -r '.name // "(background)"' "$f")"
+      [ ${#name} -gt 28 ] && name="${name:0:27}…"
+      jobid="$(jq -r '.jobId // empty' "$f")"
     fi
 
     state="idle"; reset="-"; epoch=""
@@ -339,9 +341,9 @@ pass() {
       fi
     fi
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s	%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s	%s\n' \
       "$sid" "$name" "$paneid" "$ver" "$ctx" "$state" "$reset" "$acted" \
-      "$resumed" "$spent" "$rd" "$optout" "$model" "$idle" >> "$tmp"
+      "$resumed" "$spent" "$rd" "$optout" "$model" "$idle" "$jobid" >> "$tmp"
   done
 
   mv "$tmp" "$STATUS"
