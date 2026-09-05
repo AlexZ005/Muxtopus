@@ -433,6 +433,7 @@ class Dashboard:
         self.notice_at = 0.0
         self.cursor = ""            # session id under the row cursor
         self.sids: list[str] = []   # last rendered order, for the arrow keys
+        self.panes: dict[str, str] = {}   # session id -> tmux pane, for Enter
         self.version = (SCRIPTS / "VERSION").read_text().strip() if (SCRIPTS / "VERSION").exists() else "?"
 
     def say(self, msg: str) -> None:
@@ -446,6 +447,28 @@ class Dashboard:
         except ValueError:
             i = 0
         self.cursor = self.sids[max(0, min(len(self.sids) - 1, i + delta))]
+
+    def open_selected(self) -> str:
+        """Jump the tmux client to the selected session's window.
+
+        The dashboard keeps running in window 0; this only moves the client, so
+        Ctrl-b 0 comes straight back. A background session (`claude --bg`) has
+        no pane to switch to, which is a real case here rather than an edge one,
+        so it is named instead of failing silently."""
+        pane = self.panes.get(self.cursor, "")
+        if not pane:
+            return f"{self.cursor[:8]} is a background session — no window to open"
+        try:
+            r = subprocess.run(["tmux", "select-window", "-t", pane],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                return ""
+            # A different tmux session needs the client moved, not the window.
+            r = subprocess.run(["tmux", "switch-client", "-t", pane],
+                               capture_output=True, text=True, timeout=5)
+            return "" if r.returncode == 0 else f"could not open: {r.stderr.strip()}"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"could not open: {exc}"
 
     def toggle_selected(self) -> str:
         """Opt one session out of being restarted, or back in.
@@ -584,6 +607,7 @@ class Dashboard:
         # The cursor is tracked by session id, not by row index: the table is
         # sorted by context and that order changes under you as sessions work.
         self.sids = [s.sid for s in ordered]
+        self.panes = {s.sid: s.pane for s in ordered}
         if self.cursor not in self.sids:
             self.cursor = self.sids[0] if self.sids else ""
 
@@ -677,7 +701,7 @@ class Dashboard:
         keys = Text.assemble(
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " stop extras  ", ("S", DIM), " start  ",
-            ("w", DIM), " watchdog  ", ("u", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("space", DIM), " skip  ",
+            ("w", DIM), " watchdog  ", ("u", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " skip  ",
             ("p", DIM), " btop  ", ("?", DIM), " help",
         )
         if self.notice and time.time() - self.notice_at < 8:
@@ -704,6 +728,11 @@ HELP = f"""
   [bold]s[/] stop extras [bold]S[/] start extras    (deck-ram.sh, desktop mode only)
   [bold]w[/] watchdog    [bold]p[/] btop            [bold]?[/] this screen
   [bold]u[/] read usage limits      [bold]up/down[/] pick   [bold]space[/] include or skip
+  [bold]enter[/] open the selected session's window (Ctrl-b 0 comes back here)
+
+  [{DIM}]A session shown as (background) was started with `claude --bg`. It has no
+  terminal, so there is no window for enter to open and no pane for the
+  watchdog to type into -- it can be watched but never restarted from here.[/]
 
   [{DIM}]USAGE LIMITS (top right)[/]
     The only numbers here that cannot be computed locally. Claude Code has no
@@ -771,26 +800,31 @@ HELP = f"""
 def read_key(timeout: float) -> str | None:
     """One keypress, with the arrows decoded.
 
-    An arrow arrives as the three bytes ESC [ A. Nothing else typed here starts
-    with ESC, and a bare Escape simply finds no follow-up inside the short
-    second poll, so it falls through as itself rather than eating the next key.
+    READ THE FILE DESCRIPTOR, NOT sys.stdin, and that is the whole point of
+    this function. An arrow is the three bytes ESC [ A delivered in a single
+    write. sys.stdin is buffered, so the first read(1) pulls all three into
+    Python's buffer and hands back one -- after which select() on the fd
+    correctly reports NOTHING left to read, because the remaining two are in
+    userspace, not the kernel. The previous version then gave up and returned a
+    bare Escape, so arrows silently did nothing while every plain key worked.
+
+    os.read has no such buffer: one read takes the whole sequence, and a
+    sequence split across writes is picked up by the short second poll.
     """
-    r, _, _ = select.select([sys.stdin], [], [], timeout)
-    if not r:
+    fd = sys.stdin.fileno()
+    if not select.select([fd], [], [], timeout)[0]:
         return None
-    ch = sys.stdin.read(1)
-    if ch != "\x1b":
-        return ch
-    for expect in ("[", None):
-        r, _, _ = select.select([sys.stdin], [], [], 0.05)
-        if not r:
-            return "\x1b"
-        nxt = sys.stdin.read(1)
-        if expect is None:
-            return {"A": "UP", "B": "DOWN"}.get(nxt, "\x1b")
-        if nxt != expect:
-            return "\x1b"
-    return "\x1b"
+    try:
+        data = os.read(fd, 16)
+    except OSError:
+        return None
+    if not data:
+        return None
+    if data == b"\x1b" and select.select([fd], [], [], 0.05)[0]:
+        data += os.read(fd, 16)
+    if data.startswith(b"\x1b[") and len(data) >= 3:
+        return {b"A": "UP", b"B": "DOWN"}.get(data[2:3], "\x1b")
+    return data[:1].decode("utf-8", "replace")
 
 
 def toggle_watchdog() -> str:
@@ -871,12 +905,12 @@ def main() -> int:
                     live.start()
                 elif key in ("u", "U"):
                     dash.say(refresh_usage())
-                elif key in ("u", "U"):
-                    dash.say(refresh_usage())
                 elif key == "UP":
                     dash.move(-1)
                 elif key == "DOWN":
                     dash.move(1)
+                elif key in ("\r", "\n"):
+                    dash.say(dash.open_selected())
                 elif key == " ":
                     dash.say(dash.toggle_selected())
                 elif key in ("w", "W"):

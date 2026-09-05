@@ -249,7 +249,7 @@ pass() {
   local now; now="$(date +%s)"
   local tmp="$STATUS.tmp"; : > "$tmp"
 
-  local f pid sid pane paneid ver st cwd tr ctx name text reset epoch state acted
+  local f pid sid pane paneid ver st kind cwd tr ctx name text reset epoch state acted
   local spent rd resumed model optout idle
   for f in "$HOME"/.claude/sessions/*.json; do
     [ -f "$f" ] || continue
@@ -259,6 +259,7 @@ pass() {
     pane="$(jq -r '.tmux // empty' "$f")"
     ver="$(jq -r '.version // "?"' "$f")"
     st="$(jq -r '.status // "?"' "$f")"
+    kind="$(jq -r '.kind // "?"' "$f")"
     [ -n "$sid" ] || continue
     # claude-usage.sh's throwaway probe lives in its own tmux session. It is a
     # real claude process, so it would otherwise be listed and -- worse -- be
@@ -287,6 +288,12 @@ pass() {
     if [ -n "$paneid" ]; then
       name="$(tmux display-message -p -t "$paneid" '#{window_name}' 2>/dev/null || echo -)"
       text="$(tmux capture-pane -p -t "$paneid" 2>/dev/null || true)"
+    elif [ "$kind" = bg ]; then
+      # `claude --bg` runs with no terminal at all. It is a real session with a
+      # real context, so it belongs in the table -- but there is no pane to read
+      # a limit banner from and none to type into, so it can never be restarted
+      # from here. Say that, rather than letting send-keys fail into silence.
+      name="(background)"
     fi
 
     state="idle"; reset="-"; epoch=""
