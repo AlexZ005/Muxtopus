@@ -42,6 +42,28 @@ MSGFILE="$STATE_DIR/message"
 OPTOUT="$STATE_DIR/optout"
 TOKDIR="$STATE_DIR/tokens"
 REPOS="$STATE_DIR/repos.tsv"
+USAGE="$STATE_DIR/usage.tsv"
+# SESSION MONITORING is a SEPARATE power from the restart flag, and a separate
+# switch. Restarting a window that already stopped cannot lose anything;
+# telling a working window to wrap up changes what it is doing, so it is opt-in
+# on its own and defaults to off.
+MONITOR="$STATE_DIR/monitor"
+# One file per session holding the single line to hand it. The hook inside the
+# session reads it and DELETES it, so a directive lands exactly once.
+DIRECTIVES="$STATE_DIR/directives"
+# What we have already said, so a band speaks once per limit window:
+#   sid <TAB> band <TAB> reset_epoch <TAB> when
+WOUND="$STATE_DIR/wound"
+# Per-session exemption from WIND-DOWNS, kept apart from the restart opt-out
+# above because they are different powers: a lane can be safe to restart after
+# a limit and still be one you never want interrupted mid-turn. ABSENT MEANS
+# ENABLED, so a new session is covered without opting in.
+MON_OPTOUT="$STATE_DIR/monitor-optout"
+# SCHEDULED WINDOWS live outside the state dir on purpose: they are the user's
+# hand-editable orders, not this daemon's bookkeeping. One .md per window to
+# open; templates/ holds prompt bodies. The dashboard renders the folder and
+# marks what it cannot parse as corrupted; this side simply skips those.
+SCHEDULES="$HOME/.code/schedules"
 REPOS_AT="$STATE_DIR/repos.at"
 # Working trees change far more slowly than sessions do, and each one costs a
 # git fork, so the repo sweep runs on its own slower clock.
@@ -53,6 +75,17 @@ INTERVAL="${WATCHDOG_INTERVAL:-30}"
 # just insurance against a clock edge, not a retry cadence.
 GRACE=20
 
+# The bands, as a percentage of the 5-hour session budget.
+SOFT_PCT="${WATCHDOG_SOFT_PCT:-65}"
+HARD_PCT="${WATCHDOG_HARD_PCT:-85}"
+# Above this context a window is cheaper to RESTART from a handoff than to
+# carry, because every request re-reads the whole of it. It is also the test
+# for whether a wind-down buys anything, which is why the hard band asks.
+FRESH_CTX="${WATCHDOG_FRESH_CTX:-150000}"
+# Below this weekly figure /low-priority is on the table: it continues NOW
+# against the weekly budget instead of idling until the session resets.
+LOWPRI_WEEK="${WATCHDOG_LOWPRI_WEEK:-40}"
+
 mkdir -p "$STATE_DIR"
 [ -f "$MSGFILE" ] || printf '%s\n' "$DEFAULT_MSG" > "$MSGFILE"
 
@@ -61,9 +94,23 @@ case "${1:---once}" in
   --once)    MODE=once ;;
   --dry-run) MODE=once; DRY=1 ;;
   --daemon)  MODE=daemon ;;
-  --status)  [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
+  --status)  [ -f "$ENABLED" ] && r=on || r=off
+             [ -f "$MONITOR" ] && m=on || m=off
+             echo "# restart=$r monitor=$m soft=${WATCHDOG_SOFT_PCT:-65}% hard=${WATCHDOG_HARD_PCT:-85}%"
+             [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
   --on)      : > "$ENABLED"; echo "watchdog enabled"; exit 0 ;;
   --off)     rm -f "$ENABLED"; echo "watchdog disabled"; exit 0 ;;
+  --monitor-on)  mkdir -p "$DIRECTIVES"; : > "$MONITOR"
+                 echo "session monitoring enabled"; exit 0 ;;
+  --monitor-off) rm -f "$MONITOR"; echo "session monitoring disabled"; exit 0 ;;
+  --monitor-optout) [ -n "${2:-}" ] || { echo "need a session id" >&2; exit 2; }
+             grep -qxF "$2" "$MON_OPTOUT" 2>/dev/null || printf '%s\n' "$2" >> "$MON_OPTOUT"
+             echo "will not wind down $2"; exit 0 ;;
+  --monitor-optin) [ -n "${2:-}" ] || { echo "need a session id" >&2; exit 2; }
+             if [ -f "$MON_OPTOUT" ]; then grep -vxF "$2" "$MON_OPTOUT" > "$MON_OPTOUT.tmp" || true
+                                           mv "$MON_OPTOUT.tmp" "$MON_OPTOUT"; fi
+             echo "may wind down $2"; exit 0 ;;
+  --monitor)     if [ -f "$MONITOR" ]; then echo on; else echo off; fi; exit 0 ;;
   --optout)  [ -n "${2:-}" ] || { echo "need a session id" >&2; exit 2; }
              grep -qxF "$2" "$OPTOUT" 2>/dev/null || printf '%s\n' "$2" >> "$OPTOUT"
              echo "watchdog will leave $2 alone"; exit 0 ;;
@@ -206,6 +253,264 @@ token_totals() {
   printf '%s %s' "$spent" "$rd"
 }
 
+# WHEN THIS SESSION LAST TOOK A TURN, as an epoch.
+#
+# NOT the transcript mtime, which this used to read and which is wrong by
+# hours: Claude Code keeps appending bookkeeping records long after the work
+# stops -- last-prompt, ai-title, mode, permission-mode, atis-latch,
+# bridge-session -- and none of them carries a timestamp. MEASURED on a window
+# that finished at 12:28 UTC: mtime said 20:06, so the dashboard called it idle
+# for 31 seconds when it had been idle for four and a half hours, which is
+# exactly backwards from what the column is for.
+#
+# So read the last record that IS a turn. The tail is bounded because these
+# files reach tens of MB, and 200 lines is far more than the handful of
+# trailing metadata records.
+last_turn_epoch() {
+  local f="$1" ts
+  ts="$(tail -n 200 "$f" 2>/dev/null |
+        jq -r 'select(.type=="assistant" or .type=="user") | .timestamp // empty' 2>/dev/null |
+        tail -1)"
+  [ -n "$ts" ] || return 1
+  date -d "$ts" +%s 2>/dev/null
+}
+
+# One field out of the usage cache. Cheap -- eight lines, and the watchdog
+# already keeps it warm on its own hourly clock.
+usage_val() {
+  awk -F'\t' -v k="$1" '$1==k{print $2; exit}' "$USAGE" 2>/dev/null
+}
+
+# Which band a session is in: 0 none, 1 soft, 2 hard.
+#
+# The WEEK escalates rather than setting the band by itself, because the two
+# budgets mean different things: the session bucket refills in five hours, the
+# weekly one will not refill tonight. So a nearly-spent week turns a soft band
+# hard and gives an otherwise-quiet session a nudge -- but it never winds down
+# a session that has barely started, which would spend a checkpoint turn to
+# save a bucket that is about to refill anyway.
+band_for() {
+  local s="${1%%.*}" w="${2%%.*}" b=0
+  case "$s" in ''|*[!0-9]*) s=0 ;; esac
+  case "$w" in ''|*[!0-9]*) w=0 ;; esac
+  [ "$s" -ge "$SOFT_PCT" ] && b=1
+  [ "$s" -ge "$HARD_PCT" ] && b=2
+  if [ "$w" -ge "$HARD_PCT" ]; then
+    [ "$b" -eq 1 ] && b=2
+    [ "$b" -eq 0 ] && b=1
+  fi
+  printf '%s' "$b"
+}
+
+# The last time this session was wound down, as an epoch.
+last_wound() {
+  awk -F'\t' -v s="$1" '$1==s{v=$4} END{print (v?v:"-")}' "$WOUND" 2>/dev/null || echo -
+}
+
+# Hand a WORKING session one line about its budget, at most once per band per
+# limit window. The session is never told why -- it reads as an instruction,
+# not as a negotiation -- and this ledger is the only place the reason is
+# recorded, which is the whole point of deciding out here.
+wind_down() {
+  local sid="$1" name="$2" ctx="$3" st="$4" oo="$5" spct="$6" wpct="$7" key="$8" now="$9"
+  [ -f "$MONITOR" ] || return 0
+  # A dry run reports; it never speaks to a session.
+  [ "$DRY" = 1 ] && return 0
+  grep -qxF "$sid" "$MON_OPTOUT" 2>/dev/null && return 0
+  # Only a session that is DOING something can be wound down. An idle one has
+  # already stopped, and typing at it would start work rather than end it.
+  [ "$st" = "working" ] || return 0
+
+  local b; b="$(band_for "$spct" "$wpct")"
+  [ "$b" = 0 ] && return 0
+
+  # THE HARD BAND ONLY FIRES WHEN IT BUYS SOMETHING. A wind-down costs a
+  # checkpoint turn, and that is only worth paying when the resume will be a
+  # FRESH window -- a big context being the whole reason to restart rather than
+  # continue -- or when /low-priority is not available to carry this session
+  # through the limit. Otherwise the cheapest correct thing is to let it reach
+  # the banner and continue from there, which costs nothing at all.
+  if [ "$b" = 2 ]; then
+    local wi="${wpct%%.*}"
+    case "$wi" in ''|*[!0-9]*) wi=0 ;; esac
+    if [ "${ctx:-0}" -le "$FRESH_CTX" ] && [ "$wi" -lt "$LOWPRI_WEEK" ]; then
+      return 0
+    fi
+  fi
+
+  # QUANTIZE THE WINDOW KEY. session_reset_at is re-derived from a wall clock
+  # the panel rounds, and it drifts a minute between scrapes -- usage.log shows
+  # "resets 10:39" four times then "10:40". An unrounded key makes that jitter
+  # look like a NEW limit window, so the same band fires again: MEASURED, one
+  # session took the soft nudge twice on keys 60 seconds apart. Rounding to a
+  # quarter hour is stable against that and cannot merge two real windows,
+  # which are five hours apart.
+  local qkey=$(( ( ${key:-0} + 450 ) / 900 * 900 ))
+  if awk -F'\t' -v s="$sid" -v b="$b" -v k="$qkey" \
+       '$1==s && $2==b && $3==k{f=1} END{exit !f}' "$WOUND" 2>/dev/null; then
+    return 0
+  fi
+
+  local msg reset
+  reset="$(usage_val session_reset)"
+  if [ "$b" = 2 ]; then
+    msg="Budget checkpoint: land the step you are on now and commit it, then write a handoff to STATUS-${name}.md saying what is done, what is next and anything half-finished. Then stop. The budget resets at ${reset:-the top of the hour}; do not start what you cannot finish before then."
+  else
+    msg="Budget note: this window is past the halfway mark. Stop spawning subagents unless a task genuinely needs one, and prefer targeted greps and partial reads over whole files."
+  fi
+
+  mkdir -p "$DIRECTIVES"
+  printf '%s\n' "$msg" > "$DIRECTIVES/$sid"
+  printf '%s\t%s\t%s\t%s\n' "$sid" "$b" "$qkey" "$now" >> "$WOUND"
+  log "wound down ${sid:0:8} in $name band=$b session=${spct}% week=${wpct}% ctx=$ctx"
+  wound="$now"
+}
+
+# ------------------------------------------------------------- schedules
+# One header field. Values may contain colons (a Windows path, a time), so
+# take everything after the first "key: " rather than splitting on the colon.
+sched_field() {
+  awk -v k="$2" '/^---$/{exit} index($0, k": ")==1{print substr($0, length(k)+3); exit}' "$1"
+}
+
+# Everything after the first --- line: the prompt body.
+sched_body() {
+  awk 'p{print} /^---$/{p=1}' "$1"
+}
+
+# Is this item due? "reset" resolves live from the usage cache -- and a FRESH
+# rolling window has no reset time at all (the documented trap), so a budget
+# that simply reads fresh counts as due on its own. Anything else goes through
+# date -d, which also accepts what a hand types ("tomorrow 06:00").
+sched_due() {
+  local at="$1" now="$2" e sp
+  if [ "$at" = reset ]; then
+    sp="$(usage_val session_pct)"; sp="${sp%%.*}"
+    case "$sp" in ''|*[!0-9]*) sp=100 ;; esac
+    [ "$sp" -le 10 ] && return 0
+    e="$(usage_val session_reset_at)"
+    [ -n "$e" ] && [ "$now" -ge $(( e + GRACE )) ] && return 0
+    return 1
+  fi
+  e="$(date -d "$at" +%s 2>/dev/null)" || return 1
+  [ -n "$e" ] && [ "$now" -ge "$e" ]
+}
+
+# Rewrite the status (and stamp launched:) in place. Only the header is
+# touched; sed stops caring after the fact because both lines sit before ---.
+sched_mark() {
+  local f="$1" st="$2"
+  sed -i -e "s/^status: .*/status: $st/" \
+         -e "s/^launched:.*/launched: $(date '+%Y-%m-%d %H:%M')/" "$f" 2>/dev/null
+}
+
+# Open the window, get claude to a prompt, paste the body, press Enter.
+launch_schedule() {
+  local f="$1"
+  local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust
+  type="$(sched_field "$f" type)"
+  title="$(sched_field "$f" title)"
+  win="$(sched_field "$f" window)"
+  cwd="$(sched_field "$f" cwd)"
+  tmpl="$(sched_field "$f" template)"
+
+  slug="${title:-$(basename "$f" .md)}"
+  slug="$(printf '%s' "$slug" | tr -c 'A-Za-z0-9._-' '-' )"
+  slug="${slug:0:22}"
+  wname="➥${slug}"
+
+  # Compose what gets pasted. A plan leads with its template (the contracts
+  # live there); a work item is followed by the checkpoint footer so every
+  # scheduled window is resumable by construction.
+  bodyf="$STATE_DIR/sched-body.$$"
+  {
+    if [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
+      cat "$SCHEDULES/templates/$tmpl.md"
+      echo
+    fi
+    sched_body "$f"
+    if [ "$type" = work ]; then
+      echo
+      echo "Work in phases, one commit per phase. When done -- or when asked to stop -- write STATUS-$slug.md in this directory saying what is done, what is next, and anything half-finished."
+    fi
+  } > "$bodyf"
+
+  # Insert right after the named window when it exists. Resolve the INDEX --
+  # matching -t by name errors on duplicates, and this session's indices are
+  # sparse (0,1,7,8,9 today), so never assume contiguity either.
+  local -a targs=()
+  if [ -n "$win" ]; then
+    idx="$(tmux list-windows -t claude -F '#{window_index} #{window_name}' 2>/dev/null \
+           | awk -v w="$win" '$2==w{print $1; exit}')"
+    [ -n "$idx" ] && targs=(-a -t "claude:$idx")
+  fi
+
+  pane="$(tmux new-window -d -P -F '#{pane_id}' "${targs[@]}" -n "$wname" -c "$cwd" \
+          "$HOME/.local/bin/claude" 2>/dev/null)"
+  if [ -z "$pane" ]; then
+    sched_mark "$f" error
+    log "schedule $(basename "$f"): could not open a tmux window"
+    rm -f "$bodyf"; return 1
+  fi
+
+  # Wait for a prompt, answering the TRUST DIALOG on the way: trust is per
+  # exact path in ~/.claude.json and none of the lane worktrees carry it, so
+  # the dialog is the common case here, not an edge.
+  ready=""; did_trust=""
+  for i in $(seq 1 60); do
+    sleep 0.5
+    txt="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
+    if [ -z "$did_trust" ] && grep -q "trust this folder" <<<"$txt"; then
+      did_trust=1
+      tmux send-keys -t "$pane" Down 2>/dev/null; sleep 0.4
+      tmux send-keys -t "$pane" Enter 2>/dev/null; sleep 1
+      continue
+    fi
+    grep -q '❯' <<<"$txt" && { ready=1; break; }
+  done
+  if [ -z "$ready" ]; then
+    sched_mark "$f" error
+    log "schedule $(basename "$f"): claude never reached a prompt in $wname"
+    rm -f "$bodyf"; return 1
+  fi
+
+  # PASTE, never send-keys: a multi-line body through send-keys submits at
+  # every newline. Bracketed paste (-p) hands the TUI one paste event.
+  tmux load-buffer -b schedbody "$bodyf" 2>/dev/null
+  tmux paste-buffer -d -b schedbody -p -t "$pane" 2>/dev/null
+  sleep 1
+  tmux send-keys -t "$pane" Enter 2>/dev/null
+  rm -f "$bodyf"
+
+  sched_mark "$f" launched
+  log "schedule $(basename "$f"): launched $wname (pane $pane) type=$type"
+}
+
+# One pass over the folder. Gated on the same master switch as the restart
+# prompt -- opening a window spends tokens exactly the way re-prompting does --
+# and a dry run reports without acting, like everywhere else in this file.
+check_schedules() {
+  [ -f "$ENABLED" ] || return 0
+  [ "$DRY" = 1 ] && return 0
+  [ -d "$SCHEDULES" ] || return 0
+  local f now st type at cwd
+  now="$(date +%s)"
+  for f in "$SCHEDULES"/*.md; do
+    [ -f "$f" ] || continue
+    case "$f" in */README.md) continue ;; esac
+    st="$(sched_field "$f" status)"
+    [ "$st" = pending ] || continue
+    type="$(sched_field "$f" type)"
+    at="$(sched_field "$f" at)"
+    cwd="$(sched_field "$f" cwd)"
+    case "$type" in plan|work) ;; *) continue ;; esac
+    [ -n "$cwd" ] && [ -d "$cwd" ] || continue
+    if [ "$type" = work ] && [ -z "$(sched_body "$f")" ]; then continue; fi
+    sched_due "$at" "$now" || continue
+    launch_schedule "$f"
+  done
+}
+
 # Last time we prompted this session, as an epoch. The prompted file is the
 # dedupe ledger and now carries the moment too, so one file answers both
 # "have we already handled this limit" and "when did it last get restarted".
@@ -251,12 +556,18 @@ pass() {
   local tmp="$STATUS.tmp"; : > "$tmp"
 
   local f pid sid pane paneid ver st kind cwd tr ctx name text reset epoch state acted
-  local spent rd resumed model optout idle jobid
+  local spent rd resumed model optout idle jobid cwd turn_at wound moptout
+  # Read once per pass, not once per session: every session is judged against
+  # the same account-wide figures.
+  local spct wpct rkey
+  spct="$(usage_val session_pct)"; wpct="$(usage_val week_pct)"
+  rkey="$(usage_val session_reset_at)"
   for f in "$HOME"/.claude/sessions/*.json; do
     [ -f "$f" ] || continue
     pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
     kill -0 "$pid" 2>/dev/null || continue          # stale record, process gone
     sid="$(jq -r '.sessionId // empty' "$f")"
+    cwd="$(jq -r '.cwd // empty' "$f")"
     pane="$(jq -r '.tmux // empty' "$f")"
     ver="$(jq -r '.version // "?"' "$f")"
     st="$(jq -r '.status // "?"' "$f")"
@@ -280,10 +591,13 @@ pass() {
     # the cheapest honest answer, and it separates "quiet because it finished"
     # from "quiet because it stalled" at a glance.
     idle=-1
-    [ -n "${tr:-}" ] && [ -f "${tr:-}" ] && \
-      idle=$(( now - $(stat -c %Y "$tr" 2>/dev/null || echo "$now") ))
+    if [ -n "${tr:-}" ] && [ -f "${tr:-}" ]; then
+      turn_at="$(last_turn_epoch "$tr")"
+      [ -n "$turn_at" ] && idle=$(( now - turn_at ))
+    fi
     resumed="$(last_resumed "$sid")"
     optout=0; grep -qxF "$sid" "$OPTOUT" 2>/dev/null && optout=1
+    moptout=0; grep -qxF "$sid" "$MON_OPTOUT" 2>/dev/null && moptout=1
 
     name="-"; text=""; jobid=""
     if [ -n "$paneid" ]; then
@@ -306,7 +620,13 @@ pass() {
     if grep -q "esc to interrupt" <<<"$text"; then
       state="working"
     elif grep -q "hit your session limit" <<<"$text"; then
-      reset="$(grep -oE 'resets [0-9]{1,2}:[0-9]{2} ?[ap]m' <<<"$text" | tail -1 | awk '{print $2 $3}')"
+      # THE MINUTES ARE OPTIONAL. A limit that resets on the hour prints
+      # "resets 7pm" with no ":00", and requiring H:MM here meant the reset
+      # never parsed, the state never left "limited", and every window that hit
+      # an on-the-hour limit sat parked for hours -- while off-hour ones
+      # ("resets 12:40pm") resumed correctly, which is what hid it. That is the
+      # exact failure this whole file exists to prevent.
+      reset="$(grep -oiE 'resets [0-9]{1,2}(:[0-9]{2})? ?[ap]m' <<<"$text" | tail -1 | awk '{print $2 $3}')"
       if [ -n "$reset" ]; then
         epoch="$(reset_epoch "$reset")"
         if [ -n "$epoch" ] && [ "$now" -ge $(( epoch + GRACE )) ]; then
@@ -318,6 +638,9 @@ pass() {
         state="limited"
       fi
     fi
+
+    wound="$(last_wound "$sid")"
+    wind_down "$sid" "$name" "$ctx" "$state" "$optout" "$spct" "$wpct" "$rkey" "$now"
 
     acted=""
     if [ "$state" = "due" ]; then
@@ -341,13 +664,15 @@ pass() {
       fi
     fi
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s	%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$sid" "$name" "$paneid" "$ver" "$ctx" "$state" "$reset" "$acted" \
-      "$resumed" "$spent" "$rd" "$optout" "$model" "$idle" "$jobid" >> "$tmp"
+      "$resumed" "$spent" "$rd" "$optout" "$model" "$idle" "$jobid" \
+      "${cwd:--}" "${wound:--}" "$moptout" >> "$tmp"
   done
 
   mv "$tmp" "$STATUS"
   sweep_repos
+  check_schedules
   # Keep the limit figures warm on their own hourly clock. --ensure is a no-op
   # when the cache is young, so this costs nothing between the hours, and it is
   # also what catches a limit resetting EARLY: nobody is watching the dashboard
@@ -355,7 +680,7 @@ pass() {
   [ -x "$SCRIPT_DIR/claude-usage.sh" ] && \
     "$SCRIPT_DIR/claude-usage.sh" --ensure 60 >/dev/null 2>&1
   if [ "$DRY" = 1 ]; then
-    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\n'
+    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\n'
       awk -F'\t' 'BEGIN{OFS="\t"} {$1=substr($1,1,8);
         if ($9!="-" && $9!="") $9=strftime("%m-%d %H:%M",$9); print}' "$STATUS"
     } | column -t -s $'\t'

@@ -62,6 +62,10 @@ WATCHDOG_OPTOUT = WATCHDOG_DIR / "optout"
 WATCHDOG_REPOS = WATCHDOG_DIR / "repos.tsv"
 WATCHDOG_USAGE = WATCHDOG_DIR / "usage.tsv"
 WATCHDOG_HOORAY = WATCHDOG_DIR / "usage.hooray"
+WATCHDOG_MONITOR = WATCHDOG_DIR / "monitor"
+WATCHDOG_MON_OPTOUT = WATCHDOG_DIR / "monitor-optout"
+WATCHDOG_DIRECTIVES = WATCHDOG_DIR / "directives"
+WATCHDOG_MSG = WATCHDOG_DIR / "message"
 # u refreshes only past this age; U ignores it. The watchdog keeps its own
 # hourly clock, so this is about not starting a probe per keypress.
 USAGE_MAX_AGE = int(os.environ.get("CLAUDE_USAGE_MAX_AGE", "20"))
@@ -217,15 +221,19 @@ def ports_for(pids: list[int], inodes: dict[int, int]) -> dict[int, int]:
 
 class ClaudeSession:
     __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action",
-                 "resumed", "spent", "cached", "optout", "model", "idle", "job")
+                 "resumed", "spent", "cached", "optout", "model", "idle", "job",
+                 "cwd", "wound", "dirty", "moptout")
 
     def __init__(self, sid, window, pane, ver, ctx, state, reset, action,
-                 resumed=0, spent=0, cached=0, optout=False, model="-", idle=-1, job=""):
+                 resumed=0, spent=0, cached=0, optout=False, model="-", idle=-1, job="",
+                 cwd="-", wound=0, moptout=False):
         self.sid, self.window, self.pane, self.ver = sid, window, pane, ver
         self.ctx, self.state, self.reset, self.action = ctx, state, reset, action
         self.resumed, self.spent, self.cached = resumed, spent, cached
         self.optout, self.model = optout, model
         self.idle, self.job = idle, job
+        self.cwd, self.wound, self.moptout = cwd, wound, moptout
+        self.dirty = 0          # filled in from the repo sweep at render time
 
 
 def claude_sessions() -> tuple[list[ClaudeSession], float]:
@@ -260,6 +268,9 @@ def claude_sessions() -> tuple[list[ClaudeSession], float]:
             f[12] if len(f) > 12 else "-",
             num(f, 13) if len(f) > 13 else -1,
             f[14] if len(f) > 14 else "",
+            f[15] if len(f) > 15 else "-",
+            num(f, 16) if len(f) > 16 else 0,
+            (len(f) > 17 and f[17] == "1"),
         ))
     return out, age
 
@@ -359,20 +370,131 @@ def hooray() -> bool:
         return False
 
 
-def dirty_repos() -> list[tuple[str, int]]:
-    """(name, changed files) for every repo the watchdog found dirty."""
+def dirty_repos() -> list[tuple[str, str, int]]:
+    """(path, name, changed files) for every repo the watchdog found dirty."""
     out = []
     try:
         for line in WATCHDOG_REPOS.read_text().splitlines():
             f = line.split("\t")
             if len(f) >= 3:
                 try:
-                    out.append((f[1], int(f[2])))
+                    out.append((f[0], f[1], int(f[2])))
                 except ValueError:
                     pass
     except OSError:
         pass
+    out.sort(key=lambda r: -r[2])
     return out
+
+
+def dirty_for(cwd: str, repos: list[tuple[str, str, int]]) -> int:
+    """Uncommitted files in the repo the session is sitting in.
+
+    Longest prefix wins, because a worktree lives inside the parent checkout's
+    directory and the inner one is the answer. This is a HINT on the row; the
+    table below is the truth, and it lists dirty repos with no session at all --
+    which are the ones most likely to be forgotten."""
+    if not cwd or cwd == "-":
+        return 0
+    best = 0
+    best_len = -1
+    for path, _name, n in repos:
+        if (cwd == path or cwd.startswith(path.rstrip("/") + "/")) and len(path) > best_len:
+            best, best_len = n, len(path)
+    return best
+
+
+def monitor_on() -> bool:
+    return WATCHDOG_MONITOR.exists()
+
+
+def monitor_opted_out() -> set[str]:
+    """Sessions exempt from wind-downs -- a SEPARATE list from the restart
+    opt-out, because they are different powers: a lane can be safe to restart
+    after a limit and still be one you never want interrupted mid-turn. Read
+    live for the same reason the other one is: the watchdog republishes only
+    every 30s, and a toggle that appears dead for half a minute reads as broken."""
+    try:
+        return {l.strip() for l in WATCHDOG_MON_OPTOUT.read_text().splitlines() if l.strip()}
+    except OSError:
+        return set()
+
+
+# ------------------------------------------------------------- schedules
+SCHEDULES_DIR = HOME / ".code" / "schedules"
+SCHED_TEMPLATES = SCHEDULES_DIR / "templates"
+# Where autonomous plan sessions park the forks they could not ask about.
+QUESTIONS_DIR = HOME / ".code" / "theprototype-app" / "core" / "plans"
+# The desktop-extras entry rides the same cursor as the sessions.
+EXTRAS_SENTINEL = "::extras"
+
+
+def read_schedules() -> list[dict]:
+    """Parse every schedule file, KEEPING the broken ones.
+
+    The executor (claude-watchdog.sh) silently skips what it cannot parse;
+    this side's whole job is the opposite -- show the file with the reason it
+    will never launch, because a schedule that quietly does nothing is the
+    worst failure a scheduler can have."""
+    rows: list[dict] = []
+    try:
+        files = sorted(SCHEDULES_DIR.glob("*.md"))
+    except OSError:
+        return rows
+    for f in files:
+        if f.name == "README.md":
+            continue
+        row = {"file": f, "type": "", "at": "", "title": "", "window": "",
+               "cwd": "", "template": "", "status": "", "created": "",
+               "launched": "", "body": "", "bad": ""}
+        try:
+            text = f.read_text()
+        except OSError as exc:
+            row["bad"] = "unreadable: %s" % exc
+            rows.append(row)
+            continue
+        head, sep, body = text.partition("\n---\n")
+        if not sep:
+            row["bad"] = "no --- separator line"
+        for line in head.splitlines():
+            k, _, v = line.partition(": ")
+            k = k.rstrip(":")           # tolerate "launched:" with no value
+            if k in row and k not in ("file", "body", "bad"):
+                row[k] = v.strip()
+        row["body"] = body.strip()
+        if not row["bad"]:
+            row["bad"] = validate_schedule(row)
+        rows.append(row)
+    return rows
+
+
+def validate_schedule(row: dict) -> str:
+    """The corrupted-marking rules. Mirrors what the bash executor requires --
+    kept deliberately a little STRICTER (exact time format), since this side
+    is a linter for hand-edited files and bash date -d will swallow almost
+    anything, right or wrong."""
+    if row["type"] not in ("plan", "work"):
+        return "type must be plan or work (got %r)" % (row["type"] or "")
+    if row["at"] != "reset":
+        ok = False
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+            try:
+                time.strptime(row["at"], fmt)
+                ok = True
+                break
+            except ValueError:
+                pass
+        if not ok:
+            return "at must be 'reset' or YYYY-MM-DD HH:MM (got %r)" % (row["at"] or "")
+    if not row["cwd"] or not Path(row["cwd"]).is_dir():
+        return "cwd missing or not a directory"
+    if row["type"] == "work" and not row["body"]:
+        return "work item has an empty prompt body"
+    if row["template"] and not (SCHED_TEMPLATES / (row["template"] + ".md")).exists():
+        return "template %r not in templates/" % row["template"]
+    if row["status"] not in ("pending", "launched", "error", ""):
+        return "unknown status %r" % row["status"]
+    return ""
 
 
 def human_tokens(n: int) -> str:
@@ -462,6 +584,20 @@ class Dashboard:
         self.sids: list[str] = []   # last rendered order, for the arrow keys
         self.panes: dict[str, str] = {}   # session id -> tmux pane, for Enter
         self.jobs: dict[str, str] = {}    # session id -> bg job id, for attach
+        self.windows: dict[str, str] = {}  # session id -> tmux window name
+        # Space opens a menu rather than toggling one setting, because the
+        # useful actions outgrew the keyboard: two global switches plus six
+        # things to do to the window under the cursor.
+        self.menu_open = False
+        self.menu_i = 0
+        self.prompt: dict | None = None    # inline text entry (rename)
+        self.confirm: dict | None = None   # yes/no gate (close)
+        self.picker: dict | None = None    # arrow-driven option list (create flow)
+        self.pending_edit: str | None = None   # file the main loop opens in an editor
+        self.view = "main"                 # "main" | "sched"
+        self.sched_i = 0
+        self.sched_rows: list[dict] = []
+        self.cwds: dict[str, str] = {}     # session id -> working directory
         self.version = (SCRIPTS / "VERSION").read_text().strip() if (SCRIPTS / "VERSION").exists() else "?"
 
     def say(self, msg: str) -> None:
@@ -483,6 +619,8 @@ class Dashboard:
         Ctrl-b 0 comes straight back. A background session (`claude --bg`) has
         no pane to switch to, which is a real case here rather than an edge one,
         so it is named instead of failing silently."""
+        if self.cursor == EXTRAS_SENTINEL:
+            return self.toggle_extras()
         pane = self.panes.get(self.cursor, "")
         if not pane:
             job = self.jobs.get(self.cursor, "")
@@ -501,6 +639,506 @@ class Dashboard:
             return "" if r.returncode == 0 else f"could not open: {r.stderr.strip()}"
         except (OSError, subprocess.TimeoutExpired) as exc:
             return f"could not open: {exc}"
+
+    # ---------------------------------------------------------------- menu
+    def menu_entries(self) -> list[dict]:
+        """Rebuilt every frame so the labels state what is true right now."""
+        wd_all = WATCHDOG_ENABLED.exists()
+        mon_all = monitor_on()
+        sid = self.cursor
+        if sid == EXTRAS_SENTINEL:
+            return [{"label": "Reclaim or start desktop extras",
+                     "act": self.toggle_extras}]
+        win = self.windows.get(sid, "")
+        has_pane = bool(self.panes.get(sid))
+        skipped = sid in opted_out()
+        mskipped = sid in monitor_opted_out()
+        label = win or (sid[:8] if sid else "nothing")
+        # THE MENU IS PER WINDOW. The two global switches live on w and m and
+        # are shown in the panel title, because a menu opened over one row is
+        # the wrong place to disarm the whole fleet -- and because the question
+        # you actually have in front of a row is about THAT lane.
+        items: list[dict] = []
+        if sid:
+            items += [
+                {"key": "wd_win",
+                 "label": "Restart %s after a limit: %s" % (
+                     label, "YES" if not skipped else "no, left parked"),
+                 "on": not skipped, "act": self.toggle_selected},
+                {"key": "mon_win",
+                 "label": "Wind %s down near the limit: %s" % (
+                     label, "YES" if not mskipped else "no, never interrupted"),
+                 "on": not mskipped, "act": self.act_mon_window},
+                {"sep": True},
+                {"label": "Open %s" % label, "act": self.open_selected, "need_pane": True},
+                {"label": "Rename %s" % label, "act": self.act_rename, "need_pane": True},
+                {"label": "Wind down %s now  ask it to checkpoint and stop" % label,
+                 "act": self.act_wind},
+                {"label": "Resume %s now  tell it to continue" % label,
+                 "act": self.act_resume, "need_pane": True},
+                {"label": "Continue %s at low priority  spends the WEEKLY budget" % label,
+                 "act": self.act_lowpri, "need_pane": True},
+                {"label": "Schedule ➥resume of %s at the next reset  reads its STATUS file" % label,
+                 "act": self.act_schedule_resume},
+                {"sep": True},
+                {"label": "Close %s  kills the claude session in it" % label,
+                 "act": self.act_close, "need_pane": True, "danger": True},
+            ]
+        else:
+            items = [{"label": "no session selected", "disabled": "nothing to act on"}]
+        # Say so when a global switch makes the rows above moot, rather than
+        # letting a row read ON while nothing can happen.
+        if not wd_all:
+            items.append({"label": "watchdog is off globally  (w turns it on)",
+                          "disabled": "global"})
+        if not mon_all:
+            items.append({"label": "monitoring is off globally  (m turns it on)",
+                          "disabled": "global"})
+        for it in items:
+            if it.get("need_pane") and not has_pane:
+                it["disabled"] = "background session, no window"
+        return items
+
+    def menu_move(self, delta: int) -> None:
+        items = self.menu_entries()
+        i = self.menu_i
+        for _ in range(len(items)):
+            i = (i + delta) % len(items)
+            if not items[i].get("sep") and not items[i].get("disabled"):
+                self.menu_i = i
+                return
+
+    def menu_activate(self) -> None:
+        items = self.menu_entries()
+        if not (0 <= self.menu_i < len(items)):
+            return
+        it = items[self.menu_i]
+        if it.get("sep") or it.get("disabled"):
+            return
+        msg = it["act"]()
+        # A submode owns the screen until it is answered; a plain action is done.
+        if self.prompt is None and self.confirm is None:
+            if it.get("key") not in ("watchdog", "monitor"):
+                self.menu_open = False
+        if msg:
+            self.say(msg)
+
+    def act_watchdog(self) -> str:
+        return toggle_watchdog()
+
+    def act_mon_window(self) -> str:
+        """Exempt THIS session from wind-downs, or put it back in scope."""
+        if not self.cursor:
+            return "no session selected"
+        try:
+            WATCHDOG_DIR.mkdir(parents=True, exist_ok=True)
+            lines = []
+            if WATCHDOG_MON_OPTOUT.exists():
+                lines = [l for l in WATCHDOG_MON_OPTOUT.read_text().splitlines() if l.strip()]
+            win = self.windows.get(self.cursor, self.cursor[:8])
+            if self.cursor in lines:
+                lines.remove(self.cursor)
+                msg = "%s may be wound down near the limit" % win
+            else:
+                lines.append(self.cursor)
+                msg = "%s will never be interrupted" % win
+            WATCHDOG_MON_OPTOUT.write_text("".join(l + "\n" for l in lines))
+            return msg
+        except OSError as exc:
+            return "toggle failed: %s" % exc
+
+    def act_monitor(self) -> str:
+        """Arm or disarm the wind-downs. Separate from the watchdog on purpose:
+        restarting a window that already stopped cannot lose anything, while
+        telling a working window to wrap up changes what it is doing."""
+        try:
+            WATCHDOG_DIR.mkdir(parents=True, exist_ok=True)
+            if WATCHDOG_MONITOR.exists():
+                WATCHDOG_MONITOR.unlink()
+                return "session monitoring off - no window will be asked to stop"
+            WATCHDOG_DIRECTIVES.mkdir(parents=True, exist_ok=True)
+            WATCHDOG_MONITOR.touch()
+            return "session monitoring on - a window near the limit is asked to checkpoint"
+        except OSError as exc:
+            return "monitor toggle failed: %s" % exc
+
+    def act_rename(self) -> str:
+        win = self.windows.get(self.cursor, "")
+        self.prompt = {"title": "Rename %s to" % (win or "window"), "buf": "",
+                       "fn": self._do_rename}
+        return ""
+
+    def _do_rename(self, text: str) -> str:
+        name = text.strip()
+        if not name:
+            return "rename cancelled"
+        pane = self.panes.get(self.cursor, "")
+        if not pane:
+            return "no window to rename"
+        try:
+            subprocess.run(["tmux", "rename-window", "-t", pane, name],
+                           capture_output=True, timeout=5)
+            return "renamed to %s" % name
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return "rename failed: %s" % exc
+
+    def act_close(self) -> str:
+        win = self.windows.get(self.cursor, "") or self.cursor[:8]
+        self.confirm = {"label": "Close %s? The claude session in it is killed." % win,
+                        "fn": self._do_close}
+        return ""
+
+    def _do_close(self) -> str:
+        pane = self.panes.get(self.cursor, "")
+        if not pane:
+            return "no window to close"
+        try:
+            subprocess.run(["tmux", "kill-window", "-t", pane],
+                           capture_output=True, timeout=5)
+            return "closed"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return "close failed: %s" % exc
+
+    def act_wind(self) -> str:
+        """Drop a directive the session picks up after its next tool call.
+
+        This is the same channel the watchdog uses, so a hand-driven wind-down
+        and an automatic one are indistinguishable to the session -- which is
+        the point: it is told what to do, never why."""
+        if not self.cursor:
+            return "no session selected"
+        u = usage_limits()
+        reset = u.get("session_reset") or "the top of the hour"
+        win = self.windows.get(self.cursor, "this lane")
+        msg = ("Budget checkpoint: land the step you are on now and commit it, then "
+               "write a handoff to STATUS-%s.md saying what is done, what is next and "
+               "anything half-finished. Then stop. The budget resets at %s; do not "
+               "start what you cannot finish before then." % (win, reset))
+        try:
+            WATCHDOG_DIRECTIVES.mkdir(parents=True, exist_ok=True)
+            (WATCHDOG_DIRECTIVES / self.cursor).write_text(msg + "\n")
+            return "%s will be asked to checkpoint after its next tool call" % win
+        except OSError as exc:
+            return "could not queue: %s" % exc
+
+    def _send(self, text: str) -> str:
+        pane = self.panes.get(self.cursor, "")
+        if not pane:
+            return "no window to type into"
+        try:
+            subprocess.run(["tmux", "send-keys", "-t", pane, text],
+                           capture_output=True, timeout=5)
+            time.sleep(0.6)
+            subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"],
+                           capture_output=True, timeout=5)
+            return "sent"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return "send failed: %s" % exc
+
+    def act_resume(self) -> str:
+        try:
+            msg = WATCHDOG_MSG.read_text().splitlines()[0]
+        except (OSError, IndexError):
+            msg = "The usage limit has reset. Continue from where you left off."
+        return self._send(msg)
+
+    def act_lowpri(self) -> str:
+        """Continue NOW against the weekly budget instead of waiting for the
+        session window to refill. Offered by the limit banner itself."""
+        return self._send("/low-priority")
+
+    def prompt_key(self, key: str) -> None:
+        pr = self.prompt
+        if pr is None:
+            return
+        if key in ("\r", "\n"):
+            fn = pr["fn"]
+            text = pr["buf"]
+            self.prompt = None
+            self.menu_open = False
+            self.say(fn(text))
+        elif key == "\x1b":
+            self.prompt = None
+            self.say("cancelled")
+        elif key in ("\x7f", "\b"):
+            pr["buf"] = pr["buf"][:-1]
+        elif len(key) == 1 and key.isprintable():
+            pr["buf"] += key
+
+    def confirm_key(self, key: str) -> None:
+        cf = self.confirm
+        if cf is None:
+            return
+        if key in ("y", "Y"):
+            fn = cf["fn"]
+            self.confirm = None
+            self.menu_open = False
+            self.say(fn())
+        elif key in ("n", "N", "\x1b", "\r", "\n"):
+            self.confirm = None
+            self.say("cancelled")
+
+    def _submode_foot(self):
+        """The footer panel when a text prompt, confirm or picker owns the
+        keyboard -- shared by both views so the create flow works from either."""
+        if self.prompt is not None:
+            return Panel(
+                Text.assemble((self.prompt["title"] + ": ", "bold"),
+                              (self.prompt["buf"], "#c9a0dc"), ("_", "bold #c9a0dc"),
+                              ("      enter save · esc cancel", DIM)),
+                border_style="#c9a0dc", box=box.ROUNDED)
+        if self.confirm is not None:
+            return Panel(
+                Text.assemble((self.confirm["label"], "bold"), "    ",
+                              ("y", "bold " + RED), (" yes    ", DIM),
+                              ("n", "bold"), (" no", DIM)),
+                border_style=RED, box=box.ROUNDED)
+        if self.picker is not None:
+            body = Text()
+            for i, opt in enumerate(self.picker["options"]):
+                cur = (i == self.picker["i"])
+                body.append(" ▸ " if cur else "   ", style="bold #c9a0dc")
+                body.append(opt + "\n", style="bold" if cur else "")
+            body.append("   ↑↓ pick · enter choose · esc cancel", style=DIM)
+            return Panel(body, title="[bold]" + self.picker["title"],
+                         title_align="left", border_style="#c9a0dc", box=box.ROUNDED)
+        return None
+
+    def picker_key(self, key: str) -> None:
+        pk = self.picker
+        if pk is None:
+            return
+        if key == "UP":
+            pk["i"] = (pk["i"] - 1) % len(pk["options"])
+        elif key == "DOWN":
+            pk["i"] = (pk["i"] + 1) % len(pk["options"])
+        elif key in ("\r", "\n"):
+            fn, choice = pk["fn"], pk["options"][pk["i"]]
+            self.picker = None
+            msg = fn(choice)
+            if msg:
+                self.say(msg)
+        elif key == "\x1b":
+            self.picker = None
+            self.say("cancelled")
+
+    # ------------------------------------------------------------ schedules
+    def sched_move(self, delta: int) -> None:
+        if self.sched_rows:
+            self.sched_i = max(0, min(len(self.sched_rows) - 1, self.sched_i + delta))
+
+    def _sched_sel(self):
+        if 0 <= self.sched_i < len(self.sched_rows):
+            return self.sched_rows[self.sched_i]
+        return None
+
+    def request_edit_selected(self) -> str:
+        r = self._sched_sel()
+        if r is None:
+            return "nothing selected — c creates one"
+        self.pending_edit = str(r["file"])
+        return ""
+
+    def start_create(self) -> None:
+        self.picker = {"title": "schedule what?", "i": 0,
+                       "options": ["plan", "work"], "fn": self._create_type}
+
+    def _create_type(self, choice: str) -> str:
+        if choice == "plan":
+            tpls = sorted(t.stem for t in SCHED_TEMPLATES.glob("*.md"))
+            if tpls:
+                self.picker = {"title": "from which template?", "i": 0,
+                               "options": tpls, "fn": self._create_tpl}
+                return ""
+        return self._create_write(choice, "")
+
+    def _create_tpl(self, choice: str) -> str:
+        return self._create_write("plan", choice)
+
+    def _create_write(self, typ: str, tpl: str) -> str:
+        """Write a pre-filled item and drop straight into the editor on it.
+
+        The chosen template is COPIED into the body rather than referenced, so
+        what you edit is exactly what gets pasted -- a referenced template
+        would be prepended again by the executor."""
+        try:
+            SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
+            f = SCHEDULES_DIR / ("%s-%s.md" % (typ, time.strftime("%Y%m%d-%H%M%S")))
+            cwd = self.cwds.get(self.cursor, "")
+            if not cwd or cwd == "-":
+                cwd = str(HOME / ".code" / "theprototype-app" / "core")
+            body = ""
+            if tpl:
+                try:
+                    body = (SCHED_TEMPLATES / (tpl + ".md")).read_text()
+                except OSError:
+                    body = ""
+            f.write_text("type: %s\n" % typ
+                         + "at: reset\n"
+                         + "title: \n"
+                         + "window: \n"
+                         + "cwd: %s\n" % cwd
+                         + "status: pending\n"
+                         + "created: %s\n" % time.strftime("%Y-%m-%d %H:%M")
+                         + "launched:\n"
+                         + "---\n" + body)
+            self.pending_edit = str(f)
+            return "created %s — set the title and time, paste the prompt" % f.name
+        except OSError as exc:
+            return "create failed: %s" % exc
+
+    def launch_selected_now(self) -> str:
+        """Make the item due immediately; the daemon does the actual launch on
+        its next 30s pass -- one launcher, whoever asked."""
+        r = self._sched_sel()
+        if r is None:
+            return "nothing selected"
+        if r["bad"]:
+            return "cannot launch: %s" % r["bad"]
+        if r["status"] != "pending":
+            return "only a pending item launches (this one is %s)" % (r["status"] or "?")
+        try:
+            text = r["file"].read_text()
+            lines = text.split("\n")
+            for i, l in enumerate(lines):
+                if l.startswith("at: "):
+                    lines[i] = "at: " + time.strftime("%Y-%m-%d %H:%M")
+                    break
+            r["file"].write_text("\n".join(lines))
+            return "due now — the watchdog launches it within ~30s"
+        except OSError as exc:
+            return "failed: %s" % exc
+
+    def confirm_delete_selected(self) -> None:
+        r = self._sched_sel()
+        if r is None:
+            self.say("nothing selected")
+            return
+        f = r["file"]
+        self.confirm = {"label": "Delete %s?" % f.name,
+                        "fn": lambda: self._do_sched_delete(f)}
+
+    def _do_sched_delete(self, f) -> str:
+        try:
+            f.unlink()
+            return "deleted %s" % f.name
+        except OSError as exc:
+            return "delete failed: %s" % exc
+
+    def act_schedule_resume(self) -> str:
+        """The wound-down flow's other half: a work item, due at the reset,
+        that opens a fresh ➥window right after this one and reads the STATUS
+        handoff the wind-down asked the session to write."""
+        sid = self.cursor
+        win = self.windows.get(sid, "")
+        cwd = self.cwds.get(sid, "")
+        if not win or not cwd or cwd == "-":
+            return "no window/cwd to schedule from"
+        try:
+            SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
+            status_file = "%s/STATUS-%s.md" % (cwd, win)
+            try:
+                tpl = (SCHED_TEMPLATES / "resume-status.md").read_text()
+            except OSError:
+                tpl = ('Read {{STATUS_FILE}} and continue from its "How to resume" '
+                       "section. One commit per phase; update the STATUS file "
+                       "before stopping.")
+            f = SCHEDULES_DIR / ("resume-%s.md" % win)
+            f.write_text("type: work\n"
+                         + "at: reset\n"
+                         + "title: resume %s\n" % win
+                         + "window: %s\n" % win
+                         + "cwd: %s\n" % cwd
+                         + "status: pending\n"
+                         + "created: %s\n" % time.strftime("%Y-%m-%d %H:%M")
+                         + "launched:\n"
+                         + "---\n" + tpl.replace("{{STATUS_FILE}}", status_file))
+            return "scheduled ➥resume of %s at the next reset (%s)" % (win, f.name)
+        except OSError as exc:
+            return "schedule failed: %s" % exc
+
+    def toggle_extras(self) -> str:
+        """Enter on the extras row: reclaim when running, start when not --
+        the old s/S pair folded onto the cursor. Blocks the frame for the
+        deck-ram run, exactly as the old keys did."""
+        procs = processes(uptime_seconds())
+        extras = sum(p.rss_mb for p in procs
+                     if any(h in p.cmdline for h in EXTRA_HINTS))
+        return run_deck_ram("stop" if extras else "start")
+
+    def build_sched(self) -> Group:
+        rows = read_schedules()
+        self.sched_rows = rows
+        self.sched_i = max(0, min(self.sched_i, len(rows) - 1)) if rows else 0
+
+        u = usage_limits()
+        reset_txt = ""
+        if u.get("session_reset_at"):
+            try:
+                reset_txt = time.strftime("%H:%M", time.localtime(int(u["session_reset_at"])))
+            except (ValueError, OverflowError):
+                pass
+
+        st = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
+                   header_style=DIM, border_style=FRAME)
+        st.add_column("", width=3)
+        st.add_column("STATUS", width=10)
+        st.add_column("TYPE", width=6)
+        st.add_column("FOR", width=18)
+        st.add_column("AT", width=17)
+        st.add_column("TITLE", ratio=1, overflow="ellipsis", no_wrap=True)
+        st.add_column("FILE", width=28, overflow="ellipsis", no_wrap=True)
+        for i, r in enumerate(rows):
+            mark = Text("▸" if i == self.sched_i else " ", style="bold #c9a0dc")
+            if r["bad"]:
+                stx = Text("corrupted", style=RED)
+            elif r["status"] == "launched":
+                stx = Text("launched", style=DIM)
+            elif r["status"] == "error":
+                stx = Text("error", style=RED)
+            else:
+                stx = Text("pending", style=GREEN)
+            when_for = r["at"] or "?"
+            if r["at"] == "reset" and reset_txt:
+                when_for = "reset (%s)" % reset_txt
+            title = r["title"] or r["file"].stem
+            if r["bad"]:
+                title = "%s — %s" % (title, r["bad"])
+            elif r["status"] == "launched" and r["launched"]:
+                title = "%s — launched %s" % (title, r["launched"])
+            st.add_row(mark, stx, Text(r["type"] or "?", style=DIM),
+                       Text(when_for), Text(r["created"] or "—", style=DIM),
+                       Text(title, style=RED if r["bad"] else ""),
+                       Text(r["file"].name, style=DIM))
+        if not rows:
+            st.add_row("", Text("—", style=DIM), "",
+                       Text("nothing scheduled — press c", style=DIM), "", "", "")
+
+        parts = [Panel(st, title="[bold]scheduled windows[/] "
+                           f"[{DIM}]· {SCHEDULES_DIR} · templates in templates/",
+                       title_align="left", border_style=FRAME, box=box.ROUNDED)]
+
+        try:
+            qfiles = sorted(QUESTIONS_DIR.glob("QUESTIONS-*.md"))
+        except OSError:
+            qfiles = []
+        if qfiles:
+            qt = Text()
+            qt.append("awaiting your answers   ", style="bold " + YELLOW)
+            qt.append("   ".join(q.name for q in qfiles), style=YELLOW)
+            qt.append("\n" + str(QUESTIONS_DIR), style=DIM)
+            parts.append(Panel(qt, border_style=FRAME, box=box.ROUNDED))
+
+        keys = Text.assemble(
+            (" ↑↓", DIM), " pick  ", ("enter", DIM), "/", ("e", DIM), " edit  ",
+            ("c", DIM), " create  ", ("l", DIM), " launch now  ",
+            ("d", DIM), " delete  ", ("r", DIM), " reload  ",
+            ("s", DIM), "/", ("esc", DIM), " back  ", ("q", DIM), " quit",
+        )
+        if self.notice and time.time() - self.notice_at < 8:
+            keys = Text.assemble((" " + self.notice, "#c9a0dc"), "\n", keys)
+        foot = self._submode_foot() or keys
+        return Group(*parts, foot)
 
     def toggle_selected(self) -> str:
         """Opt one session out of being restarted, or back in.
@@ -529,6 +1167,8 @@ class Dashboard:
             return f"toggle failed: {exc}"
 
     def build(self) -> Group:
+        if self.view == "sched":
+            return self.build_sched()
         mem = meminfo()
         total = mem.get("MemTotal", 0.0)
         avail = mem.get("MemAvailable", 0.0)
@@ -601,10 +1241,12 @@ class Dashboard:
         lanes.add_column("DIRTY", justify="right", width=6)
         lanes.add_column("STATE", width=16)
 
-        # A session's cwd is /home/deck here, which is not a repo, so "has this
-        # work been committed" cannot be answered per SESSION. It can be
-        # answered per lane, because a lane row IS a working tree.
-        dirty = dict(dirty_repos())
+        # Per LANE this has always worked, because a lane row is a working
+        # tree. Per SESSION it used to be unanswerable -- the published table
+        # carried no cwd -- but it does now, so a window sitting in a worktree
+        # can say how much uncommitted work it is holding before you close it.
+        dirty_list = dirty_repos()
+        dirty = {name: n for _path, name, n in dirty_list}
 
         total_mb = sum(g["rss"] for g in groups.values())
         for pgid in sorted(groups, key=lambda k: pgid_port.get(k, 99999)):
@@ -641,12 +1283,19 @@ class Dashboard:
         self.sids = [s.sid for s in ordered]
         self.panes = {s.sid: s.pane for s in ordered}
         self.jobs = {s.sid: s.job for s in ordered}
+        self.windows = {s.sid: s.window for s in ordered}
+        self.cwds = {s.sid: s.cwd for s in ordered}
+        # The extras entry rides the same cursor: arrow past the last session
+        # and the system row lights up; enter reclaims or starts.
+        self.sids.append(EXTRAS_SENTINEL)
         if self.cursor not in self.sids:
             self.cursor = self.sids[0] if self.sids else ""
 
+        mon_all = monitor_on()
         ct = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
                    header_style=DIM, border_style=FRAME)
         ct.add_column("", width=3)
+        ct.add_column("MON", width=4)
         # no_wrap or a long background-job name wraps and breaks the row;
         # ellipsis only applies to text that is not allowed to wrap.
         ct.add_column("WINDOW", overflow="ellipsis", no_wrap=True, ratio=1)
@@ -655,11 +1304,15 @@ class Dashboard:
         ct.add_column("SPENT", justify="right", width=8)
         ct.add_column("IDLE", justify="right", width=6)
         ct.add_column("STATE", width=15)
+        ct.add_column("DIRTY", justify="right", width=6)
+        ct.add_column("WOUND", width=11)
         ct.add_column("RESUMED", width=11)
 
         skipped = opted_out()
+        mskipped = monitor_opted_out()
         for s in ordered:
             s.optout = s.sid in skipped
+            s.moptout = s.sid in mskipped
             pct = min(100.0, s.ctx * 100.0 / CONTEXT_WINDOW) if CONTEXT_WINDOW else 0.0
             bar = Text.assemble(gauge(pct, 14), " ",
                                 (f"{pct:3.0f}%", pressure(pct)), " ",
@@ -684,23 +1337,40 @@ class Dashboard:
             else:
                 idle_style = DIM if (s.idle < 900 or s.state == "working") else YELLOW
                 idle_txt = Text(human_age(s.idle), style=idle_style)
-            ct.add_row(mark, Text(s.window), Text(s.model, style=DIM), bar,
+            s.dirty = dirty_for(s.cwd, dirty_list)
+            dirty_txt = (Text(str(s.dirty), style=YELLOW) if s.dirty
+                         else Text("—", style=FRAME))
+            # Two scopes, and the row shows the ANSWER rather than just its own
+            # half: with the global switch off nothing can happen to anybody, so
+            # the row reads "--" instead of claiming to be armed. Space toggles
+            # the per-window half; m toggles the global one.
+            if not mon_all:
+                mon_txt = Text("--", style=FRAME)
+            elif s.moptout:
+                mon_txt = Text("off", style=DIM)
+            else:
+                mon_txt = Text("on", style=GREEN)
+            ct.add_row(mark, mon_txt, Text(s.window), Text(s.model, style=DIM), bar,
                        Text(human_tokens(s.spent), style=DIM), idle_txt, st_txt,
+                       dirty_txt,
+                       Text(when(s.wound), style=DIM if s.wound else FRAME),
                        Text(when(s.resumed), style=DIM if s.resumed else FRAME))
 
         if not sessions:
-            ct.add_row("", Text("—", style=DIM), "",
+            ct.add_row("", "", Text("—", style=DIM), "",
                        Text("no claude sessions" if not wd_stale else "watchdog not running",
-                            style=DIM), "", "", "", "")
+                            style=DIM), "", "", "", "", "", "")
 
         wd_label = ("watchdog on", GREEN) if wd_on else ("watchdog off", DIM)
         if wd_stale:
             wd_label = ("watchdog not running", RED)
+        mon = mon_all
         spent_all = sum(s.spent for s in sessions)
+        mon_label = ("monitor on", GREEN) if mon else ("monitor off", DIM)
         ctitle = Text.assemble(("claude", "bold"),
                                (f" · {len(sessions)} session(s) · ", DIM),
                                (human_tokens(spent_all), "bold"), (" spent · ", DIM),
-                               wd_label)
+                               wd_label, (" · ", DIM), mon_label)
 
         # ---- system -------------------------------------------------------
         claude = [p for p in procs if p.comm == "claude"]
@@ -716,27 +1386,23 @@ class Dashboard:
         # uncommitted work and running nothing would be invisible there -- which
         # is exactly the one you are most likely to lose.
         lane_names = {lane_name(g["pid"]).rsplit("/", 1)[-1] for g in groups.values()}
-        elsewhere = [(n, c) for n, c in dirty.items() if n not in lane_names]
-        uncommitted = Text()
-        if elsewhere:
-            uncommitted.append("uncommitted ", style="bold")
-            uncommitted.append(", ".join(f"{n} ({c})" for n, c in sorted(elsewhere)),
-                               style=YELLOW)
-            uncommitted.append("     ")
 
+        ex_sel = (self.cursor == EXTRAS_SENTINEL)
+        ex_hint = ("  (enter %s)" % ("reclaims" if extras else "starts")) if ex_sel \
+                  else "  (navigate by arrows)"
         sysrow = Text.assemble(
-            uncommitted,
             ("claude ", "bold"), f"{len(claude)} · {human_mb(sum(p.rss_mb for p in claude))}",
             "     ", ("playwright ", "bold"), (human_mb(pw) if pw else "—"),
             "     ", ("/home ", "bold"), f"{free} free",
-            "     ", ("desktop extras ", "bold"), human_mb(extras),
-            ("  (s reclaims)", DIM),
+            "     ", ("▸ " if ex_sel else "", "bold #c9a0dc"),
+            ("desktop extras ", "bold"), human_mb(extras),
+            (ex_hint, "#c9a0dc" if ex_sel else DIM),
         )
 
         keys = Text.assemble(
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
-            ("s", DIM), " stop extras  ", ("S", DIM), " start  ",
-            ("w", DIM), " watchdog  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " skip  ",
+            ("s", DIM), " schedules  ",
+            ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",
             ("p", DIM), " btop  ", ("?", DIM), " help",
         )
         # The one piece of good news this dashboard can deliver, so it gets to
@@ -752,6 +1418,58 @@ class Dashboard:
         elif self.notice and time.time() - self.notice_at < 8:
             keys = Text.assemble((" " + self.notice, "#c9a0dc"), "\n", keys)
 
+        foot = keys
+        sub = self._submode_foot()
+        if sub is not None:
+            foot = sub
+        elif self.menu_open:
+            body = Text()
+            for i, it in enumerate(self.menu_entries()):
+                if it.get("sep"):
+                    body.append("   " + "·" * 52 + "\n", style=FRAME)
+                    continue
+                cur = (i == self.menu_i)
+                if it.get("disabled"):
+                    body.append("     " + it["label"], style=FRAME)
+                    body.append("  (%s)\n" % it["disabled"], style=FRAME)
+                    continue
+                body.append(" ▸ " if cur else "   ", style="bold #c9a0dc")
+                style = "bold"
+                if it.get("danger"):
+                    style = "bold " + RED if cur else RED
+                elif "on" in it:
+                    style = ("bold " + GREEN) if it["on"] else ("bold " if cur else DIM)
+                elif not cur:
+                    style = ""
+                body.append(it["label"] + "\n", style=style)
+            body.append("   ↑↓ pick · enter choose · esc close", style=DIM)
+            foot = Panel(body, title="[bold]menu", title_align="left",
+                         border_style="#c9a0dc", box=box.ROUNDED)
+
+        # UNCOMMITTED WORK GETS ITS OWN TABLE, not a column on the sessions.
+        # The two do not line up: a repo can be dirty with no session and no
+        # dev server in it, and that is the copy most likely to be lost, while
+        # a session's cwd is often a parent directory that is not a repo at
+        # all. The per-row DIRTY column above is the hint; this is the truth.
+        panels = []
+        if dirty_list:
+            dt = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
+                       header_style=DIM, border_style=FRAME)
+            dt.add_column("FILES", justify="right", width=6)
+            dt.add_column("TREE", width=26, overflow="ellipsis", no_wrap=True)
+            dt.add_column("PATH", overflow="ellipsis", no_wrap=True, ratio=1)
+            dt.add_column("", width=10)
+            for path, name, n in dirty_list:
+                here = name in lane_names
+                dt.add_row(Text(str(n), style=YELLOW),
+                           Text(name),
+                           Text(path.replace(str(HOME), "~"), style=DIM),
+                           Text("has a lane" if here else "", style=DIM))
+            panels.append(Panel(dt, title="[bold]uncommitted[/] "
+                                f"[{DIM}]· {len(dirty_list)} tree(s) · "
+                                f"{sum(n for _p, _n, n in dirty_list)} file(s)",
+                                title_align="left", border_style=FRAME, box=box.ROUNDED))
+
         return Group(
             Panel(head, title="[bold]deck", subtitle=f"[{DIM}]{subtitle}",
                   subtitle_align="right", border_style=FRAME, box=box.ROUNDED),
@@ -760,20 +1478,69 @@ class Dashboard:
                   title_align="left", border_style=FRAME, box=box.ROUNDED),
             Panel(ct, title=ctitle, title_align="left",
                   border_style=FRAME, box=box.ROUNDED),
+            *panels,
             Panel(sysrow, title="[bold]system", title_align="left",
                   border_style=FRAME, box=box.ROUNDED),
-            keys,
+            foot,
         )
 
+
+SOFT = os.environ.get("WATCHDOG_SOFT_PCT", "65")
+HARD = os.environ.get("WATCHDOG_HARD_PCT", "85")
 
 HELP = f"""
   [bold]deck-status[/] -- lane dashboard
 
   [bold]q[/] quit        [bold]r[/] redraw now      [bold]R[/] reload this script
-  [bold]s[/] stop extras [bold]S[/] start extras    (deck-ram.sh, desktop mode only)
-  [bold]w[/] watchdog    [bold]p[/] btop            [bold]?[/] this screen
-  [bold]u[/] read usage limits      [bold]up/down[/] pick   [bold]space[/] include or skip
+  [bold]s[/] scheduled windows      [bold]enter[/] on the extras row stops/starts them
+  [bold]w[/] watchdog    [bold]m[/] monitoring      [bold]p[/] btop   [bold]?[/] this screen
+  [bold]u[/] read usage limits      [bold]up/down[/] pick   [bold]space[/] menu
   [bold]enter[/] open the selected session's window (Ctrl-b 0 comes back here)
+
+  [{DIM}]THE MENU (space)[/]
+    Two switches at the top, then everything you can do to the window under
+    the cursor: open, rename, skip it, wind it down, resume it, continue it at
+    low priority, or close it. Arrows pick, enter chooses, esc closes.
+
+  [{DIM}]SESSION MONITORING[/]
+    Off by default, and a separate switch from the watchdog because they are
+    different powers. The watchdog RESTARTS a window that already stopped,
+    which cannot lose anything. Monitoring speaks to a window that is still
+    WORKING, asking it to commit what it has and write a handoff before the
+    budget runs out -- so that the next window can start from that handoff
+    instead of carrying a quarter-million tokens of context forward.
+
+    It is delivered through a PostToolUse hook, so it reaches a session mid-turn
+    without typing into a pane that is busy composing. Two bands: past {SOFT}% of
+    the session budget it is asked to stop spawning subagents, past {HARD}% to
+    checkpoint and stop. The hard band only fires when it BUYS something -- a
+    context big enough to be worth restarting fresh, or a weekly budget too
+    spent for /low-priority to carry the session through. Otherwise the window
+    is left to run into the limit banner, which costs nothing.
+
+    THE SESSION IS NEVER TOLD WHY. It receives an instruction, not a budget
+    negotiation. The reasoning is logged here instead: the WOUND column says
+    when a window was last asked to wrap up, and the log carries the reading
+    that decided it.
+
+  [{DIM}]UNCOMMITTED[/]
+    Its own table rather than a column, because dirty trees and sessions do not
+    line up: a repo can be dirty with no session and no dev server anywhere
+    near it, and that is the copy most likely to be lost. The DIRTY column on a
+    session row is a hint for the tree that window is sitting in.
+
+  [{DIM}]SCHEDULED WINDOWS (s)[/]
+    One .md per window to open later, in ~/.code/schedules (templates in
+    templates/; the folder README documents the format). The watchdog daemon
+    launches due items: `at: reset` fires when the session limit resets or the
+    budget simply reads fresh; an absolute time fires when it passes. The new
+    window opens right after its `window:` target, named with a leading ➥,
+    and the prompt lands as ONE bracketed paste. A file the view cannot parse
+    shows as corrupted with the reason, and never launches.
+    In the view: enter/e edit · c create (type, template, then straight into
+    the editor to paste the prompt) · l launch now · d delete · r reload ·
+    s/esc back. Plan sessions write their forks into core/plans/QUESTIONS-*.md
+    instead of asking; those files are listed in the view until answered.
 
   [{DIM}]A session shown as (background) was started with `claude --bg`. It has no
   terminal, so there is no window for enter to open and no pane for the
@@ -876,10 +1643,50 @@ def read_key(timeout: float) -> str | None:
         return None
     if not data:
         return None
-    if data == b"\x1b" and select.select([fd], [], [], 0.05)[0]:
-        data += os.read(fd, 16)
-    if data.startswith(b"\x1b[") and len(data) >= 3:
-        return {b"A": "UP", b"B": "DOWN"}.get(data[2:3], "\x1b")
+
+    # COMPLETE A SPLIT ESCAPE SEQUENCE. 50ms was the old budget, which is
+    # generous on a local tty and tight over ssh: when ESC and "[A" arrive in
+    # separate reads the sequence was abandoned as a bare Escape and the "["
+    # and "A" were then consumed as two further junk keypresses -- so the arrow
+    # did nothing and ate the two presses after it. Keep reading while what we
+    # hold is a prefix rather than a whole sequence.
+    deadline = time.time() + 0.25
+    while data.startswith(b"\x1b") and not _complete_key(data):
+        left = deadline - time.time()
+        if left <= 0 or not select.select([fd], [], [], left)[0]:
+            break
+        try:
+            more = os.read(fd, 16)
+        except OSError:
+            break
+        if not more:
+            break
+        data += more
+    return decode_key(data)
+
+
+def _complete_key(data: bytes) -> bool:
+    """Is this a whole sequence, or still a prefix waiting for its tail?"""
+    if not data.startswith(b"\x1b"):
+        return True
+    if data == b"\x1b" or data == b"\x1b[" or data == b"\x1bO":
+        return False
+    if data.startswith((b"\x1b[", b"\x1bO")):
+        # A CSI/SS3 sequence ends at its first final byte (@ through ~).
+        return any(0x40 <= b <= 0x7E for b in data[2:])
+    return True
+
+
+def decode_key(data: bytes) -> str:
+    """Bytes to a key name. Pure, so the arrow handling is testable."""
+    if data.startswith((b"\x1b[", b"\x1bO")):
+        for b in data[2:]:
+            if 0x40 <= b <= 0x7E:
+                # Final byte identifies the key; anything between is a
+                # modifier parameter (ESC [ 1 ; 5 A is ctrl-up), and a
+                # modified arrow should still move the cursor.
+                return {0x41: "UP", 0x42: "DOWN"}.get(b, "\x1b")
+        return "\x1b"
     return data[:1].decode("utf-8", "replace")
 
 
@@ -938,7 +1745,75 @@ def main() -> int:
                   auto_refresh=False, transient=False) as live:
             while True:
                 live.update(dash.build(), refresh=True)
+
+                # A requested file edit suspends the whole display into a real
+                # editor (the btop pattern). Fallback is nano: $EDITOR is
+                # empty over ssh on the deck.
+                if dash.pending_edit:
+                    path, dash.pending_edit = dash.pending_edit, None
+                    live.stop()
+                    termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+                    subprocess.run([os.environ.get("EDITOR") or "nano", path])
+                    tty.setcbreak(fd)
+                    live.start()
+                    continue
+
                 key = read_key(interval)
+
+                # A SUBMODE OWNS THE KEYBOARD while it is open, and it is
+                # checked before every global key -- including q. Typing a
+                # window name that contains a "q" must not quit the dashboard,
+                # and neither must answering a confirm.
+                if key is not None and (dash.prompt is not None
+                                        or dash.confirm is not None
+                                        or dash.picker is not None
+                                        or dash.menu_open):
+                    if dash.prompt is not None:
+                        dash.prompt_key(key)
+                    elif dash.confirm is not None:
+                        dash.confirm_key(key)
+                    elif dash.picker is not None:
+                        dash.picker_key(key)
+                    elif key == "UP":
+                        dash.menu_move(-1)
+                    elif key == "DOWN":
+                        dash.menu_move(1)
+                    elif key in ("\r", "\n"):
+                        dash.menu_activate()
+                    elif key in ("\x1b", " ", "q", "Q"):
+                        dash.menu_open = False
+                    continue
+
+                # The schedule view owns most keys while open; q, R, ? and p
+                # deliberately stay global.
+                if dash.view == "sched" and key is not None:
+                    if key == "UP":
+                        dash.sched_move(-1)
+                        continue
+                    if key == "DOWN":
+                        dash.sched_move(1)
+                        continue
+                    if key in ("\r", "\n", "e", "E"):
+                        m = dash.request_edit_selected()
+                        if m:
+                            dash.say(m)
+                        continue
+                    if key == "c":
+                        dash.start_create()
+                        continue
+                    if key == "l":
+                        dash.say(dash.launch_selected_now())
+                        continue
+                    if key == "d":
+                        dash.confirm_delete_selected()
+                        continue
+                    if key == "r":
+                        dash.say("schedules re-read")
+                        continue
+                    if key in ("s", "\x1b"):
+                        dash.view = "main"
+                        continue
+
                 if key in ("q", "Q"):
                     break
                 if key == "R":
@@ -974,17 +1849,16 @@ def main() -> int:
                 elif key in ("\r", "\n"):
                     dash.say(dash.open_selected())
                 elif key == " ":
-                    dash.say(dash.toggle_selected())
+                    dash.menu_open = True
+                    dash.menu_i = 0
                 elif key in ("w", "W"):
                     dash.say(toggle_watchdog())
+                elif key in ("m", "M"):
+                    dash.say(dash.act_monitor())
                 elif key == "s":
-                    dash.say("stopping desktop extras…")
-                    live.update(dash.build(), refresh=True)
-                    dash.say(run_deck_ram("stop"))
-                elif key == "S":
-                    dash.say("starting desktop extras…")
-                    live.update(dash.build(), refresh=True)
-                    dash.say(run_deck_ram("start"))
+                    # The schedule view. Stopping/starting desktop extras
+                    # moved onto the cursor: arrow past the sessions, enter.
+                    dash.view = "sched"
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
     return 0
