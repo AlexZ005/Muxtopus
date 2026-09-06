@@ -38,7 +38,8 @@ NEEDS_SETUP=0
 
 step "1/8  Home-side tooling (should all have survived)"
 for pair in "node:$HOME/.local/node/bin/node" "claude:$HOME/.local/bin/claude" \
-            "cc:$HOME/.local/bin/cc" "gh:$HOME/.local/bin/gh"; do
+            "cc:$HOME/.local/bin/cc" "gh:$HOME/.local/bin/gh" \
+            "terraform:$HOME/.local/bin/terraform" "aws:$HOME/.local/bin/aws"; do
   n="${pair%%:*}"; f="${pair#*:}"
   [ -x "$f" ] && ok "$n present" || warn "$n MISSING - re-run setup-deck.sh"
 done

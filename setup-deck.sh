@@ -41,7 +41,7 @@ warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '    \033[31mx %s\033[0m\n' "$*" >&2; exit 1; }
 
 # --- 1. Shell environment ----------------------------------------------------
-step "1/14  Shell environment (~/.bashrc)"
+step "1/15  Shell environment (~/.bashrc)"
 need_path=1; need_gh=1; need_node=1
 grep -q '\.local/bin'   "$HOME/.bashrc" 2>/dev/null && need_path=0
 grep -q 'GH_CONFIG_DIR'  "$HOME/.bashrc" 2>/dev/null && need_gh=0
@@ -86,14 +86,57 @@ export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh}"
 [ -d "$HOME/.local/node/bin" ] && export PATH="$HOME/.local/node/bin:$PATH"
 
 # --- 2. Preinstalled tools ---------------------------------------------------
-step "2/14  Checking preinstalled tools"
+step "2/15  Checking preinstalled tools"
 for t in git tmux curl jq python3 ssh; do
   if command -v "$t" >/dev/null 2>&1; then ok "$t $(command -v $t)"
   else warn "$t MISSING - unexpected on SteamOS"; fi
 done
 
-# --- 3. GitHub CLI -----------------------------------------------------------
-step "3/14  GitHub CLI (gh)"
+# --- 3. Cloud CLIs: terraform + aws ------------------------------------------
+# Both live under $HOME (the A/B rootfs would lose a pacman install). Terraform
+# is verified against HashiCorp's SHA256SUMS like gh above; the AWS CLI v2
+# bundle installs into ~/.local/aws-cli with a symlink in ~/.local/bin.
+# Used by: theprototype-app/infra (EC2 root module on the Windows PC, the
+# infra/cloudflare module from here; state in the S3 bucket
+# theprototype-tfstate-<account>) and the aws ssm/s3 helper scripts.
+step "3/15  Cloud CLIs (terraform, aws)"
+if [ -x "$BIN/terraform" ]; then
+  skip "terraform $("$BIN/terraform" version | head -1 | awk '{print $2}') already at $BIN/terraform"
+else
+  TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+  VER="$(curl -s https://checkpoint-api.hashicorp.com/v1/check/terraform | jq -r .current_version)"
+  [ -n "$VER" ] && [ "$VER" != "null" ] || die "could not determine latest terraform version"
+  ok "latest is v$VER, downloading"
+  curl -fL --progress-bar -o "$TMP/tf.zip" \
+    "https://releases.hashicorp.com/terraform/${VER}/terraform_${VER}_linux_amd64.zip" \
+    || die "download failed"
+  curl -fsL -o "$TMP/sums" \
+    "https://releases.hashicorp.com/terraform/${VER}/terraform_${VER}_SHA256SUMS" \
+    || die "checksum download failed"
+  EXP="$(grep "terraform_${VER}_linux_amd64.zip" "$TMP/sums" | awk '{print $1}')"
+  ACT="$(sha256sum "$TMP/tf.zip" | awk '{print $1}')"
+  [ "$EXP" = "$ACT" ] || die "CHECKSUM MISMATCH - refusing to install"
+  ok "sha256 verified"
+  unzip -oq "$TMP/tf.zip" -d "$TMP" && install -m 755 "$TMP/terraform" "$BIN/terraform"
+  ok "terraform $("$BIN/terraform" version | head -1 | awk '{print $2}') installed"
+fi
+if [ -x "$BIN/aws" ]; then
+  skip "aws $("$BIN/aws" --version 2>&1 | awk '{print $1}' | cut -d/ -f2) already at $BIN/aws"
+else
+  TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+  ok "downloading the AWS CLI v2 bundle"
+  curl -fL --progress-bar -o "$TMP/awscli.zip" \
+    "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" || die "download failed"
+  unzip -q "$TMP/awscli.zip" -d "$TMP" \
+    && "$TMP/aws/install" --install-dir "$HOME/.local/aws-cli" --bin-dir "$BIN" --update >/dev/null \
+    || die "aws installer failed"
+  ok "aws $("$BIN/aws" --version 2>&1 | awk '{print $1}' | cut -d/ -f2) installed"
+fi
+[ -f "$HOME/.aws/credentials" ] && ok "aws credentials present (~/.aws)" \
+  || warn "no ~/.aws/credentials - run: aws configure   (IAM user, region eu-central-1)"
+
+# --- 4. GitHub CLI -----------------------------------------------------------
+step "4/15  GitHub CLI (gh)"
 if [ -x "$BIN/gh" ]; then
   skip "gh $("$BIN/gh" --version | head -1 | awk '{print $3}') already at $BIN/gh"
 else
@@ -120,8 +163,8 @@ else
   rm -rf "$TMP"; trap - EXIT
 fi
 
-# --- 4. Claude Code CLI ------------------------------------------------------
-step "4/14  Claude Code CLI"
+# --- 5. Claude Code CLI ------------------------------------------------------
+step "5/15  Claude Code CLI"
 if [ -x "$BIN/claude" ]; then
   skip "claude $("$BIN/claude" --version 2>/dev/null | awk '{print $1}') already at $BIN/claude"
 else
@@ -155,8 +198,21 @@ else
   warn "could not update $CS - set autoContinueAtUsageLimit to true by hand"
 fi
 
-# --- 5. tmux config ----------------------------------------------------------
-step "5/14  tmux config (shared multi-client sessions)"
+# Unattended sessions (the watchdog resumes claude with nobody at the keyboard,
+# scheduled windows run overnight) cannot answer a permission prompt, so this
+# machine runs Claude Code in bypassPermissions mode. Set by hand 2026-09-06;
+# kept here so a reimage restores it. Same "restart open sessions" caveat.
+if [ "$(jq -r '.defaultMode // ""' "$CS" 2>/dev/null)" = "bypassPermissions" ]; then
+  skip "defaultMode already bypassPermissions"
+elif jq '.defaultMode = "bypassPermissions"' "$CS" > "$CS.new" 2>/dev/null && mv "$CS.new" "$CS"; then
+  ok "defaultMode set to bypassPermissions (unattended sessions never block on a prompt)"
+else
+  rm -f "$CS.new"
+  warn "could not update $CS - set defaultMode to bypassPermissions by hand"
+fi
+
+# --- 6. tmux config ----------------------------------------------------------
+step "6/15  tmux config (shared multi-client sessions)"
 if [ -f "$HOME/.tmux.conf" ] && grep -q 'window-size latest' "$HOME/.tmux.conf"; then
   skip "~/.tmux.conf already configured"
 else
@@ -192,8 +248,8 @@ TMUXCONF
   ok "~/.tmux.conf written"
 fi
 
-# --- 6. cc launcher ----------------------------------------------------------
-step "6/14  cc launcher (shared Claude Code session)"
+# --- 7. cc launcher ----------------------------------------------------------
+step "7/15  cc launcher (shared Claude Code session)"
 cat > "$BIN/cc" <<'CCEOF'
 #!/usr/bin/env bash
 # cc -- attach to (or create) a shared Claude Code tmux session.
@@ -237,8 +293,8 @@ exec tmux attach-session -t "=$SESSION"
 CCEOF
 chmod +x "$BIN/cc" && ok "$BIN/cc written"
 
-# --- 7. Repos ----------------------------------------------------------------
-step "7/14  Org repositories (~/.code/$ORG)"
+# --- 8. Repos ----------------------------------------------------------------
+step "8/15  Org repositories (~/.code/$ORG)"
 mkdir -p "$HOME/.code/scripts"
 cat > "$HOME/.code/scripts/clone-org.sh" <<'CLONEEOF'
 #!/usr/bin/env bash
@@ -299,8 +355,8 @@ else
   skip "--no-clone given"
 fi
 
-# --- 8. SSH access -----------------------------------------------------------
-step "8/14  SSH access (remote/phone attach)"
+# --- 9. SSH access -----------------------------------------------------------
+step "9/15  SSH access (remote/phone attach)"
 mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
 touch "$HOME/.ssh/authorized_keys" && chmod 600 "$HOME/.ssh/authorized_keys"
 ok "~/.ssh prepared (700 / 600)"
@@ -343,8 +399,8 @@ else
   fi
 fi
 
-# --- 9. Passwordless sudo ----------------------------------------------------
-step "9/14  Passwordless sudo (needs the password once)"
+# --- 10. Passwordless sudo ----------------------------------------------------
+step "10/15  Passwordless sudo (needs the password once)"
 # Deliberately BEFORE the three steps that write /etc: with this in place they
 # run unattended, here and from after-update.sh over a bare ssh command.
 if [ "$DO_SSH" = 0 ]; then
@@ -356,8 +412,8 @@ else
 fi
 
 # --- Summary -----------------------------------------------------------------
-# --- 10. Playwright browsers --------------------------------------------------
-step "10/14  Playwright browsers (e2e suites)"
+# --- 11. Playwright browsers --------------------------------------------------
+step "11/15  Playwright browsers (e2e suites)"
 CORE="$HOME/.code/$ORG/core"
 if ! command -v node >/dev/null 2>&1; then
   warn "node not on PATH - open a new shell, then re-run"
@@ -375,8 +431,8 @@ else
   fi
 fi
 
-# --- 11. e2e hosts mapping ---------------------------------------------------
-step "11/14  e2e hosts mapping (needs sudo)"
+# --- 12. e2e hosts mapping ---------------------------------------------------
+step "12/15  e2e hosts mapping (needs sudo)"
 # Its own helper, because a SteamOS update REPLACES the root partition and
 # reverts /etc/hosts - after-update.sh re-runs this same script.
 if [ -x "$HOME/.code/scripts/apply-hosts.sh" ]; then
@@ -385,8 +441,8 @@ else
   warn "~/.code/scripts/apply-hosts.sh missing - e2e cannot resolve theprototype.app"
 fi
 
-# --- 12. tmux session persistence --------------------------------------------
-step "12/14  tmux session persistence (needs sudo)"
+# --- 13. tmux session persistence --------------------------------------------
+step "13/15  tmux session persistence (needs sudo)"
 # Its own helper for the same reason as the hosts step: it writes /etc and /var
 # state that a SteamOS update reverts, so after-update.sh re-runs it. Without
 # it, logind kills the whole tmux server -- every window with it -- the moment
@@ -397,8 +453,8 @@ else
   warn "~/.code/scripts/apply-logind.sh missing - tmux will die on disconnect"
 fi
 
-# --- 13. Dashboard runtime ---------------------------------------------------
-step "13/14  Dashboard runtime (rich)"
+# --- 14. Dashboard runtime ---------------------------------------------------
+step "14/15  Dashboard runtime (rich)"
 # deck-status.sh renders through rich when this venv exists and falls back to
 # its own bash renderer when it does not, so this step is an optimisation and
 # never a hard dependency. 27 MB, kept out of git.
@@ -417,8 +473,8 @@ else
 fi
 
 
-# --- 14. Usage-limit watchdog ------------------------------------------------
-step "14/14  Usage-limit watchdog"
+# --- 15. Usage-limit watchdog ------------------------------------------------
+step "15/15  Usage-limit watchdog"
 # Installs a systemd USER service, so it depends on the lingering that step 12
 # turns on. Without that it would die at logout -- the same failure it exists
 # to work around, one layer down.
