@@ -1,15 +1,37 @@
 #!/usr/bin/env python3
-"""Create ~/.code/schedules/ and its templates.
+"""Create an account's schedules/ folder and its templates.
+
+    setup-schedules.py                seed the default account
+    setup-schedules.py work           seed ~/.code/schedules-work
+    CLAUDE_CONFIG_DIR=~/.claude-work setup-schedules.py
 
 A schedule item is one hand-editable .md per window-to-open; templates are
 plain prompt bodies. Existing files are never overwritten, so re-running this
 after the user edits a template is safe.
-"""
-import pathlib
 
-BASE = pathlib.Path.home() / ".code/schedules"
+PER ACCOUNT, because a scheduled window opens a Claude session and therefore
+spends one account's budget. The default account keeps the unsuffixed folder it
+has always had; a second one gets a sibling beside it.
+"""
+import os, pathlib, sys
+
+HOME = pathlib.Path.home()
+if len(sys.argv) > 1:
+    PROFILE = sys.argv[1].lstrip("-_")
+else:
+    PROFILE = pathlib.Path(os.environ.get("CLAUDE_CONFIG_DIR", str(HOME / ".claude"))).name
+    if PROFILE.startswith(".claude"):
+        PROFILE = PROFILE[len(".claude"):]
+    PROFILE = PROFILE.lstrip("-_")
+SUFFIX = ("-" + PROFILE) if PROFILE else ""
+
+BASE = HOME / (".code/schedules" + SUFFIX)
 TPL = BASE / "templates"
 TPL.mkdir(parents=True, exist_ok=True)
+# The handover folder is seeded here too: it is written to by a wind-down, which
+# is the worst moment to discover a missing directory.
+(HOME / (".code/handovers" + SUFFIX) / "done").mkdir(parents=True, exist_ok=True)
+(HOME / (".code/backups" + SUFFIX)).mkdir(parents=True, exist_ok=True)
 
 OUTPUT_CONTRACT = """\
 ## Output contract
@@ -118,6 +140,27 @@ Format:
 `at: reset` = when the session limit resets (or the budget reads fresh).
 The launched window is named with a leading arrow and appears right after
 `window:` when that window exists.
+
+## One folder per account
+
+Everything here belongs to ONE Claude account, because launching a window
+spends that account's budget. The account is the suffix on the config dir, and
+the default account takes none:
+
+    ~/.claude        ->  ~/.code/schedules      ~/.code/backups      ~/.code/handovers
+    ~/.claude-work   ->  ~/.code/schedules-work ~/.code/backups-work ~/.code/handovers-work
+
+    tmux session     ->  claude / claude-work
+    watchdog state   ->  ~/.local/state/claude-watchdog[-work]
+
+Open a session on an account with `cc` (personal) or `cc -w` (work); it exports
+CLAUDE_CONFIG_DIR into the tmux session, so every window opened inside it --
+including one the watchdog launches from this folder -- runs on that account.
+
+Handoffs are NOT written into the working tree any more: a wind-down writes
+~/.code/handovers[-suffix]/STATUS-<window>.md, and `handover.sh done <window>`
+moves a finished one into done/. Two accounts working one repo would otherwise
+overwrite each other's STATUS file without a word.
 """)
     made.append("README.md")
 

@@ -9,6 +9,7 @@
 #   claude-watchdog.sh --on|--off    enable/disable acting (the dashboard's 'w')
 #   claude-watchdog.sh --optout ID   never prompt that session (dashboard: space)
 #   claude-watchdog.sh --optin ID    undo it
+#   claude-watchdog.sh --profile work ...   drive a second account
 #   claude-watchdog.sh --install     install + start the systemd user service
 #   claude-watchdog.sh --uninstall   stop and remove it
 #
@@ -31,7 +32,24 @@
 # session spends when it is prompted to continue -- which is the whole point.
 set -uo pipefail
 
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog"
+# THE ACCOUNT PROFILE. One watchdog per Claude account: this instance watches
+# exactly one config dir, keeps its own state, and drives its own tmux session.
+# Two independent stacks beat one daemon reasoning about two accounts, because
+# every figure it judges a session against -- the session budget, the weekly
+# budget, the reset time -- is PER ACCOUNT, so a shared daemon would carry two
+# of everything anyway and could still hand one account's reset time to the
+# other account's window.
+#
+# Selected by --profile NAME, else inherited from CLAUDE_CONFIG_DIR, else the
+# default account, whose paths are byte-identical to what they always were.
+. "$(dirname "$(readlink -f "$0")")/profile.sh"
+if [ "${1:-}" = "--profile" ]; then
+  [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
+  code_use_profile "$2"; shift 2
+fi
+export CLAUDE_CONFIG_DIR="$CODE_CONFIG_DIR"
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog$CODE_SUFFIX"
 ENABLED="$STATE_DIR/enabled"
 STATUS="$STATE_DIR/status.tsv"
 PROMPTED="$STATE_DIR/prompted"
@@ -63,7 +81,14 @@ MON_OPTOUT="$STATE_DIR/monitor-optout"
 # hand-editable orders, not this daemon's bookkeeping. One .md per window to
 # open; templates/ holds prompt bodies. The dashboard renders the folder and
 # marks what it cannot parse as corrupted; this side simply skips those.
-SCHEDULES="$HOME/.code/schedules"
+SCHEDULES="$CODE_SCHEDULES"
+# HANDOFFS LIVE OUTSIDE THE REPO, one folder per account. They used to be
+# written as STATUS-<window>.md into the working tree, which put a scratch file
+# under version control and -- once a second account works the same tree --
+# lets two windows of the same name overwrite each other's handoff. A finished
+# one is MOVED to done/ by handover.sh rather than deleted, so the record of
+# what a lane did outlives the lane.
+HANDOVERS="$CODE_HANDOVERS"
 REPOS_AT="$STATE_DIR/repos.at"
 # Working trees change far more slowly than sessions do, and each one costs a
 # git fork, so the repo sweep runs on its own slower clock.
@@ -96,7 +121,7 @@ case "${1:---once}" in
   --daemon)  MODE=daemon ;;
   --status)  [ -f "$ENABLED" ] && r=on || r=off
              [ -f "$MONITOR" ] && m=on || m=off
-             echo "# restart=$r monitor=$m soft=${WATCHDOG_SOFT_PCT:-65}% hard=${WATCHDOG_HARD_PCT:-85}%"
+             echo "# account=$CODE_LABEL restart=$r monitor=$m soft=${WATCHDOG_SOFT_PCT:-65}% hard=${WATCHDOG_HARD_PCT:-85}%"
              [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
   --on)      : > "$ENABLED"; echo "watchdog enabled"; exit 0 ;;
   --off)     rm -f "$ENABLED"; echo "watchdog disabled"; exit 0 ;;
@@ -119,17 +144,17 @@ case "${1:---once}" in
                                        mv "$OPTOUT.tmp" "$OPTOUT"; fi
              echo "watchdog will resume $2"; exit 0 ;;
   --install|--uninstall) MODE="${1#--}" ;;
-  -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
   *) echo "unknown option: $1" >&2; exit 2 ;;
 esac
 
 UNIT_DIR="$HOME/.config/systemd/user"
-UNIT="$UNIT_DIR/claude-watchdog.service"
+UNIT="$UNIT_DIR/claude-watchdog$CODE_SUFFIX.service"
 SELF="$(readlink -f "$0")"
 SCRIPT_DIR="$(dirname "$SELF")"
 
 if [ "$MODE" = uninstall ]; then
-  systemctl --user disable --now claude-watchdog.service 2>/dev/null
+  systemctl --user disable --now "claude-watchdog$CODE_SUFFIX.service" 2>/dev/null
   rm -f "$UNIT"; systemctl --user daemon-reload 2>/dev/null
   echo "removed $UNIT"; exit 0
 fi
@@ -141,12 +166,13 @@ if [ "$MODE" = install ]; then
   mkdir -p "$UNIT_DIR"
   cat > "$UNIT" <<UNITEOF
 [Unit]
-Description=Prompt Claude Code windows to continue after a usage limit resets
+Description=Prompt Claude Code windows ($CODE_LABEL) to continue after a usage limit resets
 After=default.target
 
 [Service]
 Type=simple
-ExecStart=$SELF --daemon
+Environment=CLAUDE_CONFIG_DIR=$CODE_CONFIG_DIR
+ExecStart=$SELF --profile "$CODE_PROFILE" --daemon
 Restart=always
 RestartSec=10
 
@@ -154,19 +180,19 @@ RestartSec=10
 WantedBy=default.target
 UNITEOF
   systemctl --user daemon-reload
-  systemctl --user enable --now claude-watchdog.service >/dev/null 2>&1
+  systemctl --user enable --now "claude-watchdog$CODE_SUFFIX.service" >/dev/null 2>&1
   # RESTART, not just enable: a running daemon is a bash loop holding the copy
   # of this script it parsed at start, so `enable --now` on an already-active
   # unit would leave an edited watchdog unused. Same reason deck-status has R.
-  systemctl --user restart claude-watchdog.service >/dev/null 2>&1
+  systemctl --user restart "claude-watchdog$CODE_SUFFIX.service" >/dev/null 2>&1
   # Armed on install: watching without acting is not what anyone wants from
   # it. Turn it off any time with 'w' on the dashboard, or --off here.
   : > "$ENABLED"
-  if systemctl --user is-active --quiet claude-watchdog.service; then
-    echo "installed and running: $UNIT"
+  if systemctl --user is-active --quiet "claude-watchdog$CODE_SUFFIX.service"; then
+    echo "installed and running: $UNIT  (account: $CODE_LABEL)"
     echo "armed -- press w on the dashboard to disarm"
   else
-    echo "installed but NOT running; check: systemctl --user status claude-watchdog" >&2
+    echo "installed but NOT running; check: systemctl --user status claude-watchdog$CODE_SUFFIX" >&2
     exit 1
   fi
   if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
@@ -196,7 +222,7 @@ reset_epoch() {
 
 transcript_of() {
   local sid="$1" f
-  for f in "$HOME"/.claude/projects/*/"$sid".jsonl; do
+  for f in "$CODE_CONFIG_DIR"/projects/*/"$sid".jsonl; do
     [ -f "$f" ] && { printf '%s' "$f"; return 0; }
   done
   return 1
@@ -354,7 +380,7 @@ wind_down() {
   local msg reset
   reset="$(usage_val session_reset)"
   if [ "$b" = 2 ]; then
-    msg="Budget checkpoint: land the step you are on now and commit it, then write a handoff to STATUS-${name}.md saying what is done, what is next and anything half-finished. Then stop. The budget resets at ${reset:-the top of the hour}; do not start what you cannot finish before then."
+    msg="Budget checkpoint: land the step you are on now and commit it, then write a handoff to $HANDOVERS/STATUS-${name}.md saying what is done, what is next and anything half-finished. Then stop. The budget resets at ${reset:-the top of the hour}; do not start what you cannot finish before then."
   else
     msg="Budget note: this window is past the halfway mark. Stop spawning subagents unless a task genuinely needs one, and prefer targeted greps and partial reads over whole files."
   fi
@@ -431,7 +457,7 @@ launch_schedule() {
     sched_body "$f"
     if [ "$type" = work ]; then
       echo
-      echo "Work in phases, one commit per phase. When done -- or when asked to stop -- write STATUS-$slug.md in this directory saying what is done, what is next, and anything half-finished."
+      echo "Work in phases, one commit per phase. When done -- or when asked to stop -- write $HANDOVERS/STATUS-$slug.md saying what is done, what is next, and anything half-finished. When the whole item is finished, run: ~/.code/scripts/handover.sh done $slug"
     fi
   } > "$bodyf"
 
@@ -440,12 +466,18 @@ launch_schedule() {
   # sparse (0,1,7,8,9 today), so never assume contiguity either.
   local -a targs=()
   if [ -n "$win" ]; then
-    idx="$(tmux list-windows -t claude -F '#{window_index} #{window_name}' 2>/dev/null \
+    idx="$(tmux list-windows -t "$CODE_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
            | awk -v w="$win" '$2==w{print $1; exit}')"
-    [ -n "$idx" ] && targs=(-a -t "claude:$idx")
+    [ -n "$idx" ] && targs=(-a -t "$CODE_TMUX:$idx")
   fi
 
+  # -t pins the SESSION for the no-window case too: without it a new window
+  # lands in whichever session tmux last had current, which on a box running
+  # two accounts is a coin toss -- and the wrong side of it starts the work
+  # under the wrong credentials.
+  [ ${#targs[@]} -eq 0 ] && targs=(-t "$CODE_TMUX:")
   pane="$(tmux new-window -d -P -F '#{pane_id}' "${targs[@]}" -n "$wname" -c "$cwd" \
+          -e "CLAUDE_CONFIG_DIR=$CODE_CONFIG_DIR" \
           "$HOME/.local/bin/claude" 2>/dev/null)"
   if [ -z "$pane" ]; then
     sched_mark "$f" error
@@ -562,7 +594,7 @@ pass() {
   local spct wpct rkey
   spct="$(usage_val session_pct)"; wpct="$(usage_val week_pct)"
   rkey="$(usage_val session_reset_at)"
-  for f in "$HOME"/.claude/sessions/*.json; do
+  for f in "$CODE_CONFIG_DIR"/sessions/*.json; do
     [ -f "$f" ] || continue
     pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
     kill -0 "$pid" 2>/dev/null || continue          # stale record, process gone
@@ -577,7 +609,7 @@ pass() {
     # real claude process, so it would otherwise be listed and -- worse -- be
     # eligible for a restart prompt, turning a read-only measurement into a
     # session that spends tokens.
-    case "$pane" in cc-usage:*) continue ;; esac
+    case "$pane" in cc-usage:*|cc-usage-*:*) continue ;; esac
 
     paneid="${pane##*.}"                            # claude:@1.%1 -> %1
     ctx=0; spent=0; rd=0; model="-"
@@ -677,8 +709,14 @@ pass() {
   # when the cache is young, so this costs nothing between the hours, and it is
   # also what catches a limit resetting EARLY: nobody is watching the dashboard
   # at 4am, and the good surprise is worth a notification.
-  [ -x "$SCRIPT_DIR/claude-usage.sh" ] && \
+  # NOT FOR AN ACCOUNT THAT HAS NOT LOGGED IN. The probe starts a real claude
+  # process; with no credentials it sits on the login screen until the timeout
+  # kills it, so an unattended second profile would spawn a doomed ~450 MB
+  # session every hour forever. The credentials file is the marker because it is
+  # what a login writes -- after-update.sh checks the same one.
+  if [ -x "$SCRIPT_DIR/claude-usage.sh" ] && [ -f "$CODE_CONFIG_DIR/.credentials.json" ]; then
     "$SCRIPT_DIR/claude-usage.sh" --ensure 60 >/dev/null 2>&1
+  fi
   if [ "$DRY" = 1 ]; then
     { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\n'
       awk -F'\t' 'BEGIN{OFS="\t"} {$1=substr($1,1,8);
@@ -689,7 +727,7 @@ pass() {
 }
 
 if [ "$MODE" = daemon ]; then
-  log "watchdog started (interval ${INTERVAL}s)"
+  log "watchdog started for $CODE_LABEL (interval ${INTERVAL}s)"
   while :; do pass; sleep "$INTERVAL"; done
 else
   pass

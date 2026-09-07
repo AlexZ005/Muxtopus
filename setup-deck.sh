@@ -256,6 +256,20 @@ cat > "$BIN/cc" <<'CCEOF'
 #   cc                                        session "claude" in $HOME
 #   cc -r                                     start with the resume picker
 #   cc infra ~/.code/theprototype-app/infra   named session in a repo
+#   cc -w                                     the WORK account (~/.claude-work)
+#   cc -P acme                                any account (~/.claude-acme)
+#   cc -w infra ~/path                        named session on the work account
+#
+# ONE ACCOUNT PER SESSION. A profile picks the Claude config dir, and every
+# path that belongs to an account follows it: the tmux session name, the
+# schedules folder, the backups folder, the handovers folder, the watchdog's
+# state and its usage cache. The default account is unsuffixed, so `cc` with no
+# flag is byte-for-byte what it has always been.
+#
+# The config dir is exported into the SESSION environment (-e), not just this
+# process, so every window opened later -- by hand, by the dashboard, or by the
+# watchdog launching a scheduled window -- inherits the right account instead
+# of quietly falling back to the default one.
 set -uo pipefail
 
 # Inside a Flatpak sandbox (VSCode's integrated terminal) the tmux server is
@@ -268,11 +282,43 @@ fi
 export PATH="$HOME/.local/bin:$PATH"
 export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh}"
 
-RESUME=""
-if [ "${1:-}" = "-r" ] || [ "${1:-}" = "--resume" ]; then RESUME="--resume"; shift; fi
+. "$HOME/.code/scripts/profile.sh"
 
+RESUME=""
+PROFILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -r|--resume)  RESUME="--resume"; shift ;;
+    -w|--work)    PROFILE="work"; shift ;;
+    -P|--profile) [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
+                  PROFILE="$2"; shift 2 ;;
+    -h|--help)    sed -n '2,9p' "$0"; exit 0 ;;
+    --)           shift; break ;;
+    -*)           echo "unknown option: $1" >&2; exit 2 ;;
+    *)            break ;;
+  esac
+done
+
+code_use_profile "$PROFILE"
+export CLAUDE_CONFIG_DIR="$CODE_CONFIG_DIR"
+
+# A NAMED session is suffixed too. That is the point of the exercise: two
+# accounts working the same repo would otherwise both want the session `infra`,
+# and whichever got there first would silently adopt the other's windows.
 SESSION="${1:-claude}"
+[ -n "$CODE_SUFFIX" ] && SESSION="$SESSION$CODE_SUFFIX"
 DIR="${2:-$HOME}"
+
+# The account's own folders, made on first use. Cheap, idempotent, and it means
+# a fresh profile never has a window fail because a folder it writes to is
+# missing -- the handover folder in particular is written to by a wind-down,
+# which is exactly when you least want a second failure.
+mkdir -p "$CODE_SCHEDULES/templates" "$CODE_BACKUPS" "$CODE_HANDOVERS/done"
+
+if [ ! -d "$CODE_CONFIG_DIR" ]; then
+  echo "no config dir at $CODE_CONFIG_DIR -- creating it; you will be asked to log in." >&2
+  mkdir -p "$CODE_CONFIG_DIR"
+fi
 
 if tmux has-session -t "=$SESSION" 2>/dev/null; then
   exec tmux attach-session -t "=$SESSION"
@@ -286,8 +332,12 @@ fi
 # 'exec bash' keeps each window alive if its program exits, so a stray Ctrl-C
 # never destroys the session.
 STATUS="$HOME/.code/scripts/deck-status.sh"
-tmux new-session -d -s "$SESSION" -c "$DIR" -n status "if [ -x \"$STATUS\" ]; then \"$STATUS\"; else echo 'deck-status.sh not found'; fi; exec bash"
-tmux new-window -t "=$SESSION" -c "$DIR" -n claude "claude $RESUME; exec bash"
+tmux new-session -d -s "$SESSION" -c "$DIR" -n status \
+  -e "CLAUDE_CONFIG_DIR=$CODE_CONFIG_DIR" \
+  "if [ -x \"$STATUS\" ]; then \"$STATUS\"; else echo 'deck-status.sh not found'; fi; exec bash"
+tmux new-window -t "=$SESSION" -c "$DIR" -n claude \
+  -e "CLAUDE_CONFIG_DIR=$CODE_CONFIG_DIR" \
+  "claude $RESUME; exec bash"
 tmux select-window -t "=$SESSION:0"
 exec tmux attach-session -t "=$SESSION"
 CCEOF

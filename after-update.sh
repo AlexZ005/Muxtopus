@@ -43,8 +43,16 @@ for pair in "node:$HOME/.local/node/bin/node" "claude:$HOME/.local/bin/claude" \
   n="${pair%%:*}"; f="${pair#*:}"
   [ -x "$f" ] && ok "$n present" || warn "$n MISSING - re-run setup-deck.sh"
 done
-[ -f "$HOME/.claude/.credentials.json" ] && ok "Claude credentials intact" \
-  || warn "Claude credentials gone - run: claude  (it will ask you to log in)"
+for cfg in "$HOME"/.claude "$HOME"/.claude-*; do
+  [ -d "$cfg" ] || continue
+  case "$cfg" in *.bak|*.old|*~) continue ;; esac
+  acct="${cfg##*/}"; acct="${acct#.claude}"; acct="${acct#-}"; acct="${acct:-personal}"
+  if [ -f "$cfg/.credentials.json" ]; then
+    ok "Claude credentials intact ($acct)"
+  else
+    warn "Claude credentials gone ($acct) - run: CLAUDE_CONFIG_DIR=$cfg claude  (it will ask you to log in)"
+  fi
+done
 ls "$HOME/.cache/ms-playwright" 2>/dev/null | grep -q chromium- \
   && ok "Playwright browsers intact" || warn "Playwright browsers missing - see setup-deck.sh step 10"
 

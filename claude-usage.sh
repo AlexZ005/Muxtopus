@@ -30,7 +30,20 @@
 # so the watchdog can never mistake it for work worth restarting.
 set -uo pipefail
 
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog"
+# PER ACCOUNT, because the numbers are. A session budget, a weekly budget and a
+# reset time belong to one Claude account, so a shared cache would hand one
+# account's reset time to the other account's windows -- the watchdog reads
+# these figures to decide when to restart work, so that is not a cosmetic mix-up.
+# Selected by --profile NAME, else CLAUDE_CONFIG_DIR, else the default account,
+# whose cache path and probe-session name are exactly what they always were.
+. "$(dirname "$(readlink -f "$0")")/profile.sh"
+if [ "${1:-}" = "--profile" ]; then
+  [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
+  code_use_profile "$2"; shift 2
+fi
+export CLAUDE_CONFIG_DIR="$CODE_CONFIG_DIR"
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog$CODE_SUFFIX"
 CACHE="$STATE_DIR/usage.tsv"
 RAW="$STATE_DIR/usage.raw"
 # Every reading is appended here, so "when did I ask and what did it say" has an
@@ -38,13 +51,16 @@ RAW="$STATE_DIR/usage.raw"
 LOG="$STATE_DIR/usage.log"
 # Touched when a limit resets EARLY; the dashboard shows a flourish and clears it.
 HOORAY="$STATE_DIR/usage.hooray"
-PROBE_SESSION="cc-usage"          # the watchdog skips this tmux session by name
+# The watchdog skips this tmux session BY NAME, matching cc-usage and
+# cc-usage-*, so a second account's probe is ignored by both watchdogs rather
+# than being adopted by one of them as a session worth restarting.
+PROBE_SESSION="cc-usage$CODE_SUFFIX"
 CLAUDE="$HOME/.local/bin/claude"
 mkdir -p "$STATE_DIR"
 
 # Which model line to report. Default comes from settings.json ("fable[1m]" ->
 # "fable") so the row is labelled with whatever this machine actually runs.
-MODEL_KEY="${CLAUDE_USAGE_MODEL:-$(jq -r '.model // "opus"' "$HOME/.claude/settings.json" 2>/dev/null | sed 's/\[.*//')}"
+MODEL_KEY="${CLAUDE_USAGE_MODEL:-$(jq -r '.model // "opus"' "$CODE_CONFIG_DIR/settings.json" 2>/dev/null | sed 's/\[.*//')}"
 MODEL_KEY="${MODEL_KEY:-opus}"
 
 get() { awk -F'\t' -v k="$1" '$1==k{print $2; f=1} END{if(!f) print ""}' "$CACHE" 2>/dev/null; }

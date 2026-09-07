@@ -26,7 +26,14 @@ set -uo pipefail
 # whether or not it is needed, and a fork here would be paid on every tool call.
 IFS= read -r -d '' payload || true
 
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog"
+# THE ACCOUNT, resolved with parameter expansion only. This hook runs after
+# every tool call and its whole design is to fork nothing in the common case,
+# so it does NOT source profile.sh: three expansions give the same answer for
+# free. ~/.claude -> "", ~/.claude-work -> "-work", and the directives of one
+# account can then never be delivered into a session of the other.
+_cd="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+_sfx="${_cd##*/}"; _sfx="${_sfx#.claude}"; _sfx="${_sfx#-}"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog${_sfx:+-$_sfx}"
 DIR="$STATE/directives"
 
 shopt -s nullglob

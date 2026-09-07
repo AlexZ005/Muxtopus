@@ -55,7 +55,38 @@ GREEN, YELLOW, RED = "#7ec699", "#d6b26b", "#d47f7f"
 DIM, FRAME = "grey42", "grey30"
 
 STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local" / "state")))
-WATCHDOG_DIR = STATE_HOME / "claude-watchdog"
+
+# ------------------------------------------------------------- account profile
+# One dashboard per Claude account. The profile is the suffix on the config
+# dir -- ~/.claude is the default account and takes NO suffix, so every path
+# below is byte-identical to what it was before a second account existed.
+# cc exports CLAUDE_CONFIG_DIR into the tmux session, so window 0 picks its own
+# account up from the environment rather than being passed a flag.
+CONFIG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(HOME / ".claude")))
+PROFILE = CONFIG_DIR.name
+for _p in (".claude",):
+    if PROFILE.startswith(_p):
+        PROFILE = PROFILE[len(_p):]
+PROFILE = PROFILE.lstrip("-_")
+SUFFIX = ("-" + PROFILE) if PROFILE else ""
+# What a column or a header says when it has to name the account: an empty
+# string would read as missing data rather than as "the default one".
+PROFILE_LABEL = PROFILE or "personal"
+TMUX_SESSION = "claude" + SUFFIX
+# Is there more than one account on this machine? Only then is it worth naming
+# the account on screen -- two dashboards side by side otherwise look identical
+# while reporting different budgets, different sessions and different
+# schedules, and reading the work account's reset time off the personal
+# dashboard is the one mistake that costs a whole limit window.
+try:
+    _extra = [d for d in os.listdir(HOME)
+              if d.startswith(".claude-") and not d.endswith((".bak", ".old", "~"))
+              and (HOME / d).is_dir()]
+except OSError:
+    _extra = []
+MULTI_ACCOUNT = bool(_extra)
+
+WATCHDOG_DIR = STATE_HOME / ("claude-watchdog" + SUFFIX)
 WATCHDOG_STATUS = WATCHDOG_DIR / "status.tsv"
 WATCHDOG_ENABLED = WATCHDOG_DIR / "enabled"
 WATCHDOG_OPTOUT = WATCHDOG_DIR / "optout"
@@ -421,8 +452,13 @@ def monitor_opted_out() -> set[str]:
 
 
 # ------------------------------------------------------------- schedules
-SCHEDULES_DIR = HOME / ".code" / "schedules"
+SCHEDULES_DIR = HOME / ".code" / ("schedules" + SUFFIX)
 SCHED_TEMPLATES = SCHEDULES_DIR / "templates"
+# Handoffs live here rather than in the working tree: scratch state does not
+# belong under version control, and two accounts working one repo would
+# otherwise overwrite each other's STATUS file without a word. handover.sh
+# moves a finished one into done/.
+HANDOVERS_DIR = HOME / ".code" / ("handovers" + SUFFIX)
 # Where autonomous plan sessions park the forks they could not ask about.
 QUESTIONS_DIR = HOME / ".code" / "theprototype-app" / "core" / "plans"
 # The desktop-extras entry rides the same cursor as the sessions.
@@ -811,9 +847,10 @@ class Dashboard:
         reset = u.get("session_reset") or "the top of the hour"
         win = self.windows.get(self.cursor, "this lane")
         msg = ("Budget checkpoint: land the step you are on now and commit it, then "
-               "write a handoff to STATUS-%s.md saying what is done, what is next and "
-               "anything half-finished. Then stop. The budget resets at %s; do not "
-               "start what you cannot finish before then." % (win, reset))
+               "write a handoff to %s/STATUS-%s.md saying what is done, what is next "
+               "and anything half-finished. Then stop. The budget resets at %s; do "
+               "not start what you cannot finish before then."
+               % (HANDOVERS_DIR, win, reset))
         try:
             WATCHDOG_DIRECTIVES.mkdir(parents=True, exist_ok=True)
             (WATCHDOG_DIRECTIVES / self.cursor).write_text(msg + "\n")
@@ -1036,7 +1073,11 @@ class Dashboard:
             return "no window/cwd to schedule from"
         try:
             SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
-            status_file = "%s/STATUS-%s.md" % (cwd, win)
+            # NOT in cwd. The handoff belongs to the account, not to the
+            # working tree: it is scratch state that would otherwise be
+            # committed, and two accounts on one repo would collide on the
+            # window name.
+            status_file = "%s/STATUS-%s.md" % (HANDOVERS_DIR, win)
             try:
                 tpl = (SCHED_TEMPLATES / "resume-status.md").read_text()
             except OSError:
@@ -1367,7 +1408,9 @@ class Dashboard:
         mon = mon_all
         spent_all = sum(s.spent for s in sessions)
         mon_label = ("monitor on", GREEN) if mon else ("monitor off", DIM)
+        acct = f" [{PROFILE_LABEL}]" if MULTI_ACCOUNT else ""
         ctitle = Text.assemble(("claude", "bold"),
+                               (acct, YELLOW if PROFILE else DIM),
                                (f" · {len(sessions)} session(s) · ", DIM),
                                (human_tokens(spent_all), "bold"), (" spent · ", DIM),
                                wd_label, (" · ", DIM), mon_label)
@@ -1530,7 +1573,7 @@ HELP = f"""
     session row is a hint for the tree that window is sitting in.
 
   [{DIM}]SCHEDULED WINDOWS (s)[/]
-    One .md per window to open later, in ~/.code/schedules (templates in
+    One .md per window to open later, in {SCHEDULES_DIR} (templates in
     templates/; the folder README documents the format). The watchdog daemon
     launches due items: `at: reset` fires when the session limit resets or the
     budget simply reads fresh; an absolute time fires when it passes. The new
