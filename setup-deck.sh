@@ -248,100 +248,41 @@ TMUXCONF
   ok "~/.tmux.conf written"
 fi
 
-# --- 7. cc launcher ----------------------------------------------------------
-step "7/15  cc launcher (shared Claude Code session)"
-cat > "$BIN/cc" <<'CCEOF'
-#!/usr/bin/env bash
-# cc -- attach to (or create) a shared Claude Code tmux session.
-#   cc                                        session "claude" in $HOME
-#   cc -r                                     start with the resume picker
-#   cc infra ~/.code/theprototype-app/infra   named session in a repo
-#   cc -w                                     the WORK account (~/.claude-work)
-#   cc -P acme                                any account (~/.claude-acme)
-#   cc -w infra ~/path                        named session on the work account
+# --- 7. mux launcher ---------------------------------------------------------
+step "7/15  mux launcher (Claude Code sessions, one per account)"
+# SYMLINKED, NOT COPIED. The launcher lives in this checkout and is edited
+# there; a copy in ~/.local/bin would silently go stale the moment anything
+# here changed, which is exactly what happened to the old inlined `cc`.
 #
-# ONE ACCOUNT PER SESSION. A profile picks the Claude config dir, and every
-# path that belongs to an account follows it: the tmux session name, the
-# schedules folder, the backups folder, the handovers folder, the watchdog's
-# state and its usage cache. The default account is unsuffixed, so `cc` with no
-# flag is byte-for-byte what it has always been.
-#
-# The config dir is exported into the SESSION environment (-e), not just this
-# process, so every window opened later -- by hand, by the dashboard, or by the
-# watchdog launching a scheduled window -- inherits the right account instead
-# of quietly falling back to the default one.
-set -uo pipefail
-
-# Inside a Flatpak sandbox (VSCode's integrated terminal) the tmux server is
-# NOT the host's -- its socket lives in the sandbox's private /tmp. Re-exec on
-# the host so every client shares one server.
-if [ -f /.flatpak-info ] && command -v flatpak-spawn >/dev/null 2>&1; then
-  exec flatpak-spawn --host "$HOME/.local/bin/cc" "$@"
+# `cc` is kept as a second name for muscle memory. It is deliberately NOT the
+# primary one: on any machine with a C toolchain, a `cc` on PATH shadows the
+# C compiler.
+MUXSRC="$HOME/.code/scripts/mux"
+if [ -f "$MUXSRC" ]; then
+  chmod +x "$MUXSRC"
+  ln -sfn "$MUXSRC" "$BIN/mux"
+  ln -sfn "$MUXSRC" "$BIN/cc"
+  ok "$BIN/mux (and cc) linked to $MUXSRC"
+else
+  warn "$MUXSRC not found - clone the scripts repo first, then re-run"
 fi
 
-export PATH="$HOME/.local/bin:$PATH"
-export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh}"
-
-. "$HOME/.code/scripts/profile.sh"
-
-RESUME=""
-PROFILE=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -r|--resume)  RESUME="--resume"; shift ;;
-    -w|--work)    PROFILE="work"; shift ;;
-    -P|--profile) [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
-                  PROFILE="$2"; shift 2 ;;
-    -h|--help)    sed -n '2,9p' "$0"; exit 0 ;;
-    --)           shift; break ;;
-    -*)           echo "unknown option: $1" >&2; exit 2 ;;
-    *)            break ;;
-  esac
-done
-
-code_use_profile "$PROFILE"
-export CLAUDE_CONFIG_DIR="$CODE_CONFIG_DIR"
-
-# A NAMED session is suffixed too. That is the point of the exercise: two
-# accounts working the same repo would otherwise both want the session `infra`,
-# and whichever got there first would silently adopt the other's windows.
-SESSION="${1:-claude}"
-[ -n "$CODE_SUFFIX" ] && SESSION="$SESSION$CODE_SUFFIX"
-DIR="${2:-$HOME}"
-
-# The account's own folders, made on first use. Cheap, idempotent, and it means
-# a fresh profile never has a window fail because a folder it writes to is
-# missing -- the handover folder in particular is written to by a wind-down,
-# which is exactly when you least want a second failure.
-mkdir -p "$CODE_SCHEDULES/templates" "$CODE_BACKUPS" "$CODE_HANDOVERS/done"
-
-if [ ! -d "$CODE_CONFIG_DIR" ]; then
-  echo "no config dir at $CODE_CONFIG_DIR -- creating it; you will be asked to log in." >&2
-  mkdir -p "$CODE_CONFIG_DIR"
+# The config file tells both halves of the tool where an account's schedules,
+# backups and handovers live. This machine predates the project and keeps its
+# original ~/.code layout; a fresh install would default to XDG instead.
+MUXCFG="${XDG_CONFIG_HOME:-$HOME/.config}/muxtopus/config"
+if [ ! -f "$MUXCFG" ]; then
+  mkdir -p "$(dirname "$MUXCFG")"
+  cat > "$MUXCFG" <<MUXEOF
+# Muxtopus -- plain shell, sourced. Anything set here wins over the
+# environment and over the built-in defaults.
+MUXTOPUS_HOME="\$HOME/.code"
+MUXTOPUS_DIR="\$HOME/.code/scripts"
+MUXEOF
+  ok "$MUXCFG written"
+else
+  skip "$MUXCFG already present"
 fi
-
-if tmux has-session -t "=$SESSION" 2>/dev/null; then
-  exec tmux attach-session -t "=$SESSION"
-fi
-
-# A NEW session gets two windows: 0 = the live status dashboard (the landing
-# page), 1 = Claude. Attaching lands on 0, so the state of the machine is the
-# first thing you see; Ctrl-b 1 switches to Claude. Re-attaching to an
-# existing session returns you to whichever window you left, untouched.
-#
-# 'exec bash' keeps each window alive if its program exits, so a stray Ctrl-C
-# never destroys the session.
-STATUS="$HOME/.code/scripts/deck-status.sh"
-tmux new-session -d -s "$SESSION" -c "$DIR" -n status \
-  -e "CLAUDE_CONFIG_DIR=$CODE_CONFIG_DIR" \
-  "if [ -x \"$STATUS\" ]; then \"$STATUS\"; else echo 'deck-status.sh not found'; fi; exec bash"
-tmux new-window -t "=$SESSION" -c "$DIR" -n claude \
-  -e "CLAUDE_CONFIG_DIR=$CODE_CONFIG_DIR" \
-  "claude $RESUME; exec bash"
-tmux select-window -t "=$SESSION:0"
-exec tmux attach-session -t "=$SESSION"
-CCEOF
-chmod +x "$BIN/cc" && ok "$BIN/cc written"
 
 # --- 8. Repos ----------------------------------------------------------------
 step "8/15  Org repositories (~/.code/$ORG)"

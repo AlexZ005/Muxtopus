@@ -45,11 +45,11 @@ set -uo pipefail
 . "$(dirname "$(readlink -f "$0")")/profile.sh"
 if [ "${1:-}" = "--profile" ]; then
   [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
-  code_use_profile "$2"; shift 2
+  mux_use_profile "$2"; shift 2
 fi
-export CLAUDE_CONFIG_DIR="$CODE_CONFIG_DIR"
+export CLAUDE_CONFIG_DIR="$MUX_CONFIG_DIR"
 
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog$CODE_SUFFIX"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog$MUX_SUFFIX"
 ENABLED="$STATE_DIR/enabled"
 STATUS="$STATE_DIR/status.tsv"
 PROMPTED="$STATE_DIR/prompted"
@@ -81,14 +81,14 @@ MON_OPTOUT="$STATE_DIR/monitor-optout"
 # hand-editable orders, not this daemon's bookkeeping. One .md per window to
 # open; templates/ holds prompt bodies. The dashboard renders the folder and
 # marks what it cannot parse as corrupted; this side simply skips those.
-SCHEDULES="$CODE_SCHEDULES"
+SCHEDULES="$MUX_SCHEDULES"
 # HANDOFFS LIVE OUTSIDE THE REPO, one folder per account. They used to be
 # written as STATUS-<window>.md into the working tree, which put a scratch file
 # under version control and -- once a second account works the same tree --
 # lets two windows of the same name overwrite each other's handoff. A finished
 # one is MOVED to done/ by handover.sh rather than deleted, so the record of
 # what a lane did outlives the lane.
-HANDOVERS="$CODE_HANDOVERS"
+HANDOVERS="$MUX_HANDOVERS"
 REPOS_AT="$STATE_DIR/repos.at"
 # Working trees change far more slowly than sessions do, and each one costs a
 # git fork, so the repo sweep runs on its own slower clock.
@@ -121,7 +121,7 @@ case "${1:---once}" in
   --daemon)  MODE=daemon ;;
   --status)  [ -f "$ENABLED" ] && r=on || r=off
              [ -f "$MONITOR" ] && m=on || m=off
-             echo "# account=$CODE_LABEL restart=$r monitor=$m soft=${WATCHDOG_SOFT_PCT:-65}% hard=${WATCHDOG_HARD_PCT:-85}%"
+             echo "# account=$MUX_LABEL restart=$r monitor=$m soft=${WATCHDOG_SOFT_PCT:-65}% hard=${WATCHDOG_HARD_PCT:-85}%"
              [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
   --on)      : > "$ENABLED"; echo "watchdog enabled"; exit 0 ;;
   --off)     rm -f "$ENABLED"; echo "watchdog disabled"; exit 0 ;;
@@ -149,12 +149,12 @@ case "${1:---once}" in
 esac
 
 UNIT_DIR="$HOME/.config/systemd/user"
-UNIT="$UNIT_DIR/claude-watchdog$CODE_SUFFIX.service"
+UNIT="$UNIT_DIR/claude-watchdog$MUX_SUFFIX.service"
 SELF="$(readlink -f "$0")"
 SCRIPT_DIR="$(dirname "$SELF")"
 
 if [ "$MODE" = uninstall ]; then
-  systemctl --user disable --now "claude-watchdog$CODE_SUFFIX.service" 2>/dev/null
+  systemctl --user disable --now "claude-watchdog$MUX_SUFFIX.service" 2>/dev/null
   rm -f "$UNIT"; systemctl --user daemon-reload 2>/dev/null
   echo "removed $UNIT"; exit 0
 fi
@@ -166,13 +166,13 @@ if [ "$MODE" = install ]; then
   mkdir -p "$UNIT_DIR"
   cat > "$UNIT" <<UNITEOF
 [Unit]
-Description=Prompt Claude Code windows ($CODE_LABEL) to continue after a usage limit resets
+Description=Prompt Claude Code windows ($MUX_LABEL) to continue after a usage limit resets
 After=default.target
 
 [Service]
 Type=simple
-Environment=CLAUDE_CONFIG_DIR=$CODE_CONFIG_DIR
-ExecStart=$SELF --profile "$CODE_PROFILE" --daemon
+Environment=CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR
+ExecStart=$SELF --profile "$MUX_PROFILE" --daemon
 Restart=always
 RestartSec=10
 
@@ -180,19 +180,19 @@ RestartSec=10
 WantedBy=default.target
 UNITEOF
   systemctl --user daemon-reload
-  systemctl --user enable --now "claude-watchdog$CODE_SUFFIX.service" >/dev/null 2>&1
+  systemctl --user enable --now "claude-watchdog$MUX_SUFFIX.service" >/dev/null 2>&1
   # RESTART, not just enable: a running daemon is a bash loop holding the copy
   # of this script it parsed at start, so `enable --now` on an already-active
   # unit would leave an edited watchdog unused. Same reason deck-status has R.
-  systemctl --user restart "claude-watchdog$CODE_SUFFIX.service" >/dev/null 2>&1
+  systemctl --user restart "claude-watchdog$MUX_SUFFIX.service" >/dev/null 2>&1
   # Armed on install: watching without acting is not what anyone wants from
   # it. Turn it off any time with 'w' on the dashboard, or --off here.
   : > "$ENABLED"
-  if systemctl --user is-active --quiet "claude-watchdog$CODE_SUFFIX.service"; then
-    echo "installed and running: $UNIT  (account: $CODE_LABEL)"
+  if systemctl --user is-active --quiet "claude-watchdog$MUX_SUFFIX.service"; then
+    echo "installed and running: $UNIT  (account: $MUX_LABEL)"
     echo "armed -- press w on the dashboard to disarm"
   else
-    echo "installed but NOT running; check: systemctl --user status claude-watchdog$CODE_SUFFIX" >&2
+    echo "installed but NOT running; check: systemctl --user status claude-watchdog$MUX_SUFFIX" >&2
     exit 1
   fi
   if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
@@ -222,7 +222,7 @@ reset_epoch() {
 
 transcript_of() {
   local sid="$1" f
-  for f in "$CODE_CONFIG_DIR"/projects/*/"$sid".jsonl; do
+  for f in "$MUX_CONFIG_DIR"/projects/*/"$sid".jsonl; do
     [ -f "$f" ] && { printf '%s' "$f"; return 0; }
   done
   return 1
@@ -466,18 +466,18 @@ launch_schedule() {
   # sparse (0,1,7,8,9 today), so never assume contiguity either.
   local -a targs=()
   if [ -n "$win" ]; then
-    idx="$(tmux list-windows -t "$CODE_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
+    idx="$(tmux list-windows -t "$MUX_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
            | awk -v w="$win" '$2==w{print $1; exit}')"
-    [ -n "$idx" ] && targs=(-a -t "$CODE_TMUX:$idx")
+    [ -n "$idx" ] && targs=(-a -t "$MUX_TMUX:$idx")
   fi
 
   # -t pins the SESSION for the no-window case too: without it a new window
   # lands in whichever session tmux last had current, which on a box running
   # two accounts is a coin toss -- and the wrong side of it starts the work
   # under the wrong credentials.
-  [ ${#targs[@]} -eq 0 ] && targs=(-t "$CODE_TMUX:")
+  [ ${#targs[@]} -eq 0 ] && targs=(-t "$MUX_TMUX:")
   pane="$(tmux new-window -d -P -F '#{pane_id}' "${targs[@]}" -n "$wname" -c "$cwd" \
-          -e "CLAUDE_CONFIG_DIR=$CODE_CONFIG_DIR" \
+          -e "CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR" \
           "$HOME/.local/bin/claude" 2>/dev/null)"
   if [ -z "$pane" ]; then
     sched_mark "$f" error
@@ -594,7 +594,7 @@ pass() {
   local spct wpct rkey
   spct="$(usage_val session_pct)"; wpct="$(usage_val week_pct)"
   rkey="$(usage_val session_reset_at)"
-  for f in "$CODE_CONFIG_DIR"/sessions/*.json; do
+  for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
     [ -f "$f" ] || continue
     pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
     kill -0 "$pid" 2>/dev/null || continue          # stale record, process gone
@@ -714,7 +714,7 @@ pass() {
   # kills it, so an unattended second profile would spawn a doomed ~450 MB
   # session every hour forever. The credentials file is the marker because it is
   # what a login writes -- after-update.sh checks the same one.
-  if [ -x "$SCRIPT_DIR/claude-usage.sh" ] && [ -f "$CODE_CONFIG_DIR/.credentials.json" ]; then
+  if [ -x "$SCRIPT_DIR/claude-usage.sh" ] && [ -f "$MUX_CONFIG_DIR/.credentials.json" ]; then
     "$SCRIPT_DIR/claude-usage.sh" --ensure 60 >/dev/null 2>&1
   fi
   if [ "$DRY" = 1 ]; then
@@ -727,7 +727,7 @@ pass() {
 }
 
 if [ "$MODE" = daemon ]; then
-  log "watchdog started for $CODE_LABEL (interval ${INTERVAL}s)"
+  log "watchdog started for $MUX_LABEL (interval ${INTERVAL}s)"
   while :; do pass; sleep "$INTERVAL"; done
 else
   pass

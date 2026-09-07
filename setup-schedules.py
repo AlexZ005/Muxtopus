@@ -13,25 +13,22 @@ PER ACCOUNT, because a scheduled window opens a Claude session and therefore
 spends one account's budget. The default account keeps the unsuffixed folder it
 has always had; a second one gets a sibling beside it.
 """
-import os, pathlib, sys
+import pathlib, sys
+
+from muxconfig import mux_home, profile_of, suffix_of
 
 HOME = pathlib.Path.home()
-if len(sys.argv) > 1:
-    PROFILE = sys.argv[1].lstrip("-_")
-else:
-    PROFILE = pathlib.Path(os.environ.get("CLAUDE_CONFIG_DIR", str(HOME / ".claude"))).name
-    if PROFILE.startswith(".claude"):
-        PROFILE = PROFILE[len(".claude"):]
-    PROFILE = PROFILE.lstrip("-_")
-SUFFIX = ("-" + PROFILE) if PROFILE else ""
+PROFILE = sys.argv[1].lstrip("-_") if len(sys.argv) > 1 else profile_of()
+SUFFIX = suffix_of(PROFILE)
+MUX_HOME = mux_home()
 
-BASE = HOME / (".code/schedules" + SUFFIX)
+BASE = MUX_HOME / ("schedules" + SUFFIX)
 TPL = BASE / "templates"
 TPL.mkdir(parents=True, exist_ok=True)
-# The handover folder is seeded here too: it is written to by a wind-down, which
-# is the worst moment to discover a missing directory.
-(HOME / (".code/handovers" + SUFFIX) / "done").mkdir(parents=True, exist_ok=True)
-(HOME / (".code/backups" + SUFFIX)).mkdir(parents=True, exist_ok=True)
+# The handover folder is seeded here too: it is written to by a wind-down,
+# which is the worst possible moment to discover a missing directory.
+(MUX_HOME / ("handovers" + SUFFIX) / "done").mkdir(parents=True, exist_ok=True)
+(MUX_HOME / ("backups" + SUFFIX)).mkdir(parents=True, exist_ok=True)
 
 OUTPUT_CONTRACT = """\
 ## Output contract

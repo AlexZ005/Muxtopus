@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# mux -- open a Claude Code tmux session on a given account, with its watchdog.
+#
+#   mux                          session "claude" in $HOME, personal account
+#   mux -w                       the work account   (~/.claude-work)
+#   mux -P acme                  any account        (~/.claude-acme)
+#   mux infra ~/src/infra        a named session in a directory
+#   mux -w infra ~/src/infra     both
+#   mux -r                       start Claude with the resume picker
+#   mux -d -P acme               create it and return (for scripts)
+#   mux -l                       list accounts, sessions and watchdogs
+#
+# ONE ACCOUNT PER SESSION. A profile picks the Claude config dir, and every
+# path that belongs to an account follows it: the tmux session name, the
+# schedules, backups and handovers folders, the watchdog's state and its usage
+# cache. The default account is unsuffixed, so `mux` with no flag uses exactly
+# the paths a single-account machine has always used.
+#
+# The config dir is exported into the tmux SESSION (-e), not merely into this
+# process, so every window opened later -- by hand, by the dashboard, or by the
+# watchdog launching a scheduled window -- inherits the right account instead
+# of quietly falling back to the default one.
+set -uo pipefail
+
+# Inside a Flatpak sandbox (VSCode's integrated terminal) the tmux server is
+# NOT the host's -- its socket lives in the sandbox's private /tmp. Re-exec on
+# the host so every client shares one server.
+if [ -f /.flatpak-info ] && command -v flatpak-spawn >/dev/null 2>&1; then
+  exec flatpak-spawn --host "$(readlink -f "$0")" "$@"
+fi
+
+export PATH="$HOME/.local/bin:$PATH"
+
+# Find the checkout. The config file pins it for a COPIED install; otherwise
+# this script's own resolved location is right for a symlinked one.
+_self="$(readlink -f "$0")"
+MUXTOPUS_CONFIG="${MUXTOPUS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/muxtopus/config}"
+# shellcheck disable=SC1090
+[ -f "$MUXTOPUS_CONFIG" ] && . "$MUXTOPUS_CONFIG"
+_dir="${MUXTOPUS_DIR:-$(dirname "$_self")}"
+if [ ! -f "$_dir/profile.sh" ]; then
+  echo "mux: cannot find profile.sh next to $_self or at MUXTOPUS_DIR=$_dir" >&2
+  echo "     set MUXTOPUS_DIR in $MUXTOPUS_CONFIG" >&2
+  exit 1
+fi
+# shellcheck disable=SC1091
+. "$_dir/profile.sh"
+
+RESUME=""; PROFILE=""; DETACH=0; NOWD=0; LIST=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -r|--resume)       RESUME="--resume"; shift ;;
+    -w|--work)         PROFILE="work"; shift ;;
+    -P|--profile)      [ -n "${2:-}" ] || { echo "mux: --profile needs a name" >&2; exit 2; }
+                       PROFILE="$2"; shift 2 ;;
+    -d|--detach)       DETACH=1; shift ;;
+    -n|--no-watchdog)  NOWD=1; shift ;;
+    -l|--list)         LIST=1; shift ;;
+    -h|--help)         sed -n '2,13p' "$0"; exit 0 ;;
+    --)                shift; break ;;
+    -*)                echo "mux: unknown option: $1" >&2; exit 2 ;;
+    *)                 break ;;
+  esac
+done
+
+# ------------------------------------------------------------------- list
+if [ "$LIST" = 1 ]; then
+  printf '%-12s %-24s %-10s %s\n' ACCOUNT SESSION LOGGED-IN WATCHDOG
+  while IFS= read -r p; do
+    mux_use_profile "$p"
+    sess="-"
+    tmux has-session -t "=$MUX_TMUX" 2>/dev/null && \
+      sess="$MUX_TMUX ($(tmux list-windows -t "=$MUX_TMUX" 2>/dev/null | wc -l)w)"
+    login="no"; [ -f "$MUX_CONFIG_DIR/.credentials.json" ] && login="yes"
+    wd="off"
+    if systemctl --user is-active --quiet "$MUX_UNIT" 2>/dev/null; then
+      wd="running"; [ -f "$MUX_STATE/enabled" ] || wd="running (disarmed)"
+    elif [ -f "${XDG_RUNTIME_DIR:-/tmp}/muxtopus-wd$MUX_SUFFIX.pid" ]; then
+      wd="running (no systemd)"
+    fi
+    printf '%-12s %-24s %-10s %s\n' "$MUX_LABEL" "$sess" "$login" "$wd"
+  done < <(mux_profiles)
+  exit 0
+fi
+
+mux_use_profile "$PROFILE"
+export CLAUDE_CONFIG_DIR="$MUX_CONFIG_DIR"
+mux_ensure_dirs
+
+if [ ! -d "$MUX_CONFIG_DIR" ]; then
+  mkdir -p "$MUX_CONFIG_DIR"
+  echo "mux: created $MUX_CONFIG_DIR -- Claude will ask you to log in." >&2
+fi
+
+# --------------------------------------------------------------- watchdog
+# Brought up with the session, because a session without one is exactly the
+# situation the watchdog exists for: a window that stops at a usage limit and
+# never restarts. Installed on first use per account and left alone after.
+#
+# DISARMED WHEN THE ACCOUNT HAS NOT LOGGED IN. Arming it then would have it
+# restart windows into a login screen, and its usage probe would start a
+# doomed session every hour.
+watchdog_up() {
+  local wd="$_dir/claude-watchdog.sh"
+  [ -x "$wd" ] || return 0
+
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    if [ ! -f "$HOME/.config/systemd/user/$MUX_UNIT" ]; then
+      echo "mux: installing the watchdog for '$MUX_LABEL'..." >&2
+      if [ -n "$MUX_PROFILE" ]; then "$wd" --profile "$MUX_PROFILE" --install >/dev/null
+      else "$wd" --install >/dev/null; fi
+      [ -f "$MUX_CONFIG_DIR/.credentials.json" ] || {
+        if [ -n "$MUX_PROFILE" ]; then "$wd" --profile "$MUX_PROFILE" --off >/dev/null
+        else "$wd" --off >/dev/null; fi
+        echo "mux: watchdog installed but DISARMED until '$MUX_LABEL' logs in." >&2
+        echo "     arm it with:  w  on the dashboard" >&2
+      }
+    fi
+    systemctl --user is-active --quiet "$MUX_UNIT" 2>/dev/null || \
+      systemctl --user start "$MUX_UNIT" >/dev/null 2>&1
+    return 0
+  fi
+
+  # NO SYSTEMD (macOS, WSL, a container, a bare login). Run the daemon as an
+  # ordinary background process instead of doing nothing: the whole promise of
+  # this tool is that a limited window comes back, and that must not depend on
+  # which init the machine happens to use.
+  local pidf="${XDG_RUNTIME_DIR:-/tmp}/muxtopus-wd$MUX_SUFFIX.pid"
+  if [ -f "$pidf" ] && kill -0 "$(cat "$pidf" 2>/dev/null)" 2>/dev/null; then
+    return 0
+  fi
+  if [ -n "$MUX_PROFILE" ]; then
+    nohup "$wd" --profile "$MUX_PROFILE" --daemon >/dev/null 2>&1 &
+  else
+    nohup "$wd" --daemon >/dev/null 2>&1 &
+  fi
+  echo $! > "$pidf"
+  echo "mux: watchdog started in the background (no systemd here); pid $(cat "$pidf")" >&2
+}
+[ "$NOWD" = 1 ] || watchdog_up
+
+# ---------------------------------------------------------------- session
+# A NAMED session is suffixed too. That is the point of the exercise: two
+# accounts working the same repo would otherwise both want the session
+# `infra`, and whichever got there first would silently adopt the other's
+# windows -- under the wrong credentials.
+SESSION="${1:-${MUXTOPUS_SESSION_PREFIX:-claude}}"
+[ -n "$MUX_SUFFIX" ] && SESSION="$SESSION$MUX_SUFFIX"
+DIR="${2:-$HOME}"
+
+if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
+  # A NEW session gets two windows: 0 = the live dashboard (the landing page),
+  # 1 = Claude. Attaching lands on 0, so the state of the machine is the first
+  # thing you see; Ctrl-b 1 switches to Claude. Re-attaching to an existing
+  # session returns you to whichever window you left, untouched.
+  #
+  # 'exec bash' keeps each window alive if its program exits, so a stray Ctrl-C
+  # never destroys the session.
+  STATUS="$_dir/deck-status.sh"
+  tmux new-session -d -s "$SESSION" -c "$DIR" -n status \
+    -e "CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR" \
+    "if [ -x \"$STATUS\" ]; then \"$STATUS\"; else echo 'dashboard not found'; exec bash; fi; exec bash"
+  tmux new-window -t "=$SESSION" -c "$DIR" -n claude \
+    -e "CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR" \
+    "claude $RESUME; exec bash"
+  tmux select-window -t "=$SESSION:0"
+fi
+
+if [ "$DETACH" = 1 ]; then
+  echo "$SESSION"
+  exit 0
+fi
+exec tmux attach-session -t "=$SESSION"

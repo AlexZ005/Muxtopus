@@ -62,6 +62,13 @@ STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local" / "state"
 # below is byte-identical to what it was before a second account existed.
 # cc exports CLAUDE_CONFIG_DIR into the tmux session, so window 0 picks its own
 # account up from the environment rather than being passed a flag.
+# WHERE THE DATA LIVES comes from muxconfig, which reads the SAME file
+# profile.sh reads -- the shell half and the python half must never disagree
+# about it, and one reader is how that is guaranteed rather than hoped for.
+from muxconfig import mux_home
+
+MUX_HOME = mux_home()
+
 CONFIG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(HOME / ".claude")))
 PROFILE = CONFIG_DIR.name
 for _p in (".claude",):
@@ -452,15 +459,16 @@ def monitor_opted_out() -> set[str]:
 
 
 # ------------------------------------------------------------- schedules
-SCHEDULES_DIR = HOME / ".code" / ("schedules" + SUFFIX)
+SCHEDULES_DIR = MUX_HOME / ("schedules" + SUFFIX)
 SCHED_TEMPLATES = SCHEDULES_DIR / "templates"
 # Handoffs live here rather than in the working tree: scratch state does not
 # belong under version control, and two accounts working one repo would
 # otherwise overwrite each other's STATUS file without a word. handover.sh
 # moves a finished one into done/.
-HANDOVERS_DIR = HOME / ".code" / ("handovers" + SUFFIX)
+HANDOVERS_DIR = MUX_HOME / ("handovers" + SUFFIX)
 # Where autonomous plan sessions park the forks they could not ask about.
-QUESTIONS_DIR = HOME / ".code" / "theprototype-app" / "core" / "plans"
+QUESTIONS_DIR = Path(os.environ.get(
+    "MUXTOPUS_QUESTIONS_DIR", str(HOME / ".code" / "theprototype-app" / "core" / "plans")))
 # The desktop-extras entry rides the same cursor as the sessions.
 EXTRAS_SENTINEL = "::extras"
 

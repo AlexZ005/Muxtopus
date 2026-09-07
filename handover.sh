@@ -24,10 +24,10 @@ set -uo pipefail
 . "$(dirname "$(readlink -f "$0")")/profile.sh"
 if [ "${1:-}" = "--profile" ]; then
   [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
-  code_use_profile "$2"; shift 2
+  mux_use_profile "$2"; shift 2
 fi
 
-DIR="$CODE_HANDOVERS"
+DIR="$MUX_HANDOVERS"
 DONE="$DIR/done"
 mkdir -p "$DONE"
 
@@ -77,7 +77,7 @@ case "$cmd" in
 
   list)
     n=0
-    printf 'handovers (%s) -- %s\n' "$CODE_LABEL" "$DIR"
+    printf 'handovers (%s) -- %s\n' "$MUX_LABEL" "$DIR"
     for f in "$DIR"/STATUS-*.md; do
       [ -f "$f" ] || continue
       n=$((n+1))
