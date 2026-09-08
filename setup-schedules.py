@@ -150,9 +150,11 @@ the default account takes none:
     tmux session     ->  claude / claude-work
     watchdog state   ->  ~/.local/state/claude-watchdog[-work]
 
-Open a session on an account with `cc` (personal) or `cc -w` (work); it exports
-CLAUDE_CONFIG_DIR into the tmux session, so every window opened inside it --
-including one the watchdog launches from this folder -- runs on that account.
+Open a session on an account with `cc` (personal) or `cw` (work); it puts the
+account into the tmux SESSION, so every window opened inside it -- including
+one the watchdog launches from this folder -- runs on that account. A tmux
+session does not inherit the environment of whatever created it, which is why
+this is passed in rather than exported and hoped for.
 
 Handoffs are NOT written into the working tree any more: a wind-down writes
 ~/.code/handovers[-suffix]/STATUS-<window>.md, and `handover.sh done <window>`

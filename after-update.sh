@@ -16,7 +16,7 @@
 #
 # WHAT NEVER NEEDS REDOING
 #   /home is a separate partition and is untouched, so all of this survives:
-#   node + npm (~/.local/node), claude / cc / gh (~/.local/bin), ~/.bashrc,
+#   node + npm (~/.local/node), claude / cc / cw / gh (~/.local/bin), ~/.bashrc,
 #   ~/.claude (settings AND credentials), ~/.code (repos + these scripts),
 #   ~/.ssh/authorized_keys, and the Playwright browsers in ~/.cache.
 #
@@ -38,7 +38,8 @@ NEEDS_SETUP=0
 
 step "1/8  Home-side tooling (should all have survived)"
 for pair in "node:$HOME/.local/node/bin/node" "claude:$HOME/.local/bin/claude" \
-            "cc:$HOME/.local/bin/cc" "gh:$HOME/.local/bin/gh" \
+            "cc:$HOME/.local/bin/cc" "cw:$HOME/.local/bin/cw" \
+            "gh:$HOME/.local/bin/gh" \
             "terraform:$HOME/.local/bin/terraform" "aws:$HOME/.local/bin/aws"; do
   n="${pair%%:*}"; f="${pair#*:}"
   [ -x "$f" ] && ok "$n present" || warn "$n MISSING - re-run setup-deck.sh"
@@ -50,7 +51,14 @@ for cfg in "$HOME"/.claude "$HOME"/.claude-*; do
   if [ -f "$cfg/.credentials.json" ]; then
     ok "Claude credentials intact ($acct)"
   else
-    warn "Claude credentials gone ($acct) - run: CLAUDE_CONFIG_DIR=$cfg claude  (it will ask you to log in)"
+    # The DEFAULT account is logged in by a bare `claude`. Naming its config
+    # dir would send it to the theme picker instead of the login menu, because
+    # its onboarding state lives in ~/.claude.json, not inside ~/.claude.
+    if [ "$acct" = personal ]; then
+      warn "Claude credentials gone ($acct) - run: claude  (it will ask you to log in)"
+    else
+      warn "Claude credentials gone ($acct) - run: CLAUDE_CONFIG_DIR=$cfg claude  (it will ask you to log in)"
+    fi
   fi
 done
 ls "$HOME/.cache/ms-playwright" 2>/dev/null | grep -q chromium- \

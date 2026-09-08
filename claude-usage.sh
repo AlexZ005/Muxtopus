@@ -41,7 +41,8 @@ if [ "${1:-}" = "--profile" ]; then
   [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
   mux_use_profile "$2"; shift 2
 fi
-export CLAUDE_CONFIG_DIR="$MUX_CONFIG_DIR"
+mux_export_config_dir
+mux_tmux_env
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog$MUX_SUFFIX"
 CACHE="$STATE_DIR/usage.tsv"
@@ -51,6 +52,10 @@ RAW="$STATE_DIR/usage.raw"
 LOG="$STATE_DIR/usage.log"
 # Touched when a limit resets EARLY; the dashboard shows a flourish and clears it.
 HOORAY="$STATE_DIR/usage.hooray"
+# Written when a read FAILS, holding the epoch and the reason. It exists so a
+# failure is visible as a failure: the cache keeps its last good numbers, and
+# the dashboard can say the read failed instead of showing them as current.
+FAIL="$STATE_DIR/usage.fail"
 # The watchdog skips this tmux session BY NAME, matching cc-usage and
 # cc-usage-*, so a second account's probe is ignored by both watchdogs rather
 # than being adopted by one of them as a session worth restarting.
@@ -65,6 +70,19 @@ MODEL_KEY="${MODEL_KEY:-opus}"
 
 get() { awk -F'\t' -v k="$1" '$1==k{print $2; f=1} END{if(!f) print ""}' "$CACHE" 2>/dev/null; }
 
+# Record a failed read WITHOUT touching the cache. A failure used to be written
+# into the cache as a full row of empty fields stamped with the current time,
+# which is the worst of both worlds: the dashboard showed "?%" and --ensure
+# then judged that nothing to be fresh, so `u` refused to retry for twenty
+# minutes. The last good reading is more honest than a blank one, as long as
+# its age is visible -- so the cache is left exactly as it was.
+note_fail() {
+  printf '%s\t%s\n' "$(date +%s)" "$1" > "$FAIL"
+  printf '%s\tREAD FAILED: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"
+  echo "$1" >&2
+  return 1
+}
+
 # "10:39pm" -> "22:39". The comma in "Sep 5, 4:59pm" makes date(1) refuse the
 # whole string, so it goes before the am/pm is split off. Anything unparseable
 # is returned VERBATIM rather than blanked: a stamp we cannot normalise is still
@@ -78,21 +96,79 @@ norm() {
 to24()   { norm "$1" '%H:%M'; }
 todate() { norm "$1" '%b %d, %H:%M'; }
 
+# WHERE THE PROBE STARTS. Claude stops on the trust dialog in a folder the
+# account has not accepted, and a probe stopped there never renders /usage --
+# it burns twenty seconds and reports an empty panel. Trust is recorded PER
+# ACCOUNT, so $HOME being trusted by the personal account says nothing about
+# the work one. Ask this account's own state file, and fall back to any folder
+# it has already accepted.
+probe_dir() {
+  local j="$MUX_CONFIG_DIR/.claude.json" d=""
+  # The default account predates CLAUDE_CONFIG_DIR and keeps this file at
+  # ~/.claude.json; a suffixed account keeps it inside its own config dir.
+  [ -f "$j" ] || j="$HOME/.claude.json"
+  if [ -f "$j" ] && command -v jq >/dev/null 2>&1; then
+    d="$(jq -r --arg h "$HOME" '
+      if (.projects[$h].hasTrustDialogAccepted // false) then $h
+      else ([.projects // {} | to_entries[]
+             | select(.value.hasTrustDialogAccepted == true) | .key] | first // "")
+      end' "$j" 2>/dev/null)"
+  fi
+  case "$d" in ""|null) d="$HOME" ;; esac
+  [ -d "$d" ] || d="$HOME"
+  printf '%s' "$d"
+}
+
 scrape() {
-  command -v tmux >/dev/null 2>&1 || { echo "tmux not available" >&2; return 1; }
-  [ -x "$CLAUDE" ] || { echo "claude not found at $CLAUDE" >&2; return 1; }
+  command -v tmux >/dev/null 2>&1 || { note_fail "tmux not available"; return 1; }
+  [ -x "$CLAUDE" ] || { note_fail "claude not found at $CLAUDE"; return 1; }
 
+  local cwd; cwd="$(probe_dir)"
   tmux kill-session -t "$PROBE_SESSION" 2>/dev/null
-  # $HOME is already a trusted folder here, so the probe starts straight at a
-  # prompt. A fresh directory would stop on the trust dialog and hang.
-  tmux new-session -d -s "$PROBE_SESSION" -x 200 -y 50 -c "$HOME" \
-    "$CLAUDE" 2>/dev/null || { echo "could not start probe session" >&2; return 1; }
+  # THE ACCOUNT GOES IN WITH -e. A new tmux session does NOT inherit the
+  # environment of the process that created it -- it starts from the server's,
+  # which is whichever account happened to start the server. Exporting
+  # CLAUDE_CONFIG_DIR here is therefore not enough, and without this line every
+  # account's probe read the SAME (usually personal) budget and wrote it into
+  # its own cache, so the work dashboard showed the personal account's numbers.
+  tmux new-session -d -s "$PROBE_SESSION" -x 200 -y 50 -c "$cwd" \
+    "${MUX_TMUX_ENV[@]}" \
+    "$CLAUDE" 2>/dev/null || { note_fail "could not start probe session"; return 1; }
+  [ -n "$MUX_PROFILE" ] || \
+    tmux set-environment -u -t "$PROBE_SESSION" CLAUDE_CONFIG_DIR 2>/dev/null
 
-  local i txt=""
+  # THREE DEAD ENDS, each named rather than waited out. All of them sit on
+  # screen forever, and all of them used to end as "no usage panel appeared"
+  # twenty seconds later -- a message that says nothing about what to do.
+  stuck_on() {
+    case "$1" in
+      trust)  printf '%s has not trusted %s -- open a session there once and accept' "$MUX_LABEL" "$cwd" ;;
+      login)  printf '%s is not logged in (%s)' "$MUX_LABEL" "$MUX_CONFIG_DIR" ;;
+      setup)  printf '%s has never finished setup -- run claude once for it by hand' "$MUX_LABEL" ;;
+    esac
+  }
+
+  local i txt="" bad=""
   for i in $(seq 1 40); do          # up to ~20s for the TUI to be ready
     sleep 0.5
     txt="$(tmux capture-pane -p -t "$PROBE_SESSION" 2>/dev/null || true)"
-    grep -q '❯\|Welcome\|/help' <<<"$txt" && break
+    bad=""
+    grep -qi 'trust the files\|Do you trust'                     <<<"$txt" && bad=trust
+    grep -qi 'Select login method\|Log in with your Claude'      <<<"$txt" && bad=login
+    grep -qi "Let's get started\|looks best with your terminal"  <<<"$txt" && bad=setup
+    if [ -n "$bad" ]; then
+      tmux kill-session -t "$PROBE_SESSION" 2>/dev/null
+      note_fail "$(stuck_on "$bad")"
+      return 1
+    fi
+    # NOT 'Welcome'. The onboarding and login screens are headed "Welcome to
+    # Claude Code" as well, so that word alone called a fresh install ready and
+    # the probe then typed /usage into a theme picker. These markers belong to
+    # a live prompt: the mode line, the shortcut hint, the empty input's
+    # placeholder. If none of them ever appears the loop simply runs its full
+    # twenty seconds and tries anyway, which is the old behaviour and costs
+    # only time.
+    grep -q 'shift+tab to cycle\|for shortcuts\|Try "' <<<"$txt" && break
   done
 
   tmux send-keys -t "$PROBE_SESSION" "/usage" 2>/dev/null
@@ -117,7 +193,7 @@ scrape() {
 
   printf '%s\n' "$txt" > "$RAW"
   tmux kill-session -t "$PROBE_SESSION" 2>/dev/null
-  [ -n "$seen" ] || { echo "no usage panel appeared (see $RAW)" >&2; return 1; }
+  [ -n "$seen" ] || { note_fail "no usage panel appeared (see $RAW)"; return 1; }
   parse
 }
 
@@ -169,6 +245,13 @@ parse() {
   # watchdog uses on the limit banner, and for the same reason.
   [ -n "$due" ] && [ "$due" -lt $(( now - 21600 )) ] && due=$(( due + 86400 ))
 
+  # NOTHING PARSED -- LEAVE THE CACHE ALONE. Writing this result would stamp a
+  # row of empty fields with the current time, and the dashboard would show
+  # "?%" while --ensure considered it fresh enough not to retry. Checked
+  # BEFORE the write, not after it, which is where it used to be.
+  [ -n "${sp:-}${wp:-}${mp:-}" ] || {
+    note_fail "usage panel captured but nothing parsed -- inspect $RAW"; return 1; }
+
   {
     printf 'at\t%s\n' "$now"
     printf 'session_pct\t%s\n'      "${sp:-}"
@@ -178,12 +261,11 @@ parse() {
     printf 'week_reset\t%s\n'       "$(todate "${wr:-}")"
     printf 'model\t%s\n'            "${mn:-$MODEL_KEY}"
     printf 'model_pct\t%s\n'        "${mp:-}"
+    printf 'account\t%s\n'          "$MUX_LABEL"
   } > "$CACHE.tmp" && mv "$CACHE.tmp" "$CACHE"
+  rm -f "$FAIL"
 
   check_early_reset "${prev_pct:-}" "${prev_due:-}" "${sp:-}" "$now"
-
-  [ -n "${sp:-}${wp:-}${mp:-}" ] || {
-    echo "usage panel captured but nothing parsed -- inspect $RAW" >&2; return 1; }
 
   printf '%s\tsession=%s%%\tresets=%s\tweek=%s%%\tresets=%s\t%s=%s%%\n' \
     "$(date '+%Y-%m-%d %H:%M:%S')" "${sp:-?}" "$(to24 "${sr:-}")" \
@@ -217,6 +299,18 @@ check_early_reset() {
     >/dev/null 2>&1 &
 }
 
+# Seconds since the last FAILED read, or -1 if the cache is the newer of the
+# two (which is to say: nothing is currently failing).
+fail_age() {
+  local at cache_at
+  at="$(cut -f1 "$FAIL" 2>/dev/null)"
+  case "${at:-}" in ''|*[!0-9]*) printf '%s' "-1"; return 0 ;; esac
+  cache_at="$(get at)"
+  case "${cache_at:-}" in ''|*[!0-9]*) cache_at=0 ;; esac
+  [ "$at" -le "$cache_at" ] && { printf '%s' "-1"; return 0; }
+  printf '%s' $(( $(date +%s) - at ))
+}
+
 age_minutes() {
   local at; at="$(get at)"
   [ -n "$at" ] || { printf '%s' "-1"; return 0; }
@@ -242,7 +336,16 @@ show_lines() {
 case "${1:-}" in
   --refresh)       scrape ;;
   --ensure)        a="$(age_minutes)"
-                   if [ "$a" = "-1" ] || [ "$a" -ge "${2:-15}" ]; then scrape >/dev/null 2>&1; fi
+                   # A FAILING READ MUST NOT BE RETRIED PER KEYPRESS. Once a
+                   # failure stops poisoning the cache, the cache stays old --
+                   # so every `u` on the dashboard would qualify and start
+                   # another ~450 MB probe. One attempt a minute is plenty when
+                   # the last one failed; --refresh is still the deliberate now.
+                   f="$(fail_age)"
+                   if { [ "$a" = "-1" ] || [ "$a" -ge "${2:-15}" ]; } \
+                      && { [ "$f" = "-1" ] || [ "$f" -ge 60 ]; }; then
+                     scrape >/dev/null 2>&1
+                   fi
                    show_lines ;;
   --brief)         printf 'session %s%% (resets %s) · week %s%% (resets %s) · %s %s%% · read %sm ago\n' \
                      "$(get session_pct)" "$(get session_reset)" \

@@ -6,6 +6,9 @@
 #   ./install.sh --home DIR      where schedules/backups/handovers live
 #   ./install.sh --bin DIR       where the `mux` link goes (default ~/.local/bin)
 #   ./install.sh --also-cc       additionally install it as `cc`
+#
+# A `cw` is linked too when ~/.claude-work exists: mux reads its own name, so
+# `cw` opens the work account the way `cc` opens the default one.
 #   ./install.sh --no-watchdog   skip the watchdog service
 #
 # NOTHING IS WRITTEN OUTSIDE YOUR HOME DIRECTORY, and every path is printed
@@ -135,6 +138,16 @@ if [ "$ALSO_CC" = 1 ]; then
     run ln -sfn "$SRC/mux" "$BIN/cc"
     ok "$BIN/cc -> $SRC/mux"
   fi
+fi
+# One word per account. mux reads the name it was invoked by, so `cw` is
+# `mux -w` -- which is what makes an account reachable as an ssh RemoteCommand,
+# where there is room for a command and no room for its flags. Only offered
+# when the work account actually exists; an alias for nothing is clutter.
+if [ -d "$HOME/.claude-work" ]; then
+  run ln -sfn "$SRC/mux" "$BIN/cw"
+  ok "$BIN/cw -> $SRC/mux  (the work account)"
+else
+  skip "no ~/.claude-work, so no 'cw' -- create the folder and re-run for it"
 fi
 case ":$PATH:" in
   *":$BIN:"*) ok "$BIN is on PATH" ;;

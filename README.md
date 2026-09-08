@@ -38,6 +38,13 @@ The installer symlinks `mux` into `~/.local/bin`, writes a config file, creates 
 
 > **`cc` is not the default name on purpose.** On any machine with a C toolchain, a `cc` on `PATH` shadows the C compiler and breaks native builds. Ask for it only if you know your machine has no `cc`.
 
+**One word per account.** `mux` reads the name it was invoked by, so a symlink is an account: `cw` is `mux -w`, and `mux-acme` is `mux -P acme`. The installer links `cw` when `~/.claude-work` exists. This matters most over SSH, where `RemoteCommand` takes a command and has no room for its flags:
+
+```
+ssh deck -t 'bash -lc cc'     # personal
+ssh deck -t 'bash -lc cw'     # work
+```
+
 **Requirements:** `bash`, `tmux` ≥ 3.2 (for `new-window -e`), `jq`, `git`, `python3` ≥ 3.9 with [`rich`](https://github.com/Textualize/rich) for the dashboard, and the `claude` CLI. `systemd --user` is used for the watchdog when present; without it the daemon is started as a plain background process instead.
 
 ---
@@ -47,6 +54,7 @@ The installer symlinks `mux` into `~/.local/bin`, writes a config file, creates 
 ```bash
 mux                      # personal account, session "claude"
 mux -w                   # work account   (~/.claude-work)
+cw                       # the same thing, if the symlink is installed
 mux -P acme              # any account    (~/.claude-acme)
 mux infra ~/src/infra    # a named session in a directory
 mux -w infra ~/src/infra # both
@@ -92,7 +100,9 @@ A profile is the suffix on the Claude config dir. **The default account takes no
 | watchdog state + usage cache | `~/.local/state/claude-watchdog` | `…-work` |
 | systemd unit | `claude-watchdog.service` | `claude-watchdog-work.service` |
 
-`mux` exports `CLAUDE_CONFIG_DIR` into the tmux **session**, not merely into its own process — so every window opened later, by hand or by the watchdog, inherits the right account instead of silently falling back to the default one.
+`mux` puts `CLAUDE_CONFIG_DIR` into the tmux **session** with `-e`, not merely into its own process. **A tmux session does not inherit the environment of whatever created it** — it starts from the server's, which belongs to whichever account happened to start the server first. Exporting is therefore not enough, and anything that opens a `claude` under tmux has to hand the account in explicitly: `mux` for its windows, the watchdog for a restarted one, `claude-usage.sh` for its throwaway probe.
+
+**The default account is the variable being absent**, not the variable pointing at `~/.claude`. Claude Code keeps the default account's onboarding and auth state in `~/.claude.json`; set `CLAUDE_CONFIG_DIR` and it looks for `<dir>/.claude.json` instead, which does not exist — so "helpfully" naming the path that account already uses shows a fully logged-in machine the theme picker and the login menu. Named accounts have no such history and always carry the variable.
 
 **One watchdog per account, not one that watches both.** Every figure it judges a session against — session budget, weekly budget, reset time — belongs to a single account. A shared daemon would have to carry two of everything anyway, and could still hand one account's reset to the other account's window.
 

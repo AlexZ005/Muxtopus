@@ -257,12 +257,17 @@ step "7/15  mux launcher (Claude Code sessions, one per account)"
 # `cc` is kept as a second name for muscle memory. It is deliberately NOT the
 # primary one: on any machine with a C toolchain, a `cc` on PATH shadows the
 # C compiler.
+#
+# `cw` is the same launcher again, and mux reads the name it was called by:
+# `cw` is `mux -w`, the work account. One word, which matters most over ssh --
+# RemoteCommand takes a command, not a command and its flags.
 MUXSRC="$HOME/.code/scripts/mux"
 if [ -f "$MUXSRC" ]; then
   chmod +x "$MUXSRC"
   ln -sfn "$MUXSRC" "$BIN/mux"
   ln -sfn "$MUXSRC" "$BIN/cc"
-  ok "$BIN/mux (and cc) linked to $MUXSRC"
+  ln -sfn "$MUXSRC" "$BIN/cw"
+  ok "$BIN/mux (and cc, cw) linked to $MUXSRC"
 else
   warn "$MUXSRC not found - clone the scripts repo first, then re-run"
 fi
@@ -480,11 +485,13 @@ cat <<SUMMARY
 
 $(printf '\033[1m==> Done.\033[0m')
 
-  Start or join the shared session, here or over SSH:
+  Start or join a session, here or over SSH. One command per account:
 
-      cc                    on this machine
+      cc                    personal, on this machine
+      cw                    work      (~/.claude-work)
       cc -r                 with the resume picker
       ssh deck@${IP:-<ip>} -t 'bash -lc cc'
+      ssh deck@${IP:-<ip>} -t 'bash -lc cw'
 
   'bash -lc' is required: a plain 'ssh host cc' runs a non-interactive,
   non-login shell, which never sources ~/.bashrc and so cannot find cc.
@@ -496,6 +503,12 @@ $(printf '\033[1m==> Done.\033[0m')
           User $USER
           RequestTTY yes
           RemoteCommand bash -lc cc
+
+      Host deck-work
+          HostName ${IP:-<ip>}
+          User $USER
+          RequestTTY yes
+          RemoteCommand bash -lc cw
 
       Host deck-shell
           HostName ${IP:-<ip>}

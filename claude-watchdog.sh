@@ -47,7 +47,8 @@ if [ "${1:-}" = "--profile" ]; then
   [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
   mux_use_profile "$2"; shift 2
 fi
-export CLAUDE_CONFIG_DIR="$MUX_CONFIG_DIR"
+mux_export_config_dir
+mux_tmux_env
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog$MUX_SUFFIX"
 ENABLED="$STATE_DIR/enabled"
@@ -164,6 +165,11 @@ if [ "$MODE" = install ]; then
   # lingering on -- without that the manager stops with your last session and
   # takes this with it, which is the same failure it exists to work around.
   mkdir -p "$UNIT_DIR"
+  # BOTH LINES ARE CONDITIONAL, and neither is cosmetic. --profile rejects an
+  # empty name, so `--profile "" --daemon` would exit 2 and leave the default
+  # account with a unit that restarts forever and never runs; and the default
+  # account must be handed no CLAUDE_CONFIG_DIR at all, because setting it is
+  # what sends a logged-in machine to the login screen (see profile.sh).
   cat > "$UNIT" <<UNITEOF
 [Unit]
 Description=Prompt Claude Code windows ($MUX_LABEL) to continue after a usage limit resets
@@ -171,8 +177,8 @@ After=default.target
 
 [Service]
 Type=simple
-Environment=CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR
-ExecStart=$SELF --profile "$MUX_PROFILE" --daemon
+${MUX_PROFILE:+Environment=CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR}
+ExecStart=$SELF ${MUX_PROFILE:+--profile "$MUX_PROFILE"} --daemon
 Restart=always
 RestartSec=10
 
@@ -477,7 +483,7 @@ launch_schedule() {
   # under the wrong credentials.
   [ ${#targs[@]} -eq 0 ] && targs=(-t "$MUX_TMUX:")
   pane="$(tmux new-window -d -P -F '#{pane_id}' "${targs[@]}" -n "$wname" -c "$cwd" \
-          -e "CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR" \
+          "${MUX_TMUX_ENV[@]}" \
           "$HOME/.local/bin/claude" 2>/dev/null)"
   if [ -z "$pane" ]; then
     sched_mark "$f" error
@@ -714,8 +720,15 @@ pass() {
   # kills it, so an unattended second profile would spawn a doomed ~450 MB
   # session every hour forever. The credentials file is the marker because it is
   # what a login writes -- after-update.sh checks the same one.
+  # NAMED, not inherited. The environment happens to be right here, but the
+  # account these figures belong to is not a thing to leave to chance: the
+  # numbers decide when a limited window is restarted.
   if [ -x "$SCRIPT_DIR/claude-usage.sh" ] && [ -f "$MUX_CONFIG_DIR/.credentials.json" ]; then
-    "$SCRIPT_DIR/claude-usage.sh" --ensure 60 >/dev/null 2>&1
+    if [ -n "$MUX_PROFILE" ]; then
+      "$SCRIPT_DIR/claude-usage.sh" --profile "$MUX_PROFILE" --ensure 60 >/dev/null 2>&1
+    else
+      "$SCRIPT_DIR/claude-usage.sh" --ensure 60 >/dev/null 2>&1
+    fi
   fi
   if [ "$DRY" = 1 ]; then
     { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\n'

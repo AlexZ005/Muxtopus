@@ -107,6 +107,40 @@ mux_use_profile() {
          MUX_SCHEDULES MUX_BACKUPS MUX_HANDOVERS MUX_STATE MUX_UNIT MUX_LABEL
 }
 
+# Put THIS account into the environment for anything launched from here.
+#
+# THE DEFAULT ACCOUNT IS THE VARIABLE BEING ABSENT, not the variable pointing
+# at ~/.claude. Claude Code keeps the default account's onboarding and auth
+# state in ~/.claude.json, but when CLAUDE_CONFIG_DIR is set it looks for
+# <dir>/.claude.json instead -- and ~/.claude/.claude.json does not exist. So
+# "helpfully" exporting the path the default account already uses shows a
+# fully logged-in machine the theme picker and the login menu. Measured, not
+# guessed: same binary, same folder, variable set vs unset.
+#
+# A named account has no such history: its config dir was created for it and
+# holds its own .claude.json, so it needs the variable and gets it.
+mux_export_config_dir() {
+  if [ -n "${MUX_PROFILE:-}" ]; then
+    export CLAUDE_CONFIG_DIR="$MUX_CONFIG_DIR"
+  else
+    unset CLAUDE_CONFIG_DIR
+  fi
+}
+
+# The `tmux -e` arguments that carry this account into a NEW session or window,
+# left in the array MUX_TMUX_ENV.
+#
+# EXPORTING IS NOT ENOUGH. A tmux session does not inherit the environment of
+# the process that created it -- it starts from the server's, which belongs to
+# whichever account happened to start the server first. Every `claude` opened
+# under tmux therefore needs the account passed in explicitly, and the default
+# account needs exactly nothing passed, for the reason above.
+mux_tmux_env() {
+  MUX_TMUX_ENV=()
+  [ -n "${MUX_PROFILE:-}" ] && MUX_TMUX_ENV=(-e "CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR")
+  return 0
+}
+
 # Make an account's folders. Idempotent, and called on every session start:
 # the handover folder in particular is written to by a wind-down, which is the
 # worst possible moment to discover a missing directory.

@@ -60,8 +60,10 @@ STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local" / "state"
 # One dashboard per Claude account. The profile is the suffix on the config
 # dir -- ~/.claude is the default account and takes NO suffix, so every path
 # below is byte-identical to what it was before a second account existed.
-# cc exports CLAUDE_CONFIG_DIR into the tmux session, so window 0 picks its own
-# account up from the environment rather than being passed a flag.
+# mux puts CLAUDE_CONFIG_DIR into the tmux session, so window 0 picks its own
+# account up from the environment rather than being passed a flag. The DEFAULT
+# account is the variable being absent, which is why the fallback below is a
+# path and not an error: no variable means ~/.claude, means profile "".
 # WHERE THE DATA LIVES comes from muxconfig, which reads the SAME file
 # profile.sh reads -- the shell half and the python half must never disagree
 # about it, and one reader is how that is guaranteed rather than hoped for.
@@ -100,6 +102,10 @@ WATCHDOG_OPTOUT = WATCHDOG_DIR / "optout"
 WATCHDOG_REPOS = WATCHDOG_DIR / "repos.tsv"
 WATCHDOG_USAGE = WATCHDOG_DIR / "usage.tsv"
 WATCHDOG_HOORAY = WATCHDOG_DIR / "usage.hooray"
+# Written by claude-usage.sh when a read FAILS. A failed read no longer
+# overwrites the cache, so without this the panel would go on showing the last
+# good figures with nothing to say they are all there is.
+WATCHDOG_USAGE_FAIL = WATCHDOG_DIR / "usage.fail"
 WATCHDOG_MONITOR = WATCHDOG_DIR / "monitor"
 WATCHDOG_MON_OPTOUT = WATCHDOG_DIR / "monitor-optout"
 WATCHDOG_DIRECTIVES = WATCHDOG_DIR / "directives"
@@ -337,11 +343,33 @@ def usage_limits() -> dict[str, str]:
     return out
 
 
+def usage_failure(u: dict[str, str]) -> str:
+    """Why the last read failed, if it failed AFTER the cached numbers were
+    taken. Empty when the cache is the more recent of the two."""
+    try:
+        at, _, why = WATCHDOG_USAGE_FAIL.read_text().strip().partition("\t")
+        ts = int(at)
+    except (OSError, ValueError):
+        return ""
+    try:
+        if ts <= int(u.get("at") or 0):
+            return ""
+    except ValueError:
+        pass
+    return why or "read failed"
+
+
 def usage_rows() -> list[Text]:
-    """Three lines for the header's right edge, or one saying how to get them."""
+    """Three lines for the header's right edge, or one saying how to get them.
+
+    EXACTLY THREE, always: the header grid puts one on each of its rows."""
     u = usage_limits()
+    failed = usage_failure(u)
     if not u.get("at"):
-        return [Text("usage unknown", style=DIM), Text("press u to read it", style=DIM), Text()]
+        return [Text("usage unknown", style=DIM),
+                Text(failed[:34] if failed else "press u to read it",
+                     style=YELLOW if failed else DIM),
+                Text()]
 
     def pct(key: str) -> float:
         try:
@@ -365,10 +393,13 @@ def usage_rows() -> list[Text]:
     except (ValueError, KeyError):
         seen = "?"
     model = (u.get("model") or "model").capitalize()
+    last = row(model, "model_pct", "", f" · read {seen}")
+    if failed:
+        last.append(" · stale", style=YELLOW)
     return [
         row("Session", "session_pct", "session_reset"),
         row("Week", "week_pct", "week_reset"),
-        row(model, "model_pct", "", f" · read {seen}"),
+        last,
     ]
 
 
@@ -382,7 +413,13 @@ def refresh_usage(force: bool = False) -> str:
     script = SCRIPTS / "claude-usage.sh"
     if not script.exists():
         return "claude-usage.sh not found"
-    args = [str(script), "--refresh"] if force else [str(script), "--ensure", str(USAGE_MAX_AGE)]
+    # NAME THE ACCOUNT, do not leave it to be inherited. claude-usage.sh falls
+    # back to CLAUDE_CONFIG_DIR, which is right whenever this dashboard was
+    # started by mux -- and silently wrong in a window that was not, where it
+    # would refresh the personal account's cache from the work dashboard.
+    acct = ["--profile", PROFILE] if PROFILE else []
+    args = [str(script), *acct, "--refresh"] if force else \
+           [str(script), *acct, "--ensure", str(USAGE_MAX_AGE)]
     try:
         subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as exc:
@@ -1609,6 +1646,19 @@ HELP = f"""
     on the key costs nothing; [bold]U[/] forces a read now. [bold]R[/] reloads this script and
     nudges the limits the same way u does. The watchdog also refreshes hourly
     on its own, so the numbers stay warm with nobody watching.
+
+    THE READING BELONGS TO THIS ACCOUNT ([{YELLOW}]{PROFILE_LABEL}[/]) and no other. The probe
+    is a tmux session, and a tmux session does NOT inherit the environment of
+    whatever created it -- so the account has to be handed in explicitly, and
+    for a while it was not: every account's probe read the same budget and
+    filed it under its own name. If two dashboards ever show identical figures
+    again, that is the shape of the bug.
+
+    A FAILED READ SAYS SO. It leaves the last good numbers alone and marks the
+    third line [{YELLOW}]stale[/], rather than writing a row of blanks stamped with the
+    current time -- which showed "?%" and then counted as fresh enough not to
+    retry. A read that cannot get to a prompt names its reason: the account is
+    not logged in, has not trusted the folder, or never finished setup.
 
     The same values are available to scripts and to prompts:
       claude-usage.sh --brief | --json | --session-pct | --week-pct

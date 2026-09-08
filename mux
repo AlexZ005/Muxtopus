@@ -10,6 +10,11 @@
 #   mux -d -P acme               create it and return (for scripts)
 #   mux -l                       list accounts, sessions and watchdogs
 #
+# THE NAME IS A FLAG. Symlinked as `cw` this is `mux -w`, and as `mux-acme` it
+# is `mux -P acme`, so each account is one word to type and, more to the point,
+# one word to send over ssh:  ssh deck -t 'bash -lc cw'. An explicit flag still
+# wins over the name.
+#
 # ONE ACCOUNT PER SESSION. A profile picks the Claude config dir, and every
 # path that belongs to an account follows it: the tmux session name, the
 # schedules, backups and handovers folders, the watchdog's state and its usage
@@ -26,7 +31,11 @@ set -uo pipefail
 # NOT the host's -- its socket lives in the sandbox's private /tmp. Re-exec on
 # the host so every client shares one server.
 if [ -f /.flatpak-info ] && command -v flatpak-spawn >/dev/null 2>&1; then
-  exec flatpak-spawn --host "$(readlink -f "$0")" "$@"
+  # readlink -f resolves the symlink back to `mux`, throwing away the name it
+  # was invoked by -- and the name is the account. Carry it across explicitly,
+  # or `cw` inside VSCode's terminal would quietly open the personal session.
+  export MUX_ARGV0="${MUX_ARGV0:-$(basename -- "$0")}"
+  exec flatpak-spawn --host --env=MUX_ARGV0="$MUX_ARGV0" "$(readlink -f "$0")" "$@"
 fi
 
 export PATH="$HOME/.local/bin:$PATH"
@@ -46,6 +55,18 @@ fi
 # shellcheck disable=SC1091
 . "$_dir/profile.sh"
 
+# The account this was INVOKED as. `cw` is spelled out rather than derived,
+# because it is the counterpart of the -w flag; any other account gets a name
+# of the form mux-<account>, which needs no table to extend.
+_argv0="${MUX_ARGV0:-$(basename -- "$0")}"
+NAME_PROFILE=""
+case "$_argv0" in
+  cw)     NAME_PROFILE="work" ;;
+  mux-*)  NAME_PROFILE="${_argv0#mux-}" ;;
+  cc-*)   NAME_PROFILE="${_argv0#cc-}" ;;
+esac
+case "$NAME_PROFILE" in *[!a-zA-Z0-9_-]*) NAME_PROFILE="" ;; esac
+
 RESUME=""; PROFILE=""; DETACH=0; NOWD=0; LIST=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -56,12 +77,14 @@ while [ $# -gt 0 ]; do
     -d|--detach)       DETACH=1; shift ;;
     -n|--no-watchdog)  NOWD=1; shift ;;
     -l|--list)         LIST=1; shift ;;
-    -h|--help)         sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help)         sed -n '2,18p' "$0"; exit 0 ;;
     --)                shift; break ;;
     -*)                echo "mux: unknown option: $1" >&2; exit 2 ;;
     *)                 break ;;
   esac
 done
+
+[ -n "$PROFILE" ] || PROFILE="$NAME_PROFILE"
 
 # ------------------------------------------------------------------- list
 if [ "$LIST" = 1 ]; then
@@ -84,7 +107,8 @@ if [ "$LIST" = 1 ]; then
 fi
 
 mux_use_profile "$PROFILE"
-export CLAUDE_CONFIG_DIR="$MUX_CONFIG_DIR"
+mux_export_config_dir
+mux_tmux_env
 mux_ensure_dirs
 
 if [ ! -d "$MUX_CONFIG_DIR" ]; then
@@ -158,10 +182,14 @@ if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
   # never destroys the session.
   STATUS="$_dir/deck-status.sh"
   tmux new-session -d -s "$SESSION" -c "$DIR" -n status \
-    -e "CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR" \
+    "${MUX_TMUX_ENV[@]}" \
     "if [ -x \"$STATUS\" ]; then \"$STATUS\"; else echo 'dashboard not found'; exec bash; fi; exec bash"
+  # The DEFAULT account must find no CLAUDE_CONFIG_DIR in the session either.
+  # The server's environment outlives any one session, so a variable left there
+  # by an earlier account would be handed to every window opened here.
+  [ -n "$MUX_PROFILE" ] || tmux set-environment -u -t "=$SESSION" CLAUDE_CONFIG_DIR 2>/dev/null
   tmux new-window -t "=$SESSION" -c "$DIR" -n claude \
-    -e "CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR" \
+    "${MUX_TMUX_ENV[@]}" \
     "claude $RESUME; exec bash"
   tmux select-window -t "=$SESSION:0"
 fi
