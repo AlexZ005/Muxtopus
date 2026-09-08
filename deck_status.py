@@ -118,7 +118,11 @@ USAGE_MAX_AGE = int(os.environ.get("CLAUDE_USAGE_MAX_AGE", "20"))
 # drawn against, overridable rather than hidden.
 CONTEXT_WINDOW = int(os.environ.get("CLAUDE_CONTEXT_WINDOW", "1000000"))
 # The watchdog republishes every 30s; past double that it is not running.
+# Both are named rather than inlined because the help screen quotes them to
+# explain why a closed window is dropped here instead of waited for.
 STALE_AFTER = 75.0
+WD_INTERVAL = int(os.environ.get("WATCHDOG_INTERVAL", "30"))
+FRAME_INTERVAL = 2.0
 
 
 # --------------------------------------------------------------------------
@@ -266,17 +270,18 @@ def ports_for(pids: list[int], inodes: dict[int, int]) -> dict[int, int]:
 class ClaudeSession:
     __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action",
                  "resumed", "spent", "cached", "optout", "model", "idle", "job",
-                 "cwd", "wound", "dirty", "moptout")
+                 "cwd", "wound", "dirty", "moptout", "pid")
 
     def __init__(self, sid, window, pane, ver, ctx, state, reset, action,
                  resumed=0, spent=0, cached=0, optout=False, model="-", idle=-1, job="",
-                 cwd="-", wound=0, moptout=False):
+                 cwd="-", wound=0, moptout=False, pid=0):
         self.sid, self.window, self.pane, self.ver = sid, window, pane, ver
         self.ctx, self.state, self.reset, self.action = ctx, state, reset, action
         self.resumed, self.spent, self.cached = resumed, spent, cached
         self.optout, self.model = optout, model
         self.idle, self.job = idle, job
         self.cwd, self.wound, self.moptout = cwd, wound, moptout
+        self.pid = pid
         self.dirty = 0          # filled in from the repo sweep at render time
 
 
@@ -315,8 +320,35 @@ def claude_sessions() -> tuple[list[ClaudeSession], float]:
             f[15] if len(f) > 15 else "-",
             num(f, 16) if len(f) > 16 else 0,
             (len(f) > 17 and f[17] == "1"),
+            num(f, 18) if len(f) > 18 else 0,
         ))
     return out, age
+
+
+def drop_dead(sessions: list[ClaudeSession],
+              procs: list[Proc]) -> list[ClaudeSession]:
+    """Sessions whose process is still alive.
+
+    THE PUBLISHED FILE IS ALWAYS A LITTLE OLD. The watchdog rebuilds it once
+    an interval, so a window closed just after a pass stayed on this table for
+    most of the next one -- long enough to reach for a row that is not there
+    any more. The row carries its pid, and this frame has already walked
+    /proc for the memory figures, so the check is a set lookup: no fork, no
+    tmux call, and the row goes the frame after the process does.
+
+    THE TEST IS DELIBERATELY THE WEAKEST ONE THAT WORKS: is the pid in /proc
+    at all. Matching the command name as well would also catch a pid that has
+    been recycled onto something else, but it would drop a live session the
+    day a session runs under a name this file did not predict -- and the two
+    mistakes are not equals. A row wrongly dropped hides work that is running;
+    a row wrongly kept is the behaviour of every version before this one, and
+    the next watchdog pass corrects it.
+
+    A row published by a watchdog too old to send a pid has none, and is kept:
+    the fallback is the previous behaviour, never a table that empties itself.
+    """
+    live = {p.pid for p in procs}
+    return [s for s in sessions if not s.pid or s.pid in live]
 
 
 def opted_out() -> set[str]:
@@ -1360,6 +1392,7 @@ class Dashboard:
 
         # ---- claude sessions ----------------------------------------------
         sessions, sess_age = claude_sessions()
+        sessions = drop_dead(sessions, procs)
         wd_on = WATCHDOG_ENABLED.exists()
         wd_stale = sess_age < 0 or sess_age > STALE_AFTER
 
@@ -1707,6 +1740,20 @@ HELP = f"""
   [{DIM}]All of it is read from files claude-watchdog.sh publishes: no API calls,
   no tokens, and no tmux captures from this process.[/]
 
+  [{DIM}]CLOSED WINDOWS LEAVE ON THE NEXT REDRAW[/]
+    That file is rebuilt once every {WD_INTERVAL}s, so a window closed just after a pass
+    used to sit on this table for most of the next one -- measured at 21 and 25
+    seconds, long enough to arrow onto a row that is not there any more. Each
+    row now carries its process id, and this frame has already walked /proc for
+    the memory figures, so a row whose process is gone is dropped here: no
+    fork, no tmux call, gone within {FRAME_INTERVAL:g}s.
+
+    Nothing else got faster. Rows still APPEAR at the watchdog's pace, because
+    deciding what a session IS costs a transcript read, and a 2s frame will not
+    pay for one. The test is only whether the pid is still in /proc -- not
+    whether it still looks like claude, because dropping a live session to
+    catch a recycled pid trades a harmless wait for a hidden window.
+
   [{DIM}]LANE STATE[/]
     [{GREEN}]fresh[/]    under 6h
     [{YELLOW}]ageing[/]   6-24h
@@ -1819,7 +1866,7 @@ def run_deck_ram(action: str) -> str:
 
 
 def main() -> int:
-    interval = 2.0
+    interval = FRAME_INTERVAL
     args = sys.argv[1:]
     if "--int" in args:
         try:

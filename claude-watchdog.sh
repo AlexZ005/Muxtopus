@@ -702,10 +702,16 @@ pass() {
       fi
     fi
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    # PID IS THE LAST COLUMN, and it is there for the dashboard rather than for
+    # this daemon. A closed window's row is correct here only until the next
+    # pass, so a session that ended a second after one lingered on screen for
+    # most of the interval. Publishing the pid lets a reader check liveness
+    # itself, against a /proc walk it is doing anyway, and drop the row on its
+    # own frame. Appended, so an older reader keeps parsing the row it knows.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$sid" "$name" "$paneid" "$ver" "$ctx" "$state" "$reset" "$acted" \
       "$resumed" "$spent" "$rd" "$optout" "$model" "$idle" "$jobid" \
-      "${cwd:--}" "${wound:--}" "$moptout" >> "$tmp"
+      "${cwd:--}" "${wound:--}" "$moptout" "$pid" >> "$tmp"
   done
 
   mv "$tmp" "$STATUS"
@@ -731,7 +737,7 @@ pass() {
     fi
   fi
   if [ "$DRY" = 1 ]; then
-    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\n'
+    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\tMONOPTOUT\tPID\n'
       awk -F'\t' 'BEGIN{OFS="\t"} {$1=substr($1,1,8);
         if ($9!="-" && $9!="") $9=strftime("%m-%d %H:%M",$9); print}' "$STATUS"
     } | column -t -s $'\t'
