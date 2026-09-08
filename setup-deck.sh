@@ -213,15 +213,22 @@ fi
 
 # --- 6. tmux config ----------------------------------------------------------
 step "6/15  tmux config (shared multi-client sessions)"
-if [ -f "$HOME/.tmux.conf" ] && grep -q 'window-size latest' "$HOME/.tmux.conf"; then
-  skip "~/.tmux.conf already configured"
+# The versioned copy is canonical, and ~/.tmux.conf is refreshed whenever it
+# DIFFERS from it -- not only when it is missing. The old test looked for one
+# option and called the file configured, so a binding added to the checkout
+# never reached a machine that already had the file. The previous file is kept
+# as .bak; the live server is told to reload so the keys apply without a
+# detach.
+if [ -f "$HOME/.code/scripts/tmux.conf" ] && cmp -s "$HOME/.code/scripts/tmux.conf" "$HOME/.tmux.conf"; then
+  skip "~/.tmux.conf matches the checkout"
 else
   [ -f "$HOME/.tmux.conf" ] && cp "$HOME/.tmux.conf" "$HOME/.tmux.conf.bak"
   if [ -f "$HOME/.code/scripts/tmux.conf" ]; then
-    # The versioned copy is canonical. The heredoc below stays as the
-    # fallback for a machine being rebuilt before ~/.code exists.
     cp "$HOME/.code/scripts/tmux.conf" "$HOME/.tmux.conf"
+    tmux source-file "$HOME/.tmux.conf" >/dev/null 2>&1 && ok "running tmux server reloaded"
   else
+    # The fallback for a machine being rebuilt before ~/.code exists. Kept in
+    # step with tmux.conf by hand; the bindings at the end are the same ones.
   cat > "$HOME/.tmux.conf" <<'TMUXCONF'
 # Shared sessions across the Deck, phone, and other machines.
 # Size to the most recently active client, so a phone attaching with a tiny
@@ -243,6 +250,11 @@ set  -g status-interval 5
 set  -g status-left  "#[bold] #S #[default]"
 set  -g status-right " #{session_attached} client(s)  %H:%M "
 set  -g status-style "bg=colour236,fg=colour250"
+
+# w lists the windows of the session you are in; W lists every session on the
+# server. Two accounts share one server, and without the filter w showed both.
+bind w run-shell -b "tmux choose-tree -Zw -f \"##{==:##{session_name},#{session_name}}\""
+bind W choose-tree -Zw
 TMUXCONF
   fi
   ok "~/.tmux.conf written"
