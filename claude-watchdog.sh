@@ -6,6 +6,7 @@
 #   claude-watchdog.sh --dry-run     one pass, print what it WOULD do
 #   claude-watchdog.sh --daemon      poll forever (the systemd unit uses this)
 #   claude-watchdog.sh --status      print the state table it publishes
+#   claude-watchdog.sh --tree        the window tree this scheduler keeps
 #   claude-watchdog.sh --check [NAME] resolve schedule entries; launch nothing
 #                                    (NAME is a file, a basename or a slug;
 #                                     add --body to see the exact paste)
@@ -109,6 +110,22 @@ REPOS_AT="$STATE_DIR/repos.at"
 # silence -- see sched_due. The dashboard renders it; the log carries the
 # CHANGES, so a stall is one line rather than one line every thirty seconds.
 SCHED_WHY="$STATE_DIR/sched-why.tsv"
+# THE WINDOW TREE, one row per window this scheduler has opened:
+#   slug <TAB> parent <TAB> window-id <TAB> pane-id <TAB> launched-at <TAB> file
+#
+# TMUX HAS NO WINDOW HIERARCHY. Windows are a flat, indexed list per session:
+# there is no parent to set and nothing to collapse. So a tree has to be DATA
+# kept beside the session plus a VIEW that renders it -- this file is the data,
+# the dashboard is the view, and the flat list gets the cheap half of the
+# benefit by keeping a subtree contiguous (see subtree_last_index).
+#
+# It is also the answer to "what did that window then DO": the pane id is here,
+# so the dashboard can sample the pane and the handover file rather than the
+# scheduler having to follow the work it started.
+TREE="$STATE_DIR/tree.tsv"
+# A row whose window is long gone stops being interesting; one whose window is
+# gone but recent is still an answer to "has that finished yet".
+TREE_KEEP=$(( 14 * 86400 ))
 # The last time a missing usage reading made us ask for a probe. Bounded, or a
 # permanently broken usage cache would start a throwaway session every pass.
 SCHED_PROBE_AT="$STATE_DIR/sched-probe.at"
@@ -184,11 +201,12 @@ case "${1:---once}" in
              if [ -f "$OPTOUT" ]; then grep -vxF "$2" "$OPTOUT" > "$OPTOUT.tmp" || true
                                        mv "$OPTOUT.tmp" "$OPTOUT"; fi
              echo "watchdog will resume $2"; exit 0 ;;
+  --tree)    MODE=tree ;;
   --check)   MODE=check; CHECK_ARG="${2:-}"; CHECK_BODY=""
              case "${2:-}" in --body) CHECK_ARG=""; CHECK_BODY=1 ;; esac
              case "${3:-}" in --body) CHECK_BODY=1 ;; esac ;;
   --install|--uninstall) MODE="${1#--}" ;;
-  -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
   *) echo "unknown option: $1" >&2; exit 2 ;;
 esac
 
@@ -663,6 +681,160 @@ sched_mark() {
          -e "s/^launched:.*/launched: $(date '+%Y-%m-%d %H:%M')/" "$f" 2>/dev/null
 }
 
+# ---------------------------------------------------------------- the tree
+# One column of one row. Column 2 is the parent, 3 the window id, 4 the pane.
+tree_field() {
+  awk -F'\t' -v s="$1" -v c="$2" '$1==s{v=$c} END{print v}' "$TREE" 2>/dev/null
+}
+
+# Every window id tmux currently has, one per line -- asked once per caller
+# rather than once per row, because this runs inside a 30s loop.
+tree_live_windows() {
+  tmux list-windows -a -F '#{window_id}' 2>/dev/null
+}
+
+# Record a launch, replacing any earlier row for the same slug: a lane that is
+# resumed is the same lane in a new window, not a second entry. Rows for
+# windows that are both gone and old are dropped on the way past, which is the
+# only pruning this file needs.
+tree_record() {
+  local slug="$1" parent="$2" wid="$3" pane="$4" f="$5" now live
+  now="$(date +%s)"
+  live="$(tree_live_windows | paste -sd, -)"
+  if [ -f "$TREE" ]; then
+    awk -F'\t' -v OFS='\t' -v s="$slug" -v now="$now" -v keep="$TREE_KEEP" \
+        -v live=",$live," '
+      $1==s { next }
+      { if (index(live, "," $3 ",") > 0 || (now - $5) < keep) print }
+    ' "$TREE" > "$TREE.tmp" 2>/dev/null
+  else
+    : > "$TREE.tmp"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$slug" "$parent" "$wid" "$pane" "$now" "$(basename "$f")" >> "$TREE.tmp"
+  mv "$TREE.tmp" "$TREE"
+}
+
+# How deep a slug sits, counting ancestors. Bounded, so a row that somehow
+# names itself as its own parent cannot hang the daemon.
+tree_depth() {
+  local s="$1" d=0 p
+  while [ "$d" -lt 8 ]; do
+    p="$(tree_field "$s" 2)"
+    [ -n "$p" ] || break
+    d=$(( d + 1 )); s="$p"
+  done
+  printf '%s' "$d"
+}
+
+# A slug and every descendant of it, one per line.
+tree_family() {
+  printf '%s\n' "$1"
+  awk -F'\t' -v root="$1" '
+    { slug[NR]=$1; par[$1]=$2 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        s = slug[i]; p = par[s]; n = 0
+        while (p != "" && n < 8) {
+          if (p == root) { print s; break }
+          p = par[p]; n++
+        }
+      }
+    }' "$TREE" 2>/dev/null
+}
+
+# The highest window index in a subtree, so a new child is inserted AFTER its
+# siblings rather than between them. Contiguity in the flat list is most of the
+# visual benefit of a tree for almost none of the code -- and it is the only
+# part tmux itself can be made to honour.
+subtree_last_index() {
+  local root="$1" map s wid idx best=""
+  map="$(tmux list-windows -t "$MUX_TMUX" -F '#{window_id} #{window_index}' 2>/dev/null)"
+  [ -n "$map" ] || return 0
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    wid="$(tree_field "$s" 3)"
+    [ -n "$wid" ] || continue
+    idx="$(awk -v w="$wid" '$1==w{print $2; exit}' <<<"$map")"
+    [ -n "$idx" ] || continue
+    if [ -z "$best" ] || [ "$idx" -gt "$best" ]; then best="$idx"; fi
+  done < <(tree_family "$root")
+  printf '%s' "$best"
+}
+
+# ADOPT WINDOWS THE TREE DOES NOT KNOW. A ➥ window can predate this file, be
+# renamed by hand, or belong to a lane resumed some other way -- and a tree that
+# only knows what it opened itself would draw half a session. An adopted window
+# is a ROOT: its parentage is genuinely unknown, and inventing one would be
+# worse than saying so.
+tree_adopt() {
+  local wid name pane slug known
+  tmux has-session -t "=$MUX_TMUX" 2>/dev/null || return 0
+  while IFS=$'\t' read -r wid name pane; do
+    case "$name" in ➥*) ;; *) continue ;; esac
+    known="$(awk -F'\t' -v w="$wid" '$3==w{f=1} END{print f}' "$TREE" 2>/dev/null)"
+    [ -n "$known" ] && continue
+    slug="${name//➥/}"
+    [ -n "$slug" ] || continue
+    tree_record "$slug" "" "$wid" "$pane" "(adopted)"
+  done < <(tmux list-windows -t "$MUX_TMUX" \
+             -F $'#{window_id}\t#{window_name}\t#{pane_id}' 2>/dev/null)
+  return 0
+}
+
+# The tree as text, for --tree and for a reader with no dashboard.
+tree_print() {
+  local live; live="$(tree_live_windows | paste -sd, -)"
+  awk -F'\t' -v live=",$live," '
+    { par[$1]=$2; wid[$1]=$3; pane[$1]=$4; at[$1]=$5; src[$1]=$6; order[++n]=$1 }
+    function draw(s, depth,   i, pad) {
+      pad = ""
+      for (i = 0; i < depth; i++) pad = pad "  "
+      # ASCII, deliberately: gawk escapes non-ASCII bytes in a POSIX locale,
+      # and this daemon must NOT set a UTF-8 one -- the tr -c in
+      # sched_sanitise counts BYTES, so a locale change would silently
+      # change every slug. (An apostrophe here would end this awk program.)
+      printf "%s%s%s\t%s\t%s\t%s\n", pad, (depth ? "+- " : ""), s, wid[s],
+             (index(live, "," wid[s] ",") > 0 ? "open" : "closed"),
+             strftime("%m-%d %H:%M", at[s])
+      for (i = 1; i <= n; i++) if (par[order[i]] == s) draw(order[i], depth + 1)
+    }
+    END { for (i = 1; i <= n; i++) if (par[order[i]] == "" ) draw(order[i], 0) }
+  ' "$TREE" 2>/dev/null
+}
+
+# THE PARENT OF A NEW WINDOW, as a slug.
+#
+# An explicit `parent:` wins -- that is how a hand says it, and how the
+# dashboard records it when one window schedules another. Otherwise it is
+# DERIVED from `window:`: the target a new window is inserted after is, in
+# practice, the window it was launched from, and taking it as the parent is
+# what makes the tree fill itself in without anyone maintaining it. Only a
+# window this scheduler opened counts, so `window: Plan4` -- a hand-made window
+# -- stays a plain insertion target and its child stays a root, exactly as
+# before.
+sched_parent() {
+  local f="$1" p win
+  p="$(sched_field "$f" parent)"
+  if [ -n "$p" ]; then sched_sanitise "$p"; return 0; fi
+  win="$(sched_field "$f" window)"
+  win="${win//➥/}"
+  [ -n "$win" ] || return 0
+  [ -n "$(tree_field "$win" 1)" ] && printf '%s' "$win"
+  return 0
+}
+
+# The window name for a slug at a given depth. THE MARKER CARRIES THE DEPTH,
+# because the name is the only per-window string tmux will show: one arrow for
+# a scheduled window (unchanged), two for its child, three for anything below
+# that. Capped, or a deep chain eats the name it is supposed to label.
+tree_wname() {
+  local slug="$1" depth="${2:-0}" m="➥"
+  [ "$depth" -ge 1 ] && m="➥➥"
+  [ "$depth" -ge 2 ] && m="➥➥➥"
+  printf '%s%s' "$m" "$slug"
+}
+
 # EXACTLY WHAT GETS PASTED, on stdout. One function, so --check reports the
 # real thing rather than a description of it that can drift from it.
 #
@@ -694,6 +866,7 @@ sched_compose() {
 launch_schedule() {
   local f="$1" why="${2:-}"
   local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn
+  local parent depth wid
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
   # (an enabled user unit) long before anyone has run muxtopus, and an item that
@@ -715,7 +888,10 @@ launch_schedule() {
   tmpl="$(sched_field "$f" template)"
 
   slug="$(sched_slug "$f")"
-  wname="➥${slug}"
+  parent="$(sched_parent "$f")"
+  depth=0
+  [ -n "$parent" ] && depth=$(( $(tree_depth "$parent") + 1 ))
+  wname="$(tree_wname "$slug" "$depth")"
   warn="$(sched_slug_warn "$f")"
   [ -n "$warn" ] && log "schedule $(basename "$f"): $warn"
 
@@ -732,11 +908,17 @@ launch_schedule() {
   bodyf="$STATE_DIR/sched-body.$$"
   sched_compose "$f" "$slug" "$wname" > "$bodyf"
 
-  # Insert right after the named window when it exists. Resolve the INDEX --
-  # matching -t by name errors on duplicates, and this session's indices are
-  # sparse (0,1,7,8,9 today), so never assume contiguity either.
+  # WHERE IT LANDS. A child goes after the LAST window of its parent's subtree,
+  # which keeps a family contiguous in tmux's flat list as siblings accumulate;
+  # anything else goes right after its `window:` target as before. Resolve the
+  # INDEX either way -- matching -t by name errors on duplicates, and this
+  # session's indices are sparse (0,1,7,8,9 today), so never assume contiguity.
   local -a targs=()
-  if [ -n "$win" ]; then
+  if [ -n "$parent" ]; then
+    idx="$(subtree_last_index "$parent")"
+    [ -n "$idx" ] && targs=(-a -t "$MUX_TMUX:$idx")
+  fi
+  if [ ${#targs[@]} -eq 0 ] && [ -n "$win" ]; then
     idx="$(tmux list-windows -t "$MUX_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
            | awk -v w="$win" '$2==w{print $1; exit}')"
     [ -n "$idx" ] && targs=(-a -t "$MUX_TMUX:$idx")
@@ -747,9 +929,13 @@ launch_schedule() {
   # two accounts is a coin toss -- and the wrong side of it starts the work
   # under the wrong credentials.
   [ ${#targs[@]} -eq 0 ] && targs=(-t "$MUX_TMUX:")
-  pane="$(tmux new-window -d -P -F '#{pane_id}' "${targs[@]}" -n "$wname" -c "$cwd" \
+  # BOTH IDS. The pane is what gets typed into and sampled; the window id is
+  # what the tree is keyed on, because it survives a rename and a reindex while
+  # the name and the index do not.
+  read -r pane wid < <(tmux new-window -d -P -F '#{pane_id} #{window_id}' \
+          "${targs[@]}" -n "$wname" -c "$cwd" \
           "${MUX_TMUX_ENV[@]}" \
-          "$HOME/.local/bin/claude" 2>/dev/null)"
+          "$HOME/.local/bin/claude" 2>/dev/null)
   if [ -z "$pane" ]; then
     sched_mark "$f" error
     log "schedule $(basename "$f"): could not open a tmux window"
@@ -785,11 +971,12 @@ launch_schedule() {
   tmux send-keys -t "$pane" Enter 2>/dev/null
   rm -f "$bodyf"
 
+  tree_record "$slug" "$parent" "$wid" "$pane" "$f"
   sched_mark "$f" launched
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
-  log "schedule $(basename "$f"): launched $wname (pane $pane) type=$type slug=$slug -- ${why:-due}"
+  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent} -- ${why:-due}"
 }
 
 # ------------------------------------------------------------- --check
@@ -824,11 +1011,15 @@ kv() { printf '  %-14s %s\n' "$1" "$2"; }
 sched_check_one() {
   local f="$1" body="${2:-}"
   local type at title win cwd tmpl st slug wname warn now rc idx nlines nbytes rcout=0
+  local parent depth
   type="$(sched_field "$f" type)"; at="$(sched_field "$f" at)"
   title="$(sched_field "$f" title)"; win="$(sched_field "$f" window)"
   cwd="$(sched_field "$f" cwd)"; tmpl="$(sched_field "$f" template)"
   st="$(sched_field "$f" status)"
-  slug="$(sched_slug "$f")"; wname="➥$slug"; warn="$(sched_slug_warn "$f")"
+  slug="$(sched_slug "$f")"; warn="$(sched_slug_warn "$f")"
+  parent="$(sched_parent "$f")"; depth=0
+  [ -n "$parent" ] && depth=$(( $(tree_depth "$parent") + 1 ))
+  wname="$(tree_wname "$slug" "$depth")"
   now="$(date +%s)"
 
   echo "$(basename "$f")"
@@ -839,6 +1030,11 @@ sched_check_one() {
   elif [ -n "$title" ]; then kv slug "$slug   (derived from title: \"$title\")"
   else kv slug "$slug   (derived from the filename)"; fi
   kv "window name" "$wname"
+  if [ -n "$parent" ]; then
+    kv parent "$parent   (depth $depth -- this window is drawn under it)"
+  else
+    kv parent "(none -- a root window)"
+  fi
   if [ -n "$cwd" ] && [ -d "$cwd" ]; then kv cwd "$cwd"
   else kv cwd "${cwd:-(missing)}   -- NOT A DIRECTORY"; rcout=1; fi
   if [ -n "$tmpl" ]; then
@@ -861,6 +1057,8 @@ sched_check_one() {
   # and this session's indices are sparse.
   if ! tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
     kv "insert after" "(session '$MUX_TMUX' is not running -- the launch would WAIT for muxtopus)"
+  elif [ -n "$parent" ] && [ -n "$(subtree_last_index "$parent")" ]; then
+    kv "insert after" "$MUX_TMUX:$(subtree_last_index "$parent") -- the last window of $parent's subtree"
   elif [ -n "$win" ]; then
     idx="$(tmux list-windows -t "$MUX_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
            | awk -v w="$win" '$2==w{print $1; exit}')"
@@ -1139,6 +1337,7 @@ pass() {
 
   mv "$tmp" "$STATUS"
   sweep_repos
+  tree_adopt
   check_schedules
   # Keep the limit figures warm on their own hourly clock. --ensure is a no-op
   # when the cache is young, so this costs nothing between the hours, and it is
@@ -1167,6 +1366,12 @@ pass() {
   fi
   return 0
 }
+
+if [ "$MODE" = tree ]; then
+  tree_adopt
+  { printf 'WINDOW\tID\tSTATE\tOPENED\n'; tree_print; } | column -t -s $'\t'
+  exit 0
+fi
 
 if [ "$MODE" = check ]; then
   sched_check "${CHECK_ARG:-}" "${CHECK_BODY:-}"
