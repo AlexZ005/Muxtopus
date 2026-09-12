@@ -2,7 +2,7 @@
 """Create an account's schedules/ folder and its templates.
 
     setup-schedules.py                seed the default account
-    setup-schedules.py work           seed ~/.code/schedules-work
+    setup-schedules.py work           seed the work account's folders
     CLAUDE_CONFIG_DIR=~/.claude-work setup-schedules.py
 
 A schedule item is one hand-editable .md per window-to-open; templates are
@@ -15,20 +15,18 @@ has always had; a second one gets a sibling beside it.
 """
 import pathlib, sys
 
-from muxconfig import mux_home, profile_of, suffix_of
+from muxconfig import mux_dir, profile_of
 
 HOME = pathlib.Path.home()
 PROFILE = sys.argv[1].lstrip("-_") if len(sys.argv) > 1 else profile_of()
-SUFFIX = suffix_of(PROFILE)
-MUX_HOME = mux_home()
 
-BASE = MUX_HOME / ("schedules" + SUFFIX)
+BASE = mux_dir("schedules", PROFILE)
 TPL = BASE / "templates"
 TPL.mkdir(parents=True, exist_ok=True)
 # The handover folder is seeded here too: it is written to by a wind-down,
 # which is the worst possible moment to discover a missing directory.
-(MUX_HOME / ("handovers" + SUFFIX) / "done").mkdir(parents=True, exist_ok=True)
-(MUX_HOME / ("backups" + SUFFIX)).mkdir(parents=True, exist_ok=True)
+(mux_dir("handovers", PROFILE) / "done").mkdir(parents=True, exist_ok=True)
+mux_dir("backups", PROFILE).mkdir(parents=True, exist_ok=True)
 
 OUTPUT_CONTRACT = """\
 ## Output contract
@@ -144,20 +142,30 @@ Everything here belongs to ONE Claude account, because launching a window
 spends that account's budget. The account is the suffix on the config dir, and
 the default account takes none:
 
-    ~/.claude        ->  ~/.code/schedules      ~/.code/backups      ~/.code/handovers
-    ~/.claude-work   ->  ~/.code/schedules-work ~/.code/backups-work ~/.code/handovers-work
+    ~/.claude        ->  $MUXTOPUS_HOME/schedules      backups      handovers
+    ~/.claude-work   ->  $MUXTOPUS_HOME/schedules-work backups-work handovers-work
+
+An account can also be given a home of its own by setting MUXTOPUS_HOME in
+~/.config/muxtopus/profiles/<name>.conf, in which case its three folders live
+there UNSUFFIXED (the suffix only keeps siblings apart in a shared home):
+
+    profiles/work.conf:  MUXTOPUS_HOME="$HOME/.code/work/.muxtopus"
+    ~/.claude-work   ->  ~/.code/work/.muxtopus/schedules  backups  handovers
+
+`muxtopus -c -P <name>` prints where an account's folders are and every setting.
 
     tmux session     ->  claude / claude-work
     watchdog state   ->  ~/.local/state/claude-watchdog[-work]
 
-Open a session on an account with `cc` (personal) or `cw` (work); it puts the
-account into the tmux SESSION, so every window opened inside it -- including
+Open a session on an account with `muxtopus` (personal) or `muxtopus
+--profile=work`; it puts the account into the tmux SESSION, so every window
+opened inside it -- including
 one the watchdog launches from this folder -- runs on that account. A tmux
 session does not inherit the environment of whatever created it, which is why
 this is passed in rather than exported and hoped for.
 
 Handoffs are NOT written into the working tree any more: a wind-down writes
-~/.code/handovers[-suffix]/STATUS-<window>.md, and `handover.sh done <window>`
+STATUS-<window>.md into the account's handovers/, and `handover.sh done <window>`
 moves a finished one into done/. Two accounts working one repo would otherwise
 overwrite each other's STATUS file without a word.
 """)

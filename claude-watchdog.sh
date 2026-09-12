@@ -10,8 +10,14 @@
 #   claude-watchdog.sh --optout ID   never prompt that session (dashboard: space)
 #   claude-watchdog.sh --optin ID    undo it
 #   claude-watchdog.sh --profile work ...   drive a second account
+#   claude-watchdog.sh --reload      make the running daemon re-read everything
 #   claude-watchdog.sh --install     install + start the systemd user service
 #   claude-watchdog.sh --uninstall   stop and remove it
+#
+# SETTINGS come from ~/.config/muxtopus/config and, for a named account,
+# ~/.config/muxtopus/profiles/<name>.conf -- the WATCHDOG_* keys listed in
+# profile.sh. The daemon notices an edit to either file within one interval
+# and re-executes itself; --reload (or systemctl --user reload) does it now.
 #
 # WHY THIS EXISTS. `autoContinueAtUsageLimit` is set in ~/.claude/settings.json
 # and does NOT resume after the 5-hour session limit -- measured twice on this
@@ -42,6 +48,8 @@ set -uo pipefail
 #
 # Selected by --profile NAME, else inherited from CLAUDE_CONFIG_DIR, else the
 # default account, whose paths are byte-identical to what they always were.
+# The arguments as given, kept for the daemon to re-exec itself with.
+_ARGV=("$@")
 . "$(dirname "$(readlink -f "$0")")/profile.sh"
 if [ "${1:-}" = "--profile" ]; then
   [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
@@ -97,6 +105,8 @@ REPO_EVERY=120
 
 DEFAULT_MSG="The usage limit has reset. Continue from where you left off."
 INTERVAL="${WATCHDOG_INTERVAL:-30}"
+# Minutes between /usage probes. Each one starts a throwaway claude process.
+USAGE_EVERY="${WATCHDOG_USAGE_EVERY:-60}"
 # A window is only prompted once per (session, reset) pair, so the grace is
 # just insurance against a clock edge, not a retry cadence.
 GRACE=20
@@ -122,10 +132,19 @@ case "${1:---once}" in
   --daemon)  MODE=daemon ;;
   --status)  [ -f "$ENABLED" ] && r=on || r=off
              [ -f "$MONITOR" ] && m=on || m=off
-             echo "# account=$MUX_LABEL restart=$r monitor=$m soft=${WATCHDOG_SOFT_PCT:-65}% hard=${WATCHDOG_HARD_PCT:-85}%"
+             echo "# account=$MUX_LABEL restart=$r monitor=$m soft=$SOFT_PCT% hard=$HARD_PCT% interval=${INTERVAL}s usage-every=${USAGE_EVERY}m"
              [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
   --on)      : > "$ENABLED"; echo "watchdog enabled"; exit 0 ;;
   --off)     rm -f "$ENABLED"; echo "watchdog disabled"; exit 0 ;;
+  --reload)  # SIGHUP makes the daemon re-exec (see the daemon loop). Sent to
+             # the unit's main pid directly rather than via `systemctl reload`
+             # so it also works on a unit installed before ExecReload existed.
+             pid="$(systemctl --user show -p MainPID --value "$MUX_UNIT" 2>/dev/null)"
+             pidf="${XDG_RUNTIME_DIR:-/tmp}/muxtopus-wd$MUX_SUFFIX.pid"
+             if [ "${pid:-0}" -gt 0 ] 2>/dev/null; then :
+             elif [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; then pid="$(cat "$pidf")"
+             else echo "watchdog ($MUX_LABEL) is not running" >&2; exit 1; fi
+             kill -HUP "$pid" && echo "watchdog ($MUX_LABEL) reloading (pid $pid)"; exit $? ;;
   --monitor-on)  mkdir -p "$DIRECTIVES"; : > "$MONITOR"
                  echo "session monitoring enabled"; exit 0 ;;
   --monitor-off) rm -f "$MONITOR"; echo "session monitoring disabled"; exit 0 ;;
@@ -179,6 +198,7 @@ After=default.target
 Type=simple
 ${MUX_PROFILE:+Environment=CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR}
 ExecStart=$SELF ${MUX_PROFILE:+--profile "$MUX_PROFILE"} --daemon
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
 RestartSec=10
 
@@ -440,6 +460,20 @@ sched_mark() {
 launch_schedule() {
   local f="$1"
   local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust
+
+  # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
+  # (an enabled user unit) long before anyone has run muxtopus, and an item that
+  # comes due then must WAIT for the session rather than be failed for a
+  # condition that clears the moment someone attaches. Said once in the log,
+  # not once per pass.
+  if ! tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
+    if [ ! -f "$STATE_DIR/sched-waiting" ]; then
+      log "schedule $(basename "$f"): due, but there is no tmux session '$MUX_TMUX' -- waiting for muxtopus"
+      : > "$STATE_DIR/sched-waiting"
+    fi
+    return 1
+  fi
+  rm -f "$STATE_DIR/sched-waiting"
   type="$(sched_field "$f" type)"
   title="$(sched_field "$f" title)"
   win="$(sched_field "$f" window)"
@@ -731,9 +765,9 @@ pass() {
   # numbers decide when a limited window is restarted.
   if [ -x "$SCRIPT_DIR/claude-usage.sh" ] && [ -f "$MUX_CONFIG_DIR/.credentials.json" ]; then
     if [ -n "$MUX_PROFILE" ]; then
-      "$SCRIPT_DIR/claude-usage.sh" --profile "$MUX_PROFILE" --ensure 60 >/dev/null 2>&1
+      "$SCRIPT_DIR/claude-usage.sh" --profile "$MUX_PROFILE" --ensure "$USAGE_EVERY" >/dev/null 2>&1
     else
-      "$SCRIPT_DIR/claude-usage.sh" --ensure 60 >/dev/null 2>&1
+      "$SCRIPT_DIR/claude-usage.sh" --ensure "$USAGE_EVERY" >/dev/null 2>&1
     fi
   fi
   if [ "$DRY" = 1 ]; then
@@ -746,8 +780,34 @@ pass() {
 }
 
 if [ "$MODE" = daemon ]; then
-  log "watchdog started for $MUX_LABEL (interval ${INTERVAL}s)"
-  while :; do pass; sleep "$INTERVAL"; done
+  log "watchdog started for $MUX_LABEL (interval ${INTERVAL}s, soft $SOFT_PCT%, hard $HARD_PCT%)"
+  # RELOAD BY RE-EXEC. A running daemon is a bash loop holding the values it
+  # parsed at start, so a config edit -- or SIGHUP, from --reload or from
+  # `systemctl --user reload` -- replaces the process with a fresh read of
+  # everything: both config layers and this script itself. A pass in flight
+  # completes first, because bash runs a trap between commands, never inside
+  # one. The sleep is reaped before the exec so it cannot linger as a zombie
+  # under the new process, which would not know it as a child.
+  _SLEEP=""
+  reload() {
+    log "reloading: $1"
+    [ -n "$_SLEEP" ] && { kill "$_SLEEP" 2>/dev/null; wait "$_SLEEP" 2>/dev/null; }
+    exec "$SELF" "${_ARGV[@]}"
+  }
+  trap 'reload SIGHUP' HUP
+  CONF_SEEN="$STATE_DIR/config.seen"; : > "$CONF_SEEN"
+  while :; do
+    pass
+    # An edit to either file takes effect within one interval, without anyone
+    # remembering to restart anything. -nt is a builtin: no fork when quiet.
+    if [ "$MUX_CONFIG" -nt "$CONF_SEEN" ] || \
+       { [ -n "${MUX_PROFILE_CONF:-}" ] && [ "$MUX_PROFILE_CONF" -nt "$CONF_SEEN" ]; }; then
+      reload "config changed"
+    fi
+    # Sleep in the background and wait on it: a trap cannot interrupt a
+    # foreground command, but it does return from `wait` at once.
+    sleep "$INTERVAL" & _SLEEP=$!; wait "$_SLEEP"; _SLEEP=""
+  done
 else
   pass
 fi

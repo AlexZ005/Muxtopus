@@ -4,12 +4,14 @@
 #   ./install.sh                 install with the defaults
 #   ./install.sh --dry-run       print what it would do, touch nothing
 #   ./install.sh --home DIR      where schedules/backups/handovers live
-#   ./install.sh --bin DIR       where the `mux` link goes (default ~/.local/bin)
-#   ./install.sh --also-cc       additionally install it as `cc`
-#
-# A `cw` is linked too when ~/.claude-work exists: mux reads its own name, so
-# `cw` opens the work account the way `cc` opens the default one.
+#   ./install.sh --bin DIR       where the `muxtopus` link goes (default ~/.local/bin)
 #   ./install.sh --no-watchdog   skip the watchdog service
+#
+# ONE NAME ON PATH: muxtopus. Not `mux`, which is already several other tools,
+# and never `cc`, which on any machine with a C toolchain is the C compiler --
+# a `cc` link there breaks every native build. Shorthands belong in your shell
+# rc, where they reach an interactive prompt and nothing else; the installer
+# prints them. A link named muxtopus-<account> opens that account.
 #
 # NOTHING IS WRITTEN OUTSIDE YOUR HOME DIRECTORY, and every path is printed
 # before it is touched. There is no curl-pipe-sh here on purpose: this thing
@@ -18,11 +20,14 @@
 set -uo pipefail
 
 SRC="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# For the config template: one list of keys, defaults and help, shared with
+# everything else that writes a config file.
+# shellcheck disable=SC1091
+. "$SRC/profile.sh"
 
 DRY=0
 BIN="$HOME/.local/bin"
 HOME_DIR=""
-ALSO_CC=0
 WATCHDOG=1
 
 while [ $# -gt 0 ]; do
@@ -32,9 +37,8 @@ while [ $# -gt 0 ]; do
                    HOME_DIR="$2"; shift 2 ;;
     --bin)         [ -n "${2:-}" ] || { echo "--bin needs a directory" >&2; exit 2; }
                    BIN="$2"; shift 2 ;;
-    --also-cc)     ALSO_CC=1; shift ;;
     --no-watchdog) WATCHDOG=0; shift ;;
-    -h|--help)     sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '2,8p' "$0"; exit 0 ;;
     *)             echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -96,7 +100,7 @@ fi
 
 # ------------------------------------------------------------------ 2. folders
 step "2/5  Folders"
-run mkdir -p "$HOME_DIR" "$BIN" "$CFG_DIR"
+run mkdir -p "$HOME_DIR" "$BIN" "$CFG_DIR/profiles"
 ok "$HOME_DIR"
 ok "$BIN"
 
@@ -108,53 +112,34 @@ else
   if [ "$DRY" = 1 ]; then
     printf '    \033[90m$ write %s\033[0m\n' "$CFG"
   else
-    cat > "$CFG" <<EOF
-# Muxtopus -- plain shell, sourced by profile.sh and read by muxconfig.py.
-# Anything set here wins over the environment and over the built-in defaults.
-
-# Where an account's schedules/, backups/ and handovers/ live.
-MUXTOPUS_HOME="$HOME_DIR"
-
-# This checkout. Needed only when mux is copied rather than symlinked, so it
-# cannot find its siblings by following its own path.
-MUXTOPUS_DIR="$SRC"
-EOF
+    # Every key, commented at its default, plus the two this install pins.
+    mux_config_template "" "MUXTOPUS_HOME=$HOME_DIR" "MUXTOPUS_DIR=$SRC" > "$CFG"
   fi
   ok "$CFG written"
 fi
 
 # ---------------------------------------------------------------- 4. the link
-step "4/5  mux"
-run chmod +x "$SRC/mux" "$SRC"/*.sh
-run ln -sfn "$SRC/mux" "$BIN/mux"
-ok "$BIN/mux -> $SRC/mux"
-if [ "$ALSO_CC" = 1 ]; then
-  # Refuse to shadow a real C compiler. Breaking every native build on the
-  # machine is not a reasonable price for two saved keystrokes.
-  other="$(command -v cc 2>/dev/null)"
-  if [ -n "$other" ] && [ "$other" != "$BIN/cc" ]; then
-    warn "not installing 'cc': $other already exists and is probably your C compiler"
-  else
-    run ln -sfn "$SRC/mux" "$BIN/cc"
-    ok "$BIN/cc -> $SRC/mux"
-  fi
-fi
-# One word per account. mux reads the name it was invoked by, so `cw` is
-# `mux -w` -- which is what makes an account reachable as an ssh RemoteCommand,
-# where there is room for a command and no room for its flags. Only offered
-# when the work account actually exists; an alias for nothing is clutter.
-if [ -d "$HOME/.claude-work" ]; then
-  run ln -sfn "$SRC/mux" "$BIN/cw"
-  ok "$BIN/cw -> $SRC/mux  (the work account)"
-else
-  skip "no ~/.claude-work, so no 'cw' -- create the folder and re-run for it"
-fi
+step "4/5  muxtopus"
+run chmod +x "$SRC/muxtopus" "$SRC"/*.sh
+run ln -sfn "$SRC/muxtopus" "$BIN/muxtopus"
+ok "$BIN/muxtopus -> $SRC/muxtopus"
+# Links an earlier version made under the old names would now dangle -- or,
+# for `cc`, keep working under a name that shadows the C compiler. Only OUR
+# links go: one pointing anywhere else is somebody else's program.
+for old in mux cc cw; do
+  case "$(readlink "$BIN/$old" 2>/dev/null)" in
+    "$SRC/mux"|"$SRC/muxtopus") run rm -f "$BIN/$old"; ok "removed the old link $BIN/$old" ;;
+  esac
+done
 case ":$PATH:" in
   *":$BIN:"*) ok "$BIN is on PATH" ;;
   *) warn "$BIN is NOT on PATH -- add it:  export PATH=\"$BIN:\$PATH\"" ;;
 esac
+echo "    shorthands, if you want them, go in your shell rc (interactive only):"
+echo "      alias cc='muxtopus'"
+echo "      alias cw='muxtopus --profile=work'"
 
-# Seed the default account's folders and templates so the first `mux` is not
+# Seed the default account's folders and templates so the first `muxtopus` is not
 # also the first time these directories are discovered to be missing.
 if [ "$DRY" = 0 ] && command -v python3 >/dev/null 2>&1; then
   MUXTOPUS_HOME="$HOME_DIR" python3 "$SRC/setup-schedules.py" >/dev/null 2>&1 \
@@ -164,7 +149,7 @@ fi
 # --------------------------------------------------------------- 5. watchdog
 step "5/5  Watchdog"
 if [ "$WATCHDOG" = 0 ]; then
-  skip "skipped (--no-watchdog); bring it up later with: mux"
+  skip "skipped (--no-watchdog); bring it up later with: muxtopus"
 elif [ "$DRY" = 1 ]; then
   printf '    \033[90m$ %s --install\033[0m\n' "$SRC/claude-watchdog.sh"
 elif command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
@@ -177,14 +162,14 @@ elif command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >
     warn "install failed; try: $SRC/claude-watchdog.sh --install"
   fi
 else
-  skip "no systemd --user here; mux will start the daemon in the background instead"
+  skip "no systemd --user here; muxtopus will start the daemon in the background instead"
 fi
 
 echo
 if [ "$DRY" = 1 ]; then
   echo "dry run only -- nothing was written."
 else
-  echo "Done.  Start with:   mux          (personal account)"
-  echo "                     mux -w       (work account, ~/.claude-work)"
-  echo "                     mux -l       (what is running)"
+  echo "Done.  Start with:   muxtopus                  (personal account)"
+  echo "                     muxtopus --profile=work   (work account, ~/.claude-work)"
+  echo "                     muxtopus -l               (what is running)"
 fi

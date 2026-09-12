@@ -13,8 +13,9 @@
 # STATUS-<window>.md into the working tree, which is wrong twice: it is scratch
 # state under version control, and once a second account works the same tree,
 # two windows of the same name overwrite each other's handoff without a word.
-# So it lives beside the account's schedules instead -- ~/.code/handovers for
-# the default account, ~/.code/handovers-work for the next one.
+# So it lives beside the account's schedules instead: handovers/ for the
+# default account, handovers-work/ for the next one -- or plain handovers/
+# inside that account's own home, if the config gives it one (profile.sh).
 #
 # WHY done/ RATHER THAN rm. A finished handoff is the record of what a lane
 # actually did, and it costs nothing to keep. Moving it also makes `list` mean

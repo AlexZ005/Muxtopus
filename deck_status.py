@@ -60,16 +60,14 @@ STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local" / "state"
 # One dashboard per Claude account. The profile is the suffix on the config
 # dir -- ~/.claude is the default account and takes NO suffix, so every path
 # below is byte-identical to what it was before a second account existed.
-# mux puts CLAUDE_CONFIG_DIR into the tmux session, so window 0 picks its own
+# muxtopus puts CLAUDE_CONFIG_DIR into the tmux session, so window 0 picks its own
 # account up from the environment rather than being passed a flag. The DEFAULT
 # account is the variable being absent, which is why the fallback below is a
 # path and not an error: no variable means ~/.claude, means profile "".
 # WHERE THE DATA LIVES comes from muxconfig, which reads the SAME file
 # profile.sh reads -- the shell half and the python half must never disagree
 # about it, and one reader is how that is guaranteed rather than hoped for.
-from muxconfig import mux_home
-
-MUX_HOME = mux_home()
+from muxconfig import mux_dir, knob, profile_of
 
 CONFIG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(HOME / ".claude")))
 PROFILE = CONFIG_DIR.name
@@ -110,18 +108,22 @@ WATCHDOG_MONITOR = WATCHDOG_DIR / "monitor"
 WATCHDOG_MON_OPTOUT = WATCHDOG_DIR / "monitor-optout"
 WATCHDOG_DIRECTIVES = WATCHDOG_DIR / "directives"
 WATCHDOG_MSG = WATCHDOG_DIR / "message"
+# THE KNOBS come from the config layers via muxconfig -- the same files, the
+# same key list and the same precedence as the shell half -- so a value set
+# for this account in ~/.config/muxtopus/profiles/<name>.conf reaches the
+# dashboard without anyone exporting anything. R re-execs, which re-reads.
 # u refreshes only past this age; U ignores it. The watchdog keeps its own
 # hourly clock, so this is about not starting a probe per keypress.
-USAGE_MAX_AGE = int(os.environ.get("CLAUDE_USAGE_MAX_AGE", "20"))
+USAGE_MAX_AGE = int(knob("CLAUDE_USAGE_MAX_AGE", PROFILE))
 # Both sessions on this machine run a 1M-context model. There is no way to ask
 # a running session what its window is, so this is an assumption the bar is
 # drawn against, overridable rather than hidden.
-CONTEXT_WINDOW = int(os.environ.get("CLAUDE_CONTEXT_WINDOW", "1000000"))
+CONTEXT_WINDOW = int(knob("CLAUDE_CONTEXT_WINDOW", PROFILE))
 # The watchdog republishes every 30s; past double that it is not running.
 # Both are named rather than inlined because the help screen quotes them to
 # explain why a closed window is dropped here instead of waited for.
 STALE_AFTER = 75.0
-WD_INTERVAL = int(os.environ.get("WATCHDOG_INTERVAL", "30"))
+WD_INTERVAL = int(knob("WATCHDOG_INTERVAL", PROFILE))
 FRAME_INTERVAL = 2.0
 
 
@@ -447,7 +449,7 @@ def refresh_usage(force: bool = False) -> str:
         return "claude-usage.sh not found"
     # NAME THE ACCOUNT, do not leave it to be inherited. claude-usage.sh falls
     # back to CLAUDE_CONFIG_DIR, which is right whenever this dashboard was
-    # started by mux -- and silently wrong in a window that was not, where it
+    # started by muxtopus -- and silently wrong in a window that was not, where it
     # would refresh the personal account's cache from the work dashboard.
     acct = ["--profile", PROFILE] if PROFILE else []
     args = [str(script), *acct, "--refresh"] if force else \
@@ -528,18 +530,25 @@ def monitor_opted_out() -> set[str]:
 
 
 # ------------------------------------------------------------- schedules
-SCHEDULES_DIR = MUX_HOME / ("schedules" + SUFFIX)
+# An account may keep its folders in a home of its own (MUXTOPUS_HOME_work),
+# where they are unsuffixed; muxconfig applies the same rule profile.sh does.
+SCHEDULES_DIR = mux_dir("schedules", PROFILE)
 SCHED_TEMPLATES = SCHEDULES_DIR / "templates"
 # Handoffs live here rather than in the working tree: scratch state does not
 # belong under version control, and two accounts working one repo would
 # otherwise overwrite each other's STATUS file without a word. handover.sh
 # moves a finished one into done/.
-HANDOVERS_DIR = MUX_HOME / ("handovers" + SUFFIX)
+HANDOVERS_DIR = mux_dir("handovers", PROFILE)
 # Where autonomous plan sessions park the forks they could not ask about.
-QUESTIONS_DIR = Path(os.environ.get(
-    "MUXTOPUS_QUESTIONS_DIR", str(HOME / ".code" / "theprototype-app" / "core" / "plans")))
-# The desktop-extras entry rides the same cursor as the sessions.
+QUESTIONS_DIR = Path(knob("MUXTOPUS_QUESTIONS_DIR", PROFILE,
+                          str(HOME / ".code" / "theprototype-app" / "core" / "plans")))
+# The desktop-extras entry rides the same cursor as the sessions, and so do
+# the lane rows: a cursor key of "::lane:<pgid>" is a dev server.
 EXTRAS_SENTINEL = "::extras"
+LANE_PREFIX = "::lane:"
+# The placeholder row of an EMPTY lanes table is a cursor target too, or a
+# filtered-away table could never be switched to "all" from the arrows.
+LANES_EMPTY = LANE_PREFIX + "none"
 
 
 def read_schedules() -> list[dict]:
@@ -632,6 +641,28 @@ def session_mode(procs: list[Proc]) -> str:
     return "?"
 
 
+def lane_account(pid: int) -> str | None:
+    """Which account a dev server belongs to, read off its environment.
+
+    muxtopus puts CLAUDE_CONFIG_DIR into the tmux SESSION, so everything
+    started inside one of its windows inherits the variable -- and keeps it
+    after the window is gone. That is why this beats walking parent pids: a
+    server that was daemonised, or outlived the shell that started it, has
+    been reparented to init and has no ancestry left, but its environment is
+    still the one it was born with. No variable is the default account,
+    exactly as everywhere else in this tool. None means the file could not be
+    read (another user's process): unknown, and therefore not ours."""
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            env = f.read()
+    except OSError:
+        return None
+    for item in env.split(b"\0"):
+        if item.startswith(b"CLAUDE_CONFIG_DIR="):
+            return profile_of(item[len(b"CLAUDE_CONFIG_DIR="):].decode(errors="replace"))
+    return ""
+
+
 def lane_name(pid: int) -> str:
     try:
         cwd = os.readlink(f"/proc/{pid}/cwd")
@@ -711,6 +742,12 @@ class Dashboard:
         self.sched_i = 0
         self.sched_rows: list[dict] = []
         self.cwds: dict[str, str] = {}     # session id -> working directory
+        # THE LANES TABLE IS THIS ACCOUNT'S BY DEFAULT. Two dashboards side by
+        # side listing the same servers is the same confusion the session
+        # suffix exists to prevent; f (or enter on a lane row) shows them all.
+        self.lanes_all = False
+        self.lane_keys: list[str] = []     # lane rows in rendered order
+        self.lane_acct: dict[int, str | None] = {}   # pid -> account, cached
         self.version = (SCRIPTS / "VERSION").read_text().strip() if (SCRIPTS / "VERSION").exists() else "?"
 
     def say(self, msg: str) -> None:
@@ -734,6 +771,8 @@ class Dashboard:
         so it is named instead of failing silently."""
         if self.cursor == EXTRAS_SENTINEL:
             return self.toggle_extras()
+        if self.cursor.startswith(LANE_PREFIX):
+            return self.toggle_lanes()
         pane = self.panes.get(self.cursor, "")
         if not pane:
             job = self.jobs.get(self.cursor, "")
@@ -762,6 +801,10 @@ class Dashboard:
         if sid == EXTRAS_SENTINEL:
             return [{"label": "Reclaim or start desktop extras",
                      "act": self.toggle_extras}]
+        if sid.startswith(LANE_PREFIX):
+            return [{"label": ("Show this account's lanes only" if self.lanes_all
+                               else "Show every account's lanes"),
+                     "act": self.toggle_lanes}]
         win = self.windows.get(sid, "")
         has_pane = bool(self.panes.get(sid))
         skipped = sid in opted_out()
@@ -1175,6 +1218,10 @@ class Dashboard:
         except OSError as exc:
             return "schedule failed: %s" % exc
 
+    def toggle_lanes(self) -> str:
+        self.lanes_all = not self.lanes_all
+        return "lanes: every account" if self.lanes_all else f"lanes: {PROFILE_LABEL} only"
+
     def toggle_extras(self) -> str:
         """Enter on the extras row: reclaim when running, start when not --
         the old s/S pair folded onto the cursor. Blocks the frame for the
@@ -1350,12 +1397,34 @@ class Dashboard:
             if p.pgid in groups and p.pid in pid_port:
                 pgid_port[p.pgid] = pid_port[p.pid]
 
+        # WHOSE LANE IS IT. Read once per server, not per frame: an environment
+        # is fixed at exec, so the answer cannot change while the group lives.
+        # The group LEADER is asked first -- the `npm run dev` the rest hang
+        # off -- because the member sampled above can be a short-lived worker
+        # that is gone by the next frame; any member inherits the same answer.
+        for pgid, g in groups.items():
+            if pgid not in self.lane_acct:
+                acct = lane_account(pgid)
+                if acct is None:
+                    acct = lane_account(g["pid"])
+                self.lane_acct[pgid] = acct
+            g["acct"] = self.lane_acct[pgid]
+        self.lane_acct = {k: v for k, v in self.lane_acct.items() if k in groups}
+        shown = {k: g for k, g in groups.items()
+                 if self.lanes_all or g["acct"] == PROFILE}
+        hidden = len(groups) - len(shown)
+
         lanes = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
                       header_style=DIM, border_style=FRAME)
+        lanes.add_column("", width=2)
         lanes.add_column("PORT", width=6)
         lanes.add_column("RAM", justify="right", width=10)
         lanes.add_column("AGE", justify="right", width=6)
-        lanes.add_column("LANE", overflow="ellipsis", ratio=1)
+        lanes.add_column("LANE", overflow="ellipsis", no_wrap=True, ratio=1)
+        # Only the unfiltered view needs to say whose a row is; in the
+        # filtered one the answer is the panel title.
+        if self.lanes_all:
+            lanes.add_column("ACCOUNT", width=10)
         lanes.add_column("DIRTY", justify="right", width=6)
         lanes.add_column("STATE", width=16)
 
@@ -1366,9 +1435,12 @@ class Dashboard:
         dirty_list = dirty_repos()
         dirty = {name: n for _path, name, n in dirty_list}
 
-        total_mb = sum(g["rss"] for g in groups.values())
-        for pgid in sorted(groups, key=lambda k: pgid_port.get(k, 99999)):
-            g = groups[pgid]
+        total_mb = sum(g["rss"] for g in shown.values())
+        self.lane_keys = []
+        for pgid in sorted(shown, key=lambda k: pgid_port.get(k, 99999)):
+            g = shown[pgid]
+            key = LANE_PREFIX + str(pgid)
+            self.lane_keys.append(key)
             age = g["age"]
             if age >= 86400:
                 state, style = "stale, restart", RED
@@ -1378,17 +1450,39 @@ class Dashboard:
                 state, style = "fresh", GREEN
             lname = lane_name(g["pid"])
             n = dirty.get(lname.rsplit("/", 1)[-1], 0)
-            lanes.add_row(
+            cells = [
+                Text("▸" if key == self.cursor else " ", style="bold #c9a0dc"),
                 Text(str(pgid_port.get(pgid, "—")), style="#8fb8de"),
                 human_mb(g["rss"]),
                 Text(human_age(age), style=style),
-                lname,
+                Text(lname),
                 Text(str(n) if n else "—", style=YELLOW if n else FRAME),
                 Text(state, style=style),
-            )
-        if not groups:
-            lanes.add_row(Text("—", style=DIM), "", "",
-                          Text("no dev servers running", style=DIM), "", "")
+            ]
+            if self.lanes_all:
+                acct = g["acct"]
+                cells.insert(5, Text("?" if acct is None else (acct or "personal"),
+                                     style=DIM if acct == PROFILE else "#c9a0dc"))
+            lanes.add_row(*cells)
+        if not shown:
+            # The count and the key are in the panel title; keep the cell short
+            # enough to survive a narrow column. Selected, it says what enter does.
+            self.lane_keys = [LANES_EMPTY]
+            sel = self.cursor == LANES_EMPTY
+            empty = "no dev servers running" if not hidden else f"none for {PROFILE_LABEL}"
+            if sel:
+                empty += "  (enter: %s)" % ("mine" if self.lanes_all else "all")
+            cells = [Text("▸" if sel else " ", style="bold #c9a0dc"), Text("—", style=DIM), "", "",
+                     Text(empty, style="#c9a0dc" if sel else DIM), "", ""]
+            if self.lanes_all:
+                cells.insert(5, "")
+            lanes.add_row(*cells)
+        if self.lanes_all:
+            lane_scope = " · every account  (f: this one)"
+        elif hidden or MULTI_ACCOUNT:
+            lane_scope = f" · {PROFILE_LABEL}" + (f" · {hidden} hidden  (f: all)" if hidden else "")
+        else:
+            lane_scope = ""
 
         # ---- claude sessions ----------------------------------------------
         sessions, sess_age = claude_sessions()
@@ -1404,11 +1498,14 @@ class Dashboard:
         self.jobs = {s.sid: s.job for s in ordered}
         self.windows = {s.sid: s.window for s in ordered}
         self.cwds = {s.sid: s.cwd for s in ordered}
-        # The extras entry rides the same cursor: arrow past the last session
-        # and the system row lights up; enter reclaims or starts.
-        self.sids.append(EXTRAS_SENTINEL)
+        # ONE CURSOR, TOP TO BOTTOM, in the order the panels are drawn: lane
+        # rows above, then the sessions, then the extras entry on the system
+        # row. Arrow up from the first session and a lane lights up; enter or
+        # space there switches the lanes table between this account and all.
+        first_session = self.sids[0] if self.sids else ""
+        self.sids = self.lane_keys + self.sids + [EXTRAS_SENTINEL]
         if self.cursor not in self.sids:
-            self.cursor = self.sids[0] if self.sids else ""
+            self.cursor = first_session or self.sids[0]
 
         mon_all = monitor_on()
         ct = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
@@ -1506,7 +1603,7 @@ class Dashboard:
         # The lanes table only lists trees with a dev server, so a repo holding
         # uncommitted work and running nothing would be invisible there -- which
         # is exactly the one you are most likely to lose.
-        lane_names = {lane_name(g["pid"]).rsplit("/", 1)[-1] for g in groups.values()}
+        lane_names = {lane_name(g["pid"]).rsplit("/", 1)[-1] for g in shown.values()}
 
         ex_sel = (self.cursor == EXTRAS_SENTINEL)
         ex_hint = ("  (enter %s)" % ("reclaims" if extras else "starts")) if ex_sel \
@@ -1524,7 +1621,7 @@ class Dashboard:
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " schedules  ",
             ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",
-            ("p", DIM), " btop  ", ("?", DIM), " help",
+            ("f", DIM), " all lanes  ", ("p", DIM), " btop  ", ("?", DIM), " help",
         )
         # The one piece of good news this dashboard can deliver, so it gets to
         # be loud. Latched on first sight rather than read per frame: hooray()
@@ -1595,7 +1692,7 @@ class Dashboard:
             Panel(head, title="[bold]deck", subtitle=f"[{DIM}]{subtitle}",
                   subtitle_align="right", border_style=FRAME, box=box.ROUNDED),
             Panel(lanes,
-                  title=f"[bold]lanes[/] [{DIM}]· {len(groups)} server(s) · {human_mb(total_mb)}",
+                  title=f"[bold]lanes[/] [{DIM}]· {len(shown)} server(s) · {human_mb(total_mb)}{lane_scope}",
                   title_align="left", border_style=FRAME, box=box.ROUNDED),
             Panel(ct, title=ctitle, title_align="left",
                   border_style=FRAME, box=box.ROUNDED),
@@ -1606,8 +1703,8 @@ class Dashboard:
         )
 
 
-SOFT = os.environ.get("WATCHDOG_SOFT_PCT", "65")
-HARD = os.environ.get("WATCHDOG_HARD_PCT", "85")
+SOFT = knob("WATCHDOG_SOFT_PCT", PROFILE)
+HARD = knob("WATCHDOG_HARD_PCT", PROFILE)
 
 HELP = f"""
   [bold]deck-status[/] -- lane dashboard
@@ -1617,6 +1714,14 @@ HELP = f"""
   [bold]w[/] watchdog    [bold]m[/] monitoring      [bold]p[/] btop   [bold]?[/] this screen
   [bold]u[/] read usage limits      [bold]up/down[/] pick   [bold]space[/] menu
   [bold]enter[/] open the selected session's window (Ctrl-b 0 comes back here)
+  [bold]f[/] lanes: this account only / every account
+
+  [{DIM}]LANES AND ACCOUNTS[/]
+    A dev server belongs to the account whose session started it -- read off
+    CLAUDE_CONFIG_DIR in its environment, which it keeps even after the window
+    that started it is gone. The table shows this account's by default; f, or
+    enter on a lane row, shows every account's with each one labelled. Arrow
+    up from the first session to reach the lane rows.
 
   [{DIM}]THE MENU (space)[/]
     Two switches at the top, then everything you can do to the window under
@@ -2003,6 +2108,8 @@ def main() -> int:
                     dash.say(toggle_watchdog())
                 elif key in ("m", "M"):
                     dash.say(dash.act_monitor())
+                elif key == "f":
+                    dash.say(dash.toggle_lanes())
                 elif key == "s":
                     # The schedule view. Stopping/starting desktop extras
                     # moved onto the cursor: arrow past the sessions, enter.

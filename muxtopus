@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
-# mux -- open a Claude Code tmux session on a given account, with its watchdog.
+# muxtopus -- open a Claude Code tmux session on an account, with its watchdog.
 #
-#   mux                          session "claude" in $HOME, personal account
-#   mux -w                       the work account   (~/.claude-work)
-#   mux -P acme                  any account        (~/.claude-acme)
-#   mux infra ~/src/infra        a named session in a directory
-#   mux -w infra ~/src/infra     both
-#   mux -r                       start Claude with the resume picker
-#   mux -d -P acme               create it and return (for scripts)
-#   mux -l                       list accounts, sessions and watchdogs
+#   muxtopus                          session "claude" in $HOME, personal account
+#   muxtopus --profile=work           the work account   (~/.claude-work)
+#   muxtopus -w                       the same, shorter
+#   muxtopus --profile=acme           any account        (~/.claude-acme)
+#   muxtopus infra ~/src/infra        a named session in a directory
+#   muxtopus -w infra ~/src/infra     both
+#   muxtopus -r                       start Claude with the resume picker
+#   muxtopus --create --profile=acme  a NEW account, without being asked first
+#   muxtopus -d --profile=acme        create it and return (for scripts)
+#   muxtopus -l                       list accounts, sessions and watchdogs
+#   muxtopus -c [--profile=acme]      the effective configuration of an account
 #
-# THE NAME IS A FLAG. Symlinked as `cw` this is `mux -w`, and as `mux-acme` it
-# is `mux -P acme`, so each account is one word to type and, more to the point,
-# one word to send over ssh:  ssh deck -t 'bash -lc cw'. An explicit flag still
-# wins over the name.
+# THE NAME IS A FLAG. Symlinked as `muxtopus-acme` this is `muxtopus
+# --profile=acme`: one word per account, which is what an ssh RemoteCommand
+# has room for. An explicit flag still wins over the name. Shorter names are
+# for a shell alias, not for PATH: `cc` on PATH is the C compiler on any
+# machine with a toolchain, and `mux` is already several other tools.
 #
 # ONE ACCOUNT PER SESSION. A profile picks the Claude config dir, and every
 # path that belongs to an account follows it: the tmux session name, the
 # schedules, backups and handovers folders, the watchdog's state and its usage
-# cache. The default account is unsuffixed, so `mux` with no flag uses exactly
+# cache. The default account is unsuffixed, so `muxtopus` with no flag uses exactly
 # the paths a single-account machine has always used.
 #
 # The config dir is exported into the tmux SESSION (-e), not merely into this
@@ -31,9 +35,10 @@ set -uo pipefail
 # NOT the host's -- its socket lives in the sandbox's private /tmp. Re-exec on
 # the host so every client shares one server.
 if [ -f /.flatpak-info ] && command -v flatpak-spawn >/dev/null 2>&1; then
-  # readlink -f resolves the symlink back to `mux`, throwing away the name it
-  # was invoked by -- and the name is the account. Carry it across explicitly,
-  # or `cw` inside VSCode's terminal would quietly open the personal session.
+  # readlink -f resolves the symlink back to `muxtopus`, throwing away the
+  # name it was invoked by -- and the name is the account. Carry it across
+  # explicitly, or `muxtopus-work` inside VSCode's terminal would quietly open
+  # the personal session.
   export MUX_ARGV0="${MUX_ARGV0:-$(basename -- "$0")}"
   exec flatpak-spawn --host --env=MUX_ARGV0="$MUX_ARGV0" "$(readlink -f "$0")" "$@"
 fi
@@ -48,43 +53,52 @@ MUXTOPUS_CONFIG="${MUXTOPUS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/muxtopus/c
 [ -f "$MUXTOPUS_CONFIG" ] && . "$MUXTOPUS_CONFIG"
 _dir="${MUXTOPUS_DIR:-$(dirname "$_self")}"
 if [ ! -f "$_dir/profile.sh" ]; then
-  echo "mux: cannot find profile.sh next to $_self or at MUXTOPUS_DIR=$_dir" >&2
+  echo "muxtopus: cannot find profile.sh next to $_self or at MUXTOPUS_DIR=$_dir" >&2
   echo "     set MUXTOPUS_DIR in $MUXTOPUS_CONFIG" >&2
   exit 1
 fi
 # shellcheck disable=SC1091
 . "$_dir/profile.sh"
 
-# The account this was INVOKED as. `cw` is spelled out rather than derived,
-# because it is the counterpart of the -w flag; any other account gets a name
-# of the form mux-<account>, which needs no table to extend.
+# The account this was INVOKED as: a link named muxtopus-<account>. One
+# pattern, no table to extend.
 _argv0="${MUX_ARGV0:-$(basename -- "$0")}"
 NAME_PROFILE=""
 case "$_argv0" in
-  cw)     NAME_PROFILE="work" ;;
-  mux-*)  NAME_PROFILE="${_argv0#mux-}" ;;
-  cc-*)   NAME_PROFILE="${_argv0#cc-}" ;;
+  muxtopus-*) NAME_PROFILE="${_argv0#muxtopus-}" ;;
 esac
 case "$NAME_PROFILE" in *[!a-zA-Z0-9_-]*) NAME_PROFILE="" ;; esac
 
-RESUME=""; PROFILE=""; DETACH=0; NOWD=0; LIST=0
+RESUME=""; PROFILE=""; DETACH=0; NOWD=0; LIST=0; SHOWCFG=0; CREATE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -r|--resume)       RESUME="--resume"; shift ;;
     -w|--work)         PROFILE="work"; shift ;;
-    -P|--profile)      [ -n "${2:-}" ] || { echo "mux: --profile needs a name" >&2; exit 2; }
+    --profile=*)       PROFILE="${1#--profile=}"; shift ;;
+    -P|--profile)      [ -n "${2:-}" ] || { echo "muxtopus: --profile needs a name" >&2; exit 2; }
                        PROFILE="$2"; shift 2 ;;
     -d|--detach)       DETACH=1; shift ;;
+    --create)          CREATE=1; shift ;;
     -n|--no-watchdog)  NOWD=1; shift ;;
     -l|--list)         LIST=1; shift ;;
-    -h|--help)         sed -n '2,18p' "$0"; exit 0 ;;
+    -c|--config)       SHOWCFG=1; shift ;;
+    -h|--help)         sed -n '2,21p' "$0"; exit 0 ;;
     --)                shift; break ;;
-    -*)                echo "mux: unknown option: $1" >&2; exit 2 ;;
+    -*)                echo "muxtopus: unknown option: $1" >&2; exit 2 ;;
     *)                 break ;;
   esac
 done
 
 [ -n "$PROFILE" ] || PROFILE="$NAME_PROFILE"
+# A profile name becomes a path segment (~/.claude-<name>, profiles/<name>.conf)
+# and a tmux session name, so it is letters, digits, - and _ or nothing.
+case "$PROFILE" in *[!a-zA-Z0-9_-]*) echo "muxtopus: bad profile name: $PROFILE" >&2; exit 2 ;; esac
+
+# ----------------------------------------------------------------- config
+if [ "$SHOWCFG" = 1 ]; then
+  mux_show_config "$PROFILE"
+  exit 0
+fi
 
 # ------------------------------------------------------------------- list
 if [ "$LIST" = 1 ]; then
@@ -109,12 +123,37 @@ fi
 mux_use_profile "$PROFILE"
 mux_export_config_dir
 mux_tmux_env
-mux_ensure_dirs
 
+# A NEW ACCOUNT IS A QUESTION, NOT A SIDE EFFECT. Creating one makes a config
+# dir, three data folders and a systemd unit -- and a typo in --profile used
+# to do all of that silently. So an account that does not exist yet is
+# confirmed at a terminal, or requested outright with --create where there is
+# no terminal (a script, an ssh RemoteCommand); otherwise nothing is touched.
 if [ ! -d "$MUX_CONFIG_DIR" ]; then
+  if [ "$CREATE" != 1 ]; then
+    have="$(mux_profiles | sed 's/^$/personal/' | paste -sd' ' -)"
+    echo "muxtopus: there is no account '$MUX_LABEL' ($MUX_CONFIG_DIR)." >&2
+    echo "          accounts on this machine: ${have:-none}" >&2
+    if [ -t 0 ] && [ -t 2 ]; then
+      printf 'create it? %s, %s/{schedules,backups,handovers} and a disarmed watchdog [y/N] '         "$MUX_CONFIG_DIR" "$MUX_HOME" >&2
+      read -r ans
+      case "$ans" in y|Y|yes|YES) ;; *) echo "muxtopus: nothing created." >&2; exit 1 ;; esac
+    else
+      echo "          no terminal to ask on; pass --create to make it." >&2
+      exit 1
+    fi
+  fi
   mkdir -p "$MUX_CONFIG_DIR"
-  echo "mux: created $MUX_CONFIG_DIR -- Claude will ask you to log in." >&2
+  echo "muxtopus: created $MUX_CONFIG_DIR -- Claude will ask you to log in." >&2
+  # A new account gets its config file, every key commented at its default,
+  # so what can be tuned for it is on disk from day one rather than in a doc.
+  if [ -n "$MUX_PROFILE" ] && [ ! -f "$MUX_PROFILE_CONF" ]; then
+    mkdir -p "$(dirname "$MUX_PROFILE_CONF")"
+    mux_config_template "$MUX_PROFILE" > "$MUX_PROFILE_CONF"
+    echo "muxtopus: wrote $MUX_PROFILE_CONF (all defaults, commented)" >&2
+  fi
 fi
+mux_ensure_dirs
 
 # --------------------------------------------------------------- watchdog
 # Brought up with the session, because a session without one is exactly the
@@ -130,13 +169,13 @@ watchdog_up() {
 
   if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
     if [ ! -f "$HOME/.config/systemd/user/$MUX_UNIT" ]; then
-      echo "mux: installing the watchdog for '$MUX_LABEL'..." >&2
+      echo "muxtopus: installing the watchdog for '$MUX_LABEL'..." >&2
       if [ -n "$MUX_PROFILE" ]; then "$wd" --profile "$MUX_PROFILE" --install >/dev/null
       else "$wd" --install >/dev/null; fi
       [ -f "$MUX_CONFIG_DIR/.credentials.json" ] || {
         if [ -n "$MUX_PROFILE" ]; then "$wd" --profile "$MUX_PROFILE" --off >/dev/null
         else "$wd" --off >/dev/null; fi
-        echo "mux: watchdog installed but DISARMED until '$MUX_LABEL' logs in." >&2
+        echo "muxtopus: watchdog installed but DISARMED until '$MUX_LABEL' logs in." >&2
         echo "     arm it with:  w  on the dashboard" >&2
       }
     fi
@@ -159,7 +198,7 @@ watchdog_up() {
     nohup "$wd" --daemon >/dev/null 2>&1 &
   fi
   echo $! > "$pidf"
-  echo "mux: watchdog started in the background (no systemd here); pid $(cat "$pidf")" >&2
+  echo "muxtopus: watchdog started in the background (no systemd here); pid $(cat "$pidf")" >&2
 }
 [ "$NOWD" = 1 ] || watchdog_up
 

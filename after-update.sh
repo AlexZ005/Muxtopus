@@ -16,7 +16,7 @@
 #
 # WHAT NEVER NEEDS REDOING
 #   /home is a separate partition and is untouched, so all of this survives:
-#   node + npm (~/.local/node), claude / cc / cw / gh (~/.local/bin), ~/.bashrc,
+#   node + npm (~/.local/node), claude / muxtopus / gh (~/.local/bin), ~/.bashrc,
 #   ~/.claude (settings AND credentials), ~/.code (repos + these scripts),
 #   ~/.ssh/authorized_keys, and the Playwright browsers in ~/.cache.
 #
@@ -38,7 +38,7 @@ NEEDS_SETUP=0
 
 step "1/8  Home-side tooling (should all have survived)"
 for pair in "node:$HOME/.local/node/bin/node" "claude:$HOME/.local/bin/claude" \
-            "cc:$HOME/.local/bin/cc" "cw:$HOME/.local/bin/cw" \
+            "muxtopus:$HOME/.local/bin/muxtopus" \
             "gh:$HOME/.local/bin/gh" \
             "terraform:$HOME/.local/bin/terraform" "aws:$HOME/.local/bin/aws"; do
   n="${pair%%:*}"; f="${pair#*:}"

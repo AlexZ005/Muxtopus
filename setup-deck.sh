@@ -52,9 +52,9 @@ else
   [ -f "$HOME/.bashrc" ] && cp "$HOME/.bashrc" "$HOME/.bashrc.bak"
   # Prepended, so it runs BEFORE the `[[ $- != *i* ]] && return` guard that
   # Arch's default .bashrc opens with. Without this, a non-interactive
-  # `ssh host 'bash -lc cc'` returns before PATH is ever extended.
+  # `ssh host 'bash -lc muxtopus'` returns before PATH is ever extended.
   {
-    echo "# Added by setup-deck: user-local binaries (gh, claude, cc)."
+    echo "# Added by setup-deck: user-local binaries (gh, claude, muxtopus)."
     if [ "$need_path" = 1 ]; then
       printf '%s\n' 'case ":$PATH:" in' \
         '  *":$HOME/.local/bin:"*) ;;' \
@@ -260,26 +260,41 @@ TMUXCONF
   ok "~/.tmux.conf written"
 fi
 
-# --- 7. mux launcher ---------------------------------------------------------
-step "7/15  mux launcher (Claude Code sessions, one per account)"
+# --- 7. muxtopus launcher ----------------------------------------------------
+step "7/15  muxtopus launcher (Claude Code sessions, one per account)"
 # SYMLINKED, NOT COPIED. The launcher lives in this checkout and is edited
 # there; a copy in ~/.local/bin would silently go stale the moment anything
 # here changed, which is exactly what happened to the old inlined `cc`.
 #
-# `cc` is kept as a second name for muscle memory. It is deliberately NOT the
-# primary one: on any machine with a C toolchain, a `cc` on PATH shadows the
-# C compiler.
-#
-# `cw` is the same launcher again, and mux reads the name it was called by:
-# `cw` is `mux -w`, the work account. One word, which matters most over ssh --
-# RemoteCommand takes a command, not a command and its flags.
-MUXSRC="$HOME/.code/scripts/mux"
+# ONE NAME ON PATH. The old `cc` and `cw` links are gone: `cc` on PATH is the
+# C compiler on any machine with a toolchain, and `mux` is several other
+# tools. The two-letter forms live on as ALIASES in ~/.bashrc, which reach an
+# interactive prompt and nothing else -- a build that calls cc gets the
+# compiler, and an ssh RemoteCommand spells muxtopus out.
+MUXSRC="$HOME/.code/scripts/muxtopus"
 if [ -f "$MUXSRC" ]; then
   chmod +x "$MUXSRC"
-  ln -sfn "$MUXSRC" "$BIN/mux"
-  ln -sfn "$MUXSRC" "$BIN/cc"
-  ln -sfn "$MUXSRC" "$BIN/cw"
-  ok "$BIN/mux (and cc, cw) linked to $MUXSRC"
+  ln -sfn "$MUXSRC" "$BIN/muxtopus"
+  for old in mux cc cw; do
+    case "$(readlink "$BIN/$old" 2>/dev/null)" in
+      "$HOME/.code/scripts/mux"|"$MUXSRC") rm -f "$BIN/$old" ;;
+    esac
+  done
+  ok "$BIN/muxtopus linked to $MUXSRC (old mux/cc/cw links removed)"
+  if grep -q "^alias cw=" "$HOME/.bashrc" 2>/dev/null; then
+    skip "cc/cw aliases already in ~/.bashrc"
+  else
+    cat >> "$HOME/.bashrc" <<'ALIASEOF'
+
+# Added by setup-deck: muxtopus shorthands. Aliases, not binaries -- a `cc` on
+# PATH would shadow the C compiler for every build on the machine, and an
+# alias reaches an interactive prompt only. Over ssh, spell it out:
+#   ssh deck -t 'bash -lc "muxtopus --profile=work"'
+alias cc='muxtopus'
+alias cw='muxtopus --profile=work'
+ALIASEOF
+    ok "cc/cw aliases added to ~/.bashrc"
+  fi
 else
   warn "$MUXSRC not found - clone the scripts repo first, then re-run"
 fi
@@ -287,18 +302,29 @@ fi
 # The config file tells both halves of the tool where an account's schedules,
 # backups and handovers live. This machine predates the project and keeps its
 # original ~/.code layout; a fresh install would default to XDG instead.
+# Both files come from the one template in profile.sh: every key present,
+# commented at its default, and the values this machine pins written live.
 MUXCFG="${XDG_CONFIG_HOME:-$HOME/.config}/muxtopus/config"
-if [ ! -f "$MUXCFG" ]; then
-  mkdir -p "$(dirname "$MUXCFG")"
-  cat > "$MUXCFG" <<MUXEOF
-# Muxtopus -- plain shell, sourced. Anything set here wins over the
-# environment and over the built-in defaults.
-MUXTOPUS_HOME="\$HOME/.code"
-MUXTOPUS_DIR="\$HOME/.code/scripts"
-MUXEOF
-  ok "$MUXCFG written"
+MUXWORK="$(dirname "$MUXCFG")/profiles/work.conf"
+if [ -f "$HOME/.code/scripts/profile.sh" ]; then
+  # shellcheck disable=SC1091
+  . "$HOME/.code/scripts/profile.sh"
+  mkdir -p "$(dirname "$MUXWORK")"
+  if [ ! -f "$MUXCFG" ]; then
+    mux_config_template "" "MUXTOPUS_HOME=\$HOME/.code" "MUXTOPUS_DIR=\$HOME/.code/scripts" > "$MUXCFG"
+    ok "$MUXCFG written"
+  else
+    skip "$MUXCFG already present"
+  fi
+  # The work account keeps its folders beside its repos, unsuffixed.
+  if [ ! -f "$MUXWORK" ]; then
+    mux_config_template work "MUXTOPUS_HOME=\$HOME/.code/work/.muxtopus" > "$MUXWORK"
+    ok "$MUXWORK written"
+  else
+    skip "$MUXWORK already present"
+  fi
 else
-  skip "$MUXCFG already present"
+  warn "no profile.sh yet, so no config written - clone the scripts repo first, then re-run"
 fi
 
 # --- 8. Repos ----------------------------------------------------------------
@@ -499,14 +525,15 @@ $(printf '\033[1m==> Done.\033[0m')
 
   Start or join a session, here or over SSH. One command per account:
 
-      cc                    personal, on this machine
-      cw                    work      (~/.claude-work)
-      cc -r                 with the resume picker
-      ssh deck@${IP:-<ip>} -t 'bash -lc cc'
-      ssh deck@${IP:-<ip>} -t 'bash -lc cw'
+      muxtopus                      personal, on this machine   (alias: cc)
+      muxtopus --profile=work       work      (~/.claude-work)   (alias: cw)
+      muxtopus -r                   with the resume picker
+      ssh deck@${IP:-<ip>} -t 'bash -lc muxtopus'
+      ssh deck@${IP:-<ip>} -t 'bash -lc "muxtopus --profile=work"'
 
-  'bash -lc' is required: a plain 'ssh host cc' runs a non-interactive,
-  non-login shell, which never sources ~/.bashrc and so cannot find cc.
+  'bash -lc' is required: a plain 'ssh host muxtopus' runs a non-interactive,
+  non-login shell, which never sources ~/.bashrc and so cannot find it. The
+  cc/cw aliases are interactive-only and never apply to a RemoteCommand.
 
   Client-side ~/.ssh/config (Windows, phone, other machines):
 
@@ -514,13 +541,13 @@ $(printf '\033[1m==> Done.\033[0m')
           HostName ${IP:-<ip>}
           User $USER
           RequestTTY yes
-          RemoteCommand bash -lc cc
+          RemoteCommand bash -lc muxtopus
 
       Host deck-work
           HostName ${IP:-<ip>}
           User $USER
           RequestTTY yes
-          RemoteCommand bash -lc cw
+          RemoteCommand bash -lc "muxtopus --profile=work"
 
       Host deck-shell
           HostName ${IP:-<ip>}
