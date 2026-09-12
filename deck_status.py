@@ -612,6 +612,55 @@ def sched_why() -> dict[str, tuple[str, str, int]]:
     return out
 
 
+# ------------------------------------------------------------------ the tree
+# tmux has NO window hierarchy -- windows are a flat indexed list -- so the
+# scheduler keeps the tree as data and this is the view of it.
+#   slug  parent  window-id  pane-id  launched-at  file
+WATCHDOG_TREE = WATCHDOG_DIR / "tree.tsv"
+
+
+def read_tree() -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    try:
+        for line in WATCHDOG_TREE.read_text().splitlines():
+            p = line.split("\t")
+            if len(p) < 5 or not p[0]:
+                continue
+            try:
+                at = int(p[4])
+            except ValueError:
+                at = 0
+            out[p[0]] = {"slug": p[0], "parent": p[1], "wid": p[2],
+                         "pane": p[3], "at": at,
+                         "file": p[5] if len(p) > 5 else ""}
+    except OSError:
+        pass
+    return out
+
+
+def live_windows() -> set[str]:
+    """Which tmux window ids exist right now. One fork, and only in the
+    schedules view -- the main frame is measured in forks per second."""
+    try:
+        out = subprocess.run(["tmux", "list-windows", "-a", "-F", "#{window_id}"],
+                             capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {l.strip() for l in out.splitlines() if l.strip()}
+
+
+def handover_state(slug: str) -> tuple[str, float]:
+    """What the lane's handover says about it: open, done, or nothing yet."""
+    f = HANDOVERS_DIR / ("STATUS-%s.md" % slug)
+    d = HANDOVERS_DIR / "done" / ("STATUS-%s.md" % slug)
+    for path, label in ((f, "open"), (d, "done")):
+        try:
+            return label, time.time() - path.stat().st_mtime
+        except OSError:
+            continue
+    return "none", 0.0
+
+
 def read_schedules() -> list[dict]:
     """Parse every schedule file, KEEPING the broken ones.
 
@@ -629,8 +678,8 @@ def read_schedules() -> list[dict]:
             continue
         row = {"file": f, "type": "", "at": "", "title": "", "slug": "",
                "window": "", "cwd": "", "template": "", "status": "",
-               "created": "", "launched": "", "body": "", "bad": "",
-               "warn": "", "resolved": ""}
+               "created": "", "launched": "", "after": "", "parent": "",
+               "body": "", "bad": "", "warn": "", "resolved": ""}
         try:
             text = f.read_text()
         except OSError as exc:
@@ -1378,8 +1427,26 @@ class Dashboard:
                 line = Text.assemble((reason, RED if verdict == "stalled" else ""),
                                      (stale, DIM))
             elif sel["status"] == "launched":
-                line = Text("launched %s — the watchdog only judges pending entries"
-                            % (sel["launched"] or "?"), style=DIM)
+                # WHAT THE WINDOW THEN DID. The scheduler records the pane and
+                # the window id at launch and stops there; whether the worker
+                # errored, stalled or finished was invisible from here. The
+                # tree plus the handover file answers it without the scheduler
+                # having to follow the work it started.
+                node = read_tree().get(sel["resolved"])
+                bits = [("launched %s" % (sel["launched"] or "?"), DIM)]
+                if node:
+                    alive = node["wid"] in live_windows()
+                    bits.append(("  ·  window %s %s" % (node["wid"],
+                                 "open" if alive else "exited"),
+                                 GREEN if alive else DIM))
+                    bits.append(("  ·  pane %s" % node["pane"], DIM))
+                state, age = handover_state(sel["resolved"])
+                if state == "none":
+                    bits.append(("  ·  no handover written yet", YELLOW))
+                else:
+                    bits.append(("  ·  handover %s, %s ago" % (state, human_age(age)),
+                                 GREEN if state == "done" else ""))
+                line = Text.assemble(*bits)
             else:
                 line = Text("no verdict yet — the watchdog writes one every pass",
                             style=DIM)

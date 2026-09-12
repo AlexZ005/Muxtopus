@@ -129,6 +129,8 @@ Format:
     at: reset | 2026-09-06 14:30
     title: Resume 24-C2 row identity
     slug: 24-c2-rows                (optional: pins the lane name -- see below)
+    after: 24-c1-schema             (optional: hold until that lane has finished)
+    parent: 24-c1-schema            (optional: draw this window under that one)
     window: plan1-fixes            (optional: insert the new window after this one)
     cwd: /home/deck/.code/theprototype-app/core
     template: resume-status        (plan only, optional; a file in templates/)
@@ -179,6 +181,44 @@ unreadable usage cache made every `at: reset` entry undue forever, with no log
 line and no error. Now it is named, it turns the row red in the dashboard's `s`
 view, the reason is printed under the table, and the watchdog asks for a fresh
 `/usage` probe (at most one per quarter hour) to clear it.
+
+## `after: <slug>` -- run this one only when that one has finished
+
+    after: 27-storage
+
+The entry is held until the named lane is done. "Done" means, in order:
+
+  * its handover has been marked done -- moved into `handovers/done/` by
+    `handover.sh done <slug>`, which is the lane saying so itself; or
+  * a window the tree knows about has EXITED without leaving an open handover:
+    the work is over whether or not it went well.
+
+An OPEN handover means the lane is still running -- that file is written early
+and lives until it is marked done. A dependency nothing has ever launched holds
+the entry too, and says so.
+
+There is deliberately NO TIMEOUT. A dependency that gives up and runs anyway is
+worse than one that waits, and a wait is visible in three places: `--check`, the
+WHY line under the dashboard table, and one log line when the verdict changes.
+Editing or deleting the entry is the escape hatch.
+
+## `parent: <slug>` -- draw this window under that one
+
+tmux has no window hierarchy: windows are a flat indexed list, with no parent to
+set and nothing to collapse. So the tree is DATA (the scheduler keeps
+`tree.tsv`) plus a VIEW (the dashboard renders it, and `t` there collapses a
+subtree).
+
+`parent:` is usually unnecessary. It is DERIVED from `window:` when that names a
+window the scheduler itself opened, because the window a new one is inserted
+after is in practice the window it was launched from. `window: Plan4` -- a
+hand-made window -- leaves the new entry a root, as before.
+
+What the flat list can honour, it does: the depth is carried by the name
+(`➥lane`, `➥➥child`, `➥➥➥` below that), and a child is inserted after the LAST
+window of its parent subtree, so a family stays contiguous as siblings arrive.
+
+    claude-watchdog.sh --tree     what the tree currently holds
 
 Check one entry, or all of them, without launching anything:
 

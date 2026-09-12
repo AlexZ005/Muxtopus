@@ -631,6 +631,54 @@ sched_due() {
   return 1
 }
 
+# IS THIS ENTRY'S DEPENDENCY FINISHED?
+#
+# `after: <slug>` holds an entry until that lane is done. It exists because the
+# release entry today depended on a PR merge landing first and there was no way
+# to say so -- the only options were to launch it too early or to sit watching
+# for the moment to launch it by hand.
+#
+# FINISHED MEANS ONE OF TWO THINGS, in this order:
+#   * its handover has been marked done (moved into done/ by handover.sh) --
+#     the lane said so itself, which is the strong signal; or
+#   * a window the tree knows about has EXITED without leaving an open
+#     handover -- the work is over whether or not it went well.
+# An open handover means the lane is still running: that file is written early
+# and lives until `handover.sh done` moves it.
+#
+# There is deliberately NO TIMEOUT. A dependency that gives up and runs anyway
+# is worse than one that waits, and a wait is now visible in three places
+# (--check, the WHY line in the dashboard, and a log line when the verdict
+# changes) rather than being the silence it would once have been.
+sched_after_ok() {
+  local dep="$1" self="${2:-}" wid
+  SCHED_WHY_TXT=""
+  [ -n "$dep" ] || return 0
+  if [ "$dep" = "$self" ]; then
+    SCHED_WHY_TXT="STALLED: after: names this entry's own slug ($dep), which can never finish first"
+    return 2
+  fi
+  if [ -f "$HANDOVERS/done/STATUS-$dep.md" ]; then
+    SCHED_WHY_TXT="after $dep: finished (its handover is in done/)"
+    return 0
+  fi
+  if [ -f "$HANDOVERS/STATUS-$dep.md" ]; then
+    SCHED_WHY_TXT="blocked: waiting for $dep -- its handover is written but not marked done (handover.sh done $dep)"
+    return 1
+  fi
+  wid="$(tree_field "$dep" 3)"
+  if [ -n "$wid" ]; then
+    if tree_live_windows | grep -qxF "$wid"; then
+      SCHED_WHY_TXT="blocked: waiting for $dep -- its window $wid is still open and it has written no handover"
+      return 1
+    fi
+    SCHED_WHY_TXT="after $dep: finished (its window $wid has exited)"
+    return 0
+  fi
+  SCHED_WHY_TXT="blocked: waiting for $dep -- nothing by that name has launched, and there is no handover for it"
+  return 1
+}
+
 # Record a verdict for one entry, and LOG IT ONLY WHEN IT CHANGES.
 #
 # Every pass republishes the whole table for the dashboard; the log gets a line
@@ -1011,7 +1059,7 @@ kv() { printf '  %-14s %s\n' "$1" "$2"; }
 sched_check_one() {
   local f="$1" body="${2:-}"
   local type at title win cwd tmpl st slug wname warn now rc idx nlines nbytes rcout=0
-  local parent depth
+  local parent depth after blocked
   type="$(sched_field "$f" type)"; at="$(sched_field "$f" at)"
   title="$(sched_field "$f" title)"; win="$(sched_field "$f" window)"
   cwd="$(sched_field "$f" cwd)"; tmpl="$(sched_field "$f" template)"
@@ -1043,6 +1091,14 @@ sched_check_one() {
     [ "$type" = plan ] || kv "" "(a template is only prepended for type: plan)"
   fi
   kv status "${st:-(missing)}"
+  after="$(sched_field "$f" after)"
+  blocked=""
+  if [ -n "$after" ]; then
+    sched_after_ok "$after" "$slug"; rc=$?
+    [ "$rc" = 1 ] && blocked=1
+    [ "$rc" = 2 ] && rcout=1
+    kv after "$SCHED_WHY_TXT"
+  fi
   if [ -f "$HANDOVERS/STATUS-$slug.md" ]; then
     kv handover "$HANDOVERS/STATUS-$slug.md   (open, $(date -r "$HANDOVERS/STATUS-$slug.md" '+%b %d %H:%M'))"
   elif [ -f "$HANDOVERS/done/STATUS-$slug.md" ]; then
@@ -1088,6 +1144,9 @@ sched_check_one() {
     1) kv verdict "not yet -- $SCHED_WHY_TXT" ;;
     2) kv verdict "$SCHED_WHY_TXT"; [ "$rcout" = 0 ] && rcout=2 ;;
   esac
+  if [ -n "$blocked" ]; then
+    kv "" "HELD by after: whatever the clock says above."
+  fi
   if [ "$st" != pending ]; then
     kv "" "(status is '${st:-}' -- only a pending entry is ever looked at)"
   fi
@@ -1133,7 +1192,7 @@ check_schedules() {
   [ -f "$ENABLED" ] || return 0
   [ "$DRY" = 1 ] && return 0
   [ -d "$SCHEDULES" ] || return 0
-  local f now st type at cwd rc probe=0
+  local f now st type at cwd rc probe=0 after dep_ok
   now="$(date +%s)"
   : > "$SCHED_WHY.tmp"
   for f in "$SCHEDULES"/*.md; do
@@ -1155,6 +1214,20 @@ check_schedules() {
       sched_note "$f" stalled "STALLED: a work item with an empty prompt body has nothing to paste"; continue
     fi
 
+    # THE DEPENDENCY IS ASKED FIRST. An entry held behind another lane is not
+    # "not yet due" -- the clock may well have passed -- and calling it due
+    # would be a lie the log then repeats.
+    after="$(sched_field "$f" after)"
+    dep_ok=""
+    if [ -n "$after" ]; then
+      sched_after_ok "$after" "$(sched_slug "$f")"; rc=$?
+      case "$rc" in
+        2) sched_note "$f" stalled "$SCHED_WHY_TXT"; continue ;;
+        1) sched_note "$f" blocked "$SCHED_WHY_TXT"; continue ;;
+      esac
+      dep_ok="$SCHED_WHY_TXT"
+    fi
+
     sched_due "$at" "$now"; rc=$?
     case "$rc" in
       2) sched_note "$f" stalled "$SCHED_WHY_TXT"
@@ -1162,8 +1235,8 @@ check_schedules() {
          continue ;;
       1) sched_note "$f" waiting "$SCHED_WHY_TXT"; continue ;;
     esac
-    sched_note "$f" due "$SCHED_WHY_TXT"
-    launch_schedule "$f" "$SCHED_WHY_TXT"
+    sched_note "$f" due "$SCHED_WHY_TXT${dep_ok:+; $dep_ok}"
+    launch_schedule "$f" "$SCHED_WHY_TXT${dep_ok:+; $dep_ok}"
   done
   mv "$SCHED_WHY.tmp" "$SCHED_WHY" 2>/dev/null
   [ "$probe" = 1 ] && sched_request_probe
