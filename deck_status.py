@@ -874,6 +874,14 @@ class Dashboard:
         # suffix exists to prevent; f (or enter on a lane row) shows them all.
         self.lanes_all = False
         self.lane_keys: list[str] = []     # lane rows in rendered order
+        # THE TREE VIEW. tmux has no window hierarchy, so this is a rendering
+        # of tree.tsv, not of tmux. On by default and IDENTICAL to the old
+        # ordering until something actually has a parent: roots keep the
+        # sort-by-context order, children hang under their root.
+        self.tree_mode = True
+        self.collapsed: set[str] = set()   # session ids whose subtree is hidden
+        self.tree_kids: dict[str, list[str]] = {}
+        self.tree_parent: dict[str, str] = {}
         self.lane_acct: dict[int, str | None] = {}   # pid -> account, cached
         self.version = (SCRIPTS / "VERSION").read_text().strip() if (SCRIPTS / "VERSION").exists() else "?"
 
@@ -1345,6 +1353,113 @@ class Dashboard:
         except OSError as exc:
             return "schedule failed: %s" % exc
 
+    # ---------------------------------------------------------- the tree
+    def tree_layout(self, ordered: list) -> list[tuple]:
+        """Sessions as (session, depth, hidden_count), parents before children.
+
+        tmux CANNOT do this: its windows are a flat indexed list with no
+        parent/child relation to read. The relation lives in the scheduler's
+        tree.tsv, matched back to live sessions by pane id (exact) and then by
+        window name with the ➥ markers stripped (for a pane that was recreated).
+        """
+        self.tree_kids = {}
+        self.tree_parent = {}
+        if not self.tree_mode:
+            return [(s, 0, 0) for s in ordered]
+
+        tree = read_tree()
+        by_pane = {n["pane"]: n for n in tree.values() if n["pane"]}
+        slug_of: dict[str, str] = {}
+        for s in ordered:
+            n = by_pane.get(s.pane) or tree.get((s.window or "").lstrip("➥"))
+            if n:
+                slug_of[s.sid] = n["slug"]
+        sid_of = {slug: sid for sid, slug in slug_of.items()}
+
+        kids: dict[str, list] = {}
+        roots: list = []
+        for s in ordered:
+            slug = slug_of.get(s.sid)
+            parent = tree[slug]["parent"] if slug else ""
+            psid = sid_of.get(parent) if parent else None
+            if psid and psid != s.sid:
+                kids.setdefault(psid, []).append(s)
+                self.tree_parent[s.sid] = psid
+            else:
+                roots.append(s)
+        self.tree_kids = {k: [c.sid for c in v] for k, v in kids.items()}
+
+        # A row that names an ancestor of itself as its parent would recurse
+        # forever; seen[] is cheaper than validating the file.
+        rows: list[tuple] = []
+        seen: set[str] = set()
+
+        def count(s) -> int:
+            n = 0
+            for k in kids.get(s.sid, []):
+                n += 1 + count(k)
+            return n
+
+        def swallow(s) -> None:
+            """Mark a hidden subtree as placed. Without this the orphan sweep
+            below would helpfully put every collapsed child back at the bottom
+            of the table, which is the opposite of collapsing it."""
+            for k in kids.get(s.sid, []):
+                seen.add(k.sid)
+                swallow(k)
+
+        def walk(s, depth: int) -> None:
+            if s.sid in seen:
+                return
+            seen.add(s.sid)
+            children = kids.get(s.sid, [])
+            hidden = count(s) if (children and s.sid in self.collapsed) else 0
+            rows.append((s, depth, hidden))
+            if hidden:
+                swallow(s)
+                return
+            for k in children:
+                walk(k, depth + 1)
+
+        for r in roots:
+            walk(r, 0)
+        # Anything left out by a broken parent chain is still shown: a session
+        # missing from the table is worse than one drawn at the wrong depth.
+        for s in ordered:
+            if s.sid not in seen:
+                rows.append((s, 0, 0))
+        return rows
+
+    def tree_collapse(self) -> str:
+        """LEFT: fold the subtree under the cursor, or step out to the parent."""
+        sid = self.cursor
+        if self.tree_kids.get(sid) and sid not in self.collapsed:
+            self.collapsed.add(sid)
+            return "collapsed %s" % (self.windows.get(sid, sid[:8]))
+        parent = self.tree_parent.get(sid)
+        if parent:
+            self.cursor = parent
+            return ""
+        return ""
+
+    def tree_expand(self) -> str:
+        """RIGHT: unfold the subtree, or step into the first child."""
+        sid = self.cursor
+        if sid in self.collapsed:
+            self.collapsed.discard(sid)
+            return "expanded %s" % (self.windows.get(sid, sid[:8]))
+        kids = self.tree_kids.get(sid)
+        if kids:
+            self.cursor = kids[0]
+        return ""
+
+    def toggle_tree(self) -> str:
+        self.tree_mode = not self.tree_mode
+        if not self.tree_mode:
+            self.collapsed.clear()
+        return ("tree: children under their parent (←/→ fold)"
+                if self.tree_mode else "tree off: sessions by context")
+
     def toggle_lanes(self) -> str:
         self.lanes_all = not self.lanes_all
         return "lanes: every account" if self.lanes_all else f"lanes: {PROFILE_LABEL} only"
@@ -1682,9 +1797,14 @@ class Dashboard:
         wd_stale = scanned < 0 or scanned > STALE_AFTER
 
         ordered = sorted(sessions, key=lambda x: -x.ctx)
+        # ...then hung into a tree, parents before children. With nothing
+        # parented -- every session today -- this is the same list in the same
+        # order, so the tree costs nothing until there is one.
+        layout = self.tree_layout(ordered)
+        visible = [s for s, _, _ in layout]
         # The cursor is tracked by session id, not by row index: the table is
         # sorted by context and that order changes under you as sessions work.
-        self.sids = [s.sid for s in ordered]
+        self.sids = [s.sid for s in visible]
         self.panes = {s.sid: s.pane for s in ordered}
         self.jobs = {s.sid: s.job for s in ordered}
         self.windows = {s.sid: s.window for s in ordered}
@@ -1717,7 +1837,7 @@ class Dashboard:
 
         skipped = opted_out()
         mskipped = monitor_opted_out()
-        for s in ordered:
+        for s, depth, hidden in layout:
             s.optout = s.sid in skipped
             s.moptout = s.sid in mskipped
             pct = min(100.0, s.ctx * 100.0 / CONTEXT_WINDOW) if CONTEXT_WINDOW else 0.0
@@ -1757,7 +1877,15 @@ class Dashboard:
                 mon_txt = Text("off", style=DIM)
             else:
                 mon_txt = Text("on", style=GREEN)
-            ct.add_row(mark, mon_txt, Text(s.window), Text(s.model, style=DIM), bar,
+            # DEPTH IS DRAWN, not stored in tmux: the window name carries its
+            # own ➥ markers, and this adds the indent the flat list cannot.
+            if depth:
+                wtx = Text.assemble(("  " * depth + "└ ", FRAME), s.window)
+            else:
+                wtx = Text(s.window)
+            if hidden:
+                wtx.append("  +%d" % hidden, style="bold #c9a0dc")
+            ct.add_row(mark, mon_txt, wtx, Text(s.model, style=DIM), bar,
                        Text(human_tokens(s.spent), style=DIM), idle_txt, st_txt,
                        dirty_txt,
                        Text(when(s.wound), style=DIM if s.wound else FRAME),
@@ -1816,6 +1944,7 @@ class Dashboard:
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " schedules  ",
             ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",
+            ("←→", DIM), " fold  ", ("t", DIM), " tree  ",
             ("f", DIM), " all lanes  ", ("p", DIM), " btop  ", ("?", DIM), " help",
         )
         # The one piece of good news this dashboard can deliver, so it gets to
@@ -1910,6 +2039,21 @@ HELP = f"""
   [bold]u[/] read usage limits      [bold]up/down[/] pick   [bold]space[/] menu
   [bold]enter[/] open the selected session's window (Ctrl-b 0 comes back here)
   [bold]f[/] lanes: this account only / every account
+  [bold]←/→[/] fold / unfold a subtree      [bold]t[/] tree ordering on / off
+
+  [{DIM}]THE WINDOW TREE[/]
+    tmux has NO window hierarchy: its windows are a flat, indexed list per
+    session, with no parent to set and nothing to collapse. So the tree is DATA
+    the scheduler keeps ({WATCHDOG_TREE}) and this table is the VIEW of it.
+    A window the scheduler opened from another one is drawn under it and
+    indented; ← folds that subtree (the parent then shows +N), → unfolds it, and
+    ← on a leaf steps out to the parent. With nothing parented the order is
+    exactly what it always was -- sessions by context -- so the tree costs
+    nothing until there is one. [bold]t[/] turns the ordering off entirely.
+
+    What tmux CAN be made to honour is done in the flat list too: the depth is
+    carried by the window name (➥lane, ➥➥child) and a child is inserted after
+    the last window of its parent subtree, so a family stays contiguous.
 
   [{DIM}]LANES AND ACCOUNTS[/]
     A dev server belongs to the account whose session started it -- read off
@@ -2143,7 +2287,8 @@ def decode_key(data: bytes) -> str:
                 # Final byte identifies the key; anything between is a
                 # modifier parameter (ESC [ 1 ; 5 A is ctrl-up), and a
                 # modified arrow should still move the cursor.
-                return {0x41: "UP", 0x42: "DOWN"}.get(b, "\x1b")
+                return {0x41: "UP", 0x42: "DOWN",
+                        0x43: "RIGHT", 0x44: "LEFT"}.get(b, "\x1b")
         return "\x1b"
     return data[:1].decode("utf-8", "replace")
 
@@ -2271,6 +2416,10 @@ def main() -> int:
                     if key in ("s", "\x1b"):
                         dash.view = "main"
                         continue
+                    # The tree keys belong to the sessions table, not here;
+                    # swallowed so they cannot fold a row nobody can see.
+                    if key in ("LEFT", "RIGHT", "t"):
+                        continue
 
                 if key in ("q", "Q"):
                     break
@@ -2313,6 +2462,12 @@ def main() -> int:
                     dash.say(toggle_watchdog())
                 elif key in ("m", "M"):
                     dash.say(dash.act_monitor())
+                elif key == "LEFT":
+                    dash.say(dash.tree_collapse())
+                elif key == "RIGHT":
+                    dash.say(dash.tree_expand())
+                elif key == "t":
+                    dash.say(dash.toggle_tree())
                 elif key == "f":
                     dash.say(dash.toggle_lanes())
                 elif key == "s":
