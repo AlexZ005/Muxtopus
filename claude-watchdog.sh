@@ -6,6 +6,9 @@
 #   claude-watchdog.sh --dry-run     one pass, print what it WOULD do
 #   claude-watchdog.sh --daemon      poll forever (the systemd unit uses this)
 #   claude-watchdog.sh --status      print the state table it publishes
+#   claude-watchdog.sh --check [NAME] resolve schedule entries; launch nothing
+#                                    (NAME is a file, a basename or a slug;
+#                                     add --body to see the exact paste)
 #   claude-watchdog.sh --on|--off    enable/disable acting (the dashboard's 'w')
 #   claude-watchdog.sh --optout ID   never prompt that session (dashboard: space)
 #   claude-watchdog.sh --optin ID    undo it
@@ -181,8 +184,11 @@ case "${1:---once}" in
              if [ -f "$OPTOUT" ]; then grep -vxF "$2" "$OPTOUT" > "$OPTOUT.tmp" || true
                                        mv "$OPTOUT.tmp" "$OPTOUT"; fi
              echo "watchdog will resume $2"; exit 0 ;;
+  --check)   MODE=check; CHECK_ARG="${2:-}"; CHECK_BODY=""
+             case "${2:-}" in --body) CHECK_ARG=""; CHECK_BODY=1 ;; esac
+             case "${3:-}" in --body) CHECK_BODY=1 ;; esac ;;
   --install|--uninstall) MODE="${1#--}" ;;
-  -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
   *) echo "unknown option: $1" >&2; exit 2 ;;
 esac
 
@@ -657,6 +663,33 @@ sched_mark() {
          -e "s/^launched:.*/launched: $(date '+%Y-%m-%d %H:%M')/" "$f" 2>/dev/null
 }
 
+# EXACTLY WHAT GETS PASTED, on stdout. One function, so --check reports the
+# real thing rather than a description of it that can drift from it.
+#
+# A plan leads with its template (the contracts live there); a work item is
+# followed by the checkpoint footer so every scheduled window is resumable by
+# construction. Both lead with the window's own identity -- see sched_slug.
+sched_compose() {
+  local f="$1" slug="$2" wname="$3" type tmpl
+  type="$(sched_field "$f" type)"
+  tmpl="$(sched_field "$f" template)"
+  echo "[muxtopus] This window is $wname. Its lane slug is: $slug"
+  echo "[muxtopus] Its handover file is: $HANDOVERS/STATUS-$slug.md"
+  echo "[muxtopus] Use that slug verbatim with handover.sh (path/write/done). If anything"
+  echo "[muxtopus] below names a different one, THIS one wins -- a second handover file is"
+  echo "[muxtopus] not watched by anything."
+  echo
+  if [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
+    cat "$SCHEDULES/templates/$tmpl.md"
+    echo
+  fi
+  sched_body "$f"
+  if [ "$type" = work ]; then
+    echo
+    echo "Work in phases, one commit per phase. When done -- or when asked to stop -- write $HANDOVERS/STATUS-$slug.md saying what is done, what is next, and anything half-finished. When the whole item is finished, run: ~/.code/scripts/handover.sh done $slug"
+  fi
+}
+
 # Open the window, get claude to a prompt, paste the body, press Enter.
 launch_schedule() {
   local f="$1" why="${2:-}"
@@ -697,23 +730,7 @@ launch_schedule() {
   # what makes the brief and the tooling incapable of disagreeing; before this,
   # a brief that named its own lane silently won and wrote a second handover.
   bodyf="$STATE_DIR/sched-body.$$"
-  {
-    echo "[muxtopus] This window is $wname. Its lane slug is: $slug"
-    echo "[muxtopus] Its handover file is: $HANDOVERS/STATUS-$slug.md"
-    echo "[muxtopus] Use that slug verbatim with handover.sh (path/write/done). If anything"
-    echo "[muxtopus] below names a different one, THIS one wins -- a second handover file is"
-    echo "[muxtopus] not watched by anything."
-    echo
-    if [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
-      cat "$SCHEDULES/templates/$tmpl.md"
-      echo
-    fi
-    sched_body "$f"
-    if [ "$type" = work ]; then
-      echo
-      echo "Work in phases, one commit per phase. When done -- or when asked to stop -- write $HANDOVERS/STATUS-$slug.md saying what is done, what is next, and anything half-finished. When the whole item is finished, run: ~/.code/scripts/handover.sh done $slug"
-    fi
-  } > "$bodyf"
+  sched_compose "$f" "$slug" "$wname" > "$bodyf"
 
   # Insert right after the named window when it exists. Resolve the INDEX --
   # matching -t by name errors on duplicates, and this session's indices are
@@ -773,6 +790,136 @@ launch_schedule() {
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
   log "schedule $(basename "$f"): launched $wname (pane $pane) type=$type slug=$slug -- ${why:-due}"
+}
+
+# ------------------------------------------------------------- --check
+# RESOLVE ONE ENTRY AND PRINT EVERY DERIVED THING, WITHOUT LAUNCHING ANYTHING.
+#
+# This exists because there was no way to validate an entry before it fired.
+# Both of today's were verified by hand-reimplementing the parser -- awk per
+# field, the slug's tr, counting body lines after the --- -- and a malformed
+# one is skipped in silence and simply never runs. Everything printed here is
+# computed by the same functions the executor uses, sched_compose included, so
+# what it reports and what happens cannot drift apart.
+#
+# Exit: 0 the entry is runnable, 1 it can never run, 2 it cannot be judged.
+sched_resolve_file() {
+  local a="$1"
+  [ -f "$a" ] && { printf '%s' "$a"; return 0; }
+  [ -f "$SCHEDULES/$a" ] && { printf '%s' "$SCHEDULES/$a"; return 0; }
+  [ -f "$SCHEDULES/$a.md" ] && { printf '%s' "$SCHEDULES/$a.md"; return 0; }
+  # ...or the SLUG of an entry, which is the name a lane is known by everywhere
+  # else, and therefore the one a hand reaches for.
+  local f
+  for f in "$SCHEDULES"/*.md; do
+    [ -f "$f" ] || continue
+    case "$f" in */README.md) continue ;; esac
+    [ "$(sched_slug "$f")" = "$a" ] && { printf '%s' "$f"; return 0; }
+  done
+  return 1
+}
+
+kv() { printf '  %-14s %s\n' "$1" "$2"; }
+
+sched_check_one() {
+  local f="$1" body="${2:-}"
+  local type at title win cwd tmpl st slug wname warn now rc idx nlines nbytes rcout=0
+  type="$(sched_field "$f" type)"; at="$(sched_field "$f" at)"
+  title="$(sched_field "$f" title)"; win="$(sched_field "$f" window)"
+  cwd="$(sched_field "$f" cwd)"; tmpl="$(sched_field "$f" template)"
+  st="$(sched_field "$f" status)"
+  slug="$(sched_slug "$f")"; wname="➥$slug"; warn="$(sched_slug_warn "$f")"
+  now="$(date +%s)"
+
+  echo "$(basename "$f")"
+  kv type "${type:-(missing)}"
+  kv at "${at:-(missing)}"
+  kv title "${title:-(none)}"
+  if [ -n "$(sched_field "$f" slug)" ]; then kv slug "$slug   (pinned by slug:)"
+  elif [ -n "$title" ]; then kv slug "$slug   (derived from title: \"$title\")"
+  else kv slug "$slug   (derived from the filename)"; fi
+  kv "window name" "$wname"
+  if [ -n "$cwd" ] && [ -d "$cwd" ]; then kv cwd "$cwd"
+  else kv cwd "${cwd:-(missing)}   -- NOT A DIRECTORY"; rcout=1; fi
+  if [ -n "$tmpl" ]; then
+    if [ -f "$SCHEDULES/templates/$tmpl.md" ]; then kv template "$tmpl   ($SCHEDULES/templates/$tmpl.md)"
+    else kv template "$tmpl   -- NOT IN templates/"; rcout=1; fi
+    [ "$type" = plan ] || kv "" "(a template is only prepended for type: plan)"
+  fi
+  kv status "${st:-(missing)}"
+  if [ -f "$HANDOVERS/STATUS-$slug.md" ]; then
+    kv handover "$HANDOVERS/STATUS-$slug.md   (open, $(date -r "$HANDOVERS/STATUS-$slug.md" '+%b %d %H:%M'))"
+  elif [ -f "$HANDOVERS/done/STATUS-$slug.md" ]; then
+    kv handover "$HANDOVERS/STATUS-$slug.md   (already done)"
+  else
+    kv handover "$HANDOVERS/STATUS-$slug.md   (not written yet)"
+  fi
+  kv "finish with" "handover.sh done $slug"
+
+  # WHERE THE WINDOW LANDS, resolved against the live session exactly as the
+  # launcher resolves it -- by INDEX, because -t by name errors on duplicates
+  # and this session's indices are sparse.
+  if ! tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
+    kv "insert after" "(session '$MUX_TMUX' is not running -- the launch would WAIT for muxtopus)"
+  elif [ -n "$win" ]; then
+    idx="$(tmux list-windows -t "$MUX_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
+           | awk -v w="$win" '$2==w{print $1; exit}')"
+    if [ -n "$idx" ]; then kv "insert after" "$win = $MUX_TMUX:$idx"
+    else kv "insert after" "$win -- NO SUCH WINDOW, so it lands at the end"; fi
+  else
+    kv "insert after" "(no window: -- lands at the end of $MUX_TMUX)"
+  fi
+
+  nlines="$(sched_body "$f" | grep -c '' 2>/dev/null)"
+  nbytes="$(sched_compose "$f" "$slug" "$wname" | wc -c)"
+  local parts="identity header"
+  [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ] && parts="$parts + template"
+  parts="$parts + body"
+  [ "$type" = work ] && parts="$parts + handover footer"
+  kv body "${nlines:-0} lines; ${nbytes} bytes pasted in all ($parts)"
+  if [ "$type" = work ] && [ -z "$(sched_body "$f")" ]; then
+    kv "" "-- EMPTY BODY: a work item with nothing to paste is skipped"; rcout=1
+  fi
+  case "$type" in plan|work) ;; *) kv "" "-- type must be plan or work"; rcout=1 ;; esac
+
+  [ -n "$warn" ] && printf '  %-14s %s\n' WARNING "$warn"
+
+  sched_due "$at" "$now"; rc=$?
+  case "$rc" in
+    0) kv verdict "DUE NOW -- $SCHED_WHY_TXT" ;;
+    1) kv verdict "not yet -- $SCHED_WHY_TXT" ;;
+    2) kv verdict "$SCHED_WHY_TXT"; [ "$rcout" = 0 ] && rcout=2 ;;
+  esac
+  if [ "$st" != pending ]; then
+    kv "" "(status is '${st:-}' -- only a pending entry is ever looked at)"
+  fi
+  if [ "$rcout" = 1 ]; then
+    kv "" "THIS ENTRY CAN NEVER RUN as written."
+  fi
+  if [ -n "$body" ]; then
+    echo
+    echo "--- what would be pasted -------------------------------------------"
+    sched_compose "$f" "$slug" "$wname"
+    echo "--------------------------------------------------------------------"
+  fi
+  return "$rcout"
+}
+
+sched_check() {
+  local a="${1:-}" body="${2:-}" f rc=0 one
+  if [ -n "$a" ]; then
+    f="$(sched_resolve_file "$a")" || {
+      echo "no schedule entry matching '$a' in $SCHEDULES" >&2; return 2; }
+    sched_check_one "$f" "$body"; return $?
+  fi
+  for f in "$SCHEDULES"/*.md; do
+    [ -f "$f" ] || continue
+    case "$f" in */README.md) continue ;; esac
+    sched_check_one "$f" ""; one=$?
+    [ "$one" -gt "$rc" ] && rc="$one"
+    echo
+  done
+  return "$rc"
 }
 
 # One pass over the folder. Gated on the same master switch as the restart
@@ -1020,6 +1167,11 @@ pass() {
   fi
   return 0
 }
+
+if [ "$MODE" = check ]; then
+  sched_check "${CHECK_ARG:-}" "${CHECK_BODY:-}"
+  exit $?
+fi
 
 if [ "$MODE" = daemon ]; then
   log "watchdog started for $MUX_LABEL (interval ${INTERVAL}s, soft $SOFT_PCT%, hard $HARD_PCT%)"

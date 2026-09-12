@@ -161,6 +161,7 @@ Poll loop, 30 s. It notices a window that stopped at a usage limit, waits for th
 ```bash
 claude-watchdog.sh --status            # the table it publishes
 claude-watchdog.sh --dry-run           # one pass, act on nothing
+claude-watchdog.sh --check [name]      # resolve schedule entries, launch nothing
 claude-watchdog.sh --profile work ...  # any account
 claude-watchdog.sh --on | --off        # arm / disarm (or `w` on the dashboard)
 ```

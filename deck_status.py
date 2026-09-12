@@ -1870,7 +1870,17 @@ HELP = f"""
     shows as corrupted with the reason, and never launches.
     In the view: enter/e edit · c create (type, template, then straight into
     the editor to paste the prompt) · l launch now · d delete · r reload ·
-    s/esc back. Plan sessions write their forks into core/plans/QUESTIONS-*.md
+    s/esc back.
+
+    WHY AN ENTRY HAS NOT FIRED is printed under the table for the row under the
+    cursor, in the executor's own words -- `at: reset` is two gates (the budget
+    reading fresh, or the five-hour window rolling over) and the line says which
+    one it is waiting on. A row marked [{RED}]stalled[/] cannot be judged at all and
+    will not resolve on its own. To resolve an entry in full without launching
+    anything -- slug, window name, handover path, insert target, the exact
+    paste, and the due verdict with its reason:
+
+        claude-watchdog.sh --check <name> [--body] Plan sessions write their forks into core/plans/QUESTIONS-*.md
     instead of asking; those files are listed in the view until answered.
 
   [{DIM}]A session shown as (background) was started with `claude --bg`. It has no
