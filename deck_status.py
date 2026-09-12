@@ -555,6 +555,15 @@ LANES_EMPTY = LANE_PREFIX + "none"
 SLUG_OK = frozenset(string.ascii_letters + string.digits + "._-")
 
 
+def lane_slug_of(window: str) -> str:
+    """A live window's lane slug: its tmux name with the depth markers off.
+
+    Every handover path is built from the SLUG, never from the display name --
+    or a wind-down asks for STATUS-➥27-storage.md while the same window's own
+    footer told the worker STATUS-27-storage.md."""
+    return sanitise_slug(window.replace("➥", "")) or window
+
+
 def sanitise_slug(raw: str) -> str:
     """The executor's rule, character for character: tr -c 'A-Za-z0-9._-' '-'
     then cut to 22. Mirrored here rather than shelled out to, for the same
@@ -1105,7 +1114,7 @@ class Dashboard:
                "write a handoff to %s/STATUS-%s.md saying what is done, what is next "
                "and anything half-finished. Then stop. The budget resets at %s; do "
                "not start what you cannot finish before then."
-               % (HANDOVERS_DIR, win, reset))
+               % (HANDOVERS_DIR, lane_slug_of(win), reset))
         try:
             WATCHDOG_DIRECTIVES.mkdir(parents=True, exist_ok=True)
             (WATCHDOG_DIRECTIVES / self.cursor).write_text(msg + "\n")
@@ -1332,24 +1341,33 @@ class Dashboard:
             # working tree: it is scratch state that would otherwise be
             # committed, and two accounts on one repo would collide on the
             # window name.
-            status_file = "%s/STATUS-%s.md" % (HANDOVERS_DIR, win)
+            # THE SLUG, NOT THE DISPLAY NAME. `win` is the tmux name and can
+            # carry ➥ markers, which sanitise to dashes: "resume ➥27-storage"
+            # would derive the slug "resume--27-storage" and point the resumed
+            # lane at a handover file the original never wrote. Pin both ends.
+            lane = lane_slug_of(win)
+            slug = sanitise_slug("resume-" + lane)
+            status_file = "%s/STATUS-%s.md" % (HANDOVERS_DIR, lane)
             try:
                 tpl = (SCHED_TEMPLATES / "resume-status.md").read_text()
             except OSError:
                 tpl = ('Read {{STATUS_FILE}} and continue from its "How to resume" '
                        "section. One commit per phase; update the STATUS file "
                        "before stopping.")
-            f = SCHEDULES_DIR / ("resume-%s.md" % win)
+            f = SCHEDULES_DIR / ("resume-%s.md" % lane)
             f.write_text("type: work\n"
                          + "at: reset\n"
-                         + "title: resume %s\n" % win
+                         + "title: resume %s\n" % lane
+                         + "slug: %s\n" % slug
+                         # window: is also what makes the resumed window a CHILD
+                         # of the one it resumes, when that one was scheduled.
                          + "window: %s\n" % win
                          + "cwd: %s\n" % cwd
                          + "status: pending\n"
                          + "created: %s\n" % time.strftime("%Y-%m-%d %H:%M")
                          + "launched:\n"
                          + "---\n" + tpl.replace("{{STATUS_FILE}}", status_file))
-            return "scheduled ➥resume of %s at the next reset (%s)" % (win, f.name)
+            return "scheduled ➥%s at the next reset (%s)" % (slug, f.name)
         except OSError as exc:
             return "schedule failed: %s" % exc
 

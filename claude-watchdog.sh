@@ -464,7 +464,7 @@ wind_down() {
   local msg reset
   reset="$(usage_val session_reset)"
   if [ "$b" = 2 ]; then
-    msg="Budget checkpoint: land the step you are on now and commit it, then write a handoff to $HANDOVERS/STATUS-${name}.md saying what is done, what is next and anything half-finished. Then stop. The budget resets at ${reset:-the top of the hour}; do not start what you cannot finish before then."
+    msg="Budget checkpoint: land the step you are on now and commit it, then write a handoff to $HANDOVERS/STATUS-$(lane_slug_of "$name").md saying what is done, what is next and anything half-finished. Then stop. The budget resets at ${reset:-the top of the hour}; do not start what you cannot finish before then."
   else
     msg="Budget note: this window is past the halfway mark. Stop spawning subagents unless a task genuinely needs one, and prefer targeted greps and partial reads over whole files."
   fi
@@ -486,6 +486,19 @@ sched_field() {
 # Everything after the first --- line: the prompt body.
 sched_body() {
   awk 'p{print} /^---$/{p=1}' "$1"
+}
+
+# THE LANE SLUG OF A LIVE WINDOW: its tmux name with the depth markers off.
+#
+# A scheduled window is named ➥<slug>, and the slug -- not the display name --
+# is what every handover path is built from. Without this a wind-down would ask
+# for STATUS-➥ 27-storage.md while the footer of the same window told the worker
+# STATUS-27-storage.md: the same divergence as the derived-slug bug below, one
+# layer down, and unfired only because no scheduled window has been wound down
+# yet.
+lane_slug_of() {
+  local n="${1//➥/}"
+  printf '%s' "$n"
 }
 
 # THE SLUG IS THE LANE'S NAME, and it is the same string in four places: the

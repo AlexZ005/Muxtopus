@@ -279,8 +279,11 @@ session does not inherit the environment of whatever created it, which is why
 this is passed in rather than exported and hoped for.
 
 Handoffs are NOT written into the working tree any more: a wind-down writes
-STATUS-<window>.md into the account's handovers/, and `handover.sh done <window>`
-moves a finished one into done/. Two accounts working one repo would otherwise
+STATUS-<slug>.md into the account's handovers/, and `handover.sh done <slug>`
+moves a finished one into done/. The SLUG, never the tmux display name: a
+scheduled window is called ➥<slug>, and building a path from the display name
+would ask for STATUS-➥lane.md while the same window's own footer told the worker
+STATUS-lane.md. Two accounts working one repo would otherwise
 overwrite each other's STATUS file without a word.
 """)
 made.append("README.md")
