@@ -6,8 +6,10 @@
     CLAUDE_CONFIG_DIR=~/.claude-work setup-schedules.py
 
 A schedule item is one hand-editable .md per window-to-open; templates are
-plain prompt bodies. Existing files are never overwritten, so re-running this
-after the user edits a template is safe.
+plain prompt bodies. Templates are never overwritten, so re-running this after
+the user edits one is safe. README.md IS rewritten: it is generated
+documentation of the executor's format, and one that stops tracking the
+executor is worse than none.
 
 PER ACCOUNT, because a scheduled window opens a Claude session and therefore
 spends one account's budget. The default account keeps the unsuffixed folder it
@@ -110,9 +112,12 @@ for name, body in TEMPLATES.items():
         p.write_text(body)
         made.append(name)
 
+# THE README IS GENERATED DOCUMENTATION, not a file the user owns, so unlike the
+# templates it is rewritten every run: a format doc that stops tracking the
+# executor is worse than no doc at all, and "never overwrite" froze it at
+# whatever the folder was seeded with. Templates are still never touched.
 readme = BASE / "README.md"
-if not readme.exists():
-    readme.write_text("""\
+readme.write_text("""\
 # schedules
 
 One .md per window to open later. The watchdog daemon launches due items;
@@ -123,6 +128,7 @@ Format:
     type: plan | work
     at: reset | 2026-09-06 14:30
     title: Resume 24-C2 row identity
+    slug: 24-c2-rows                (optional: pins the lane name -- see below)
     window: plan1-fixes            (optional: insert the new window after this one)
     cwd: /home/deck/.code/theprototype-app/core
     template: resume-status        (plan only, optional; a file in templates/)
@@ -135,6 +141,31 @@ Format:
 `at: reset` = when the session limit resets (or the budget reads fresh).
 The launched window is named with a leading arrow and appears right after
 `window:` when that window exists.
+
+## The slug is the lane's name, in four places at once
+
+The slug names the tmux window, the handover file, the `handover.sh done <slug>`
+the worker is told to run, and the entry in the scheduler's tree. It is derived
+from `title:` by replacing everything outside `A-Za-z0-9._-` with `-` and cutting
+to 22 characters -- so a title that reads like a sentence becomes a slug that
+does not look like the lane you had in mind:
+
+    title: 27-storage wave 2   ->   slug 27-storage-wave-2
+
+That happened. The lane's own brief said `handover.sh path 27-storage`, the
+footer the scheduler appended said `27-storage-wave-2`, and the result was two
+handover files for one lane with nothing watching the one that was written.
+
+So: set `slug:` explicitly whenever the title is not already a slug. It wins over
+the title. The scheduler also
+
+  * WARNS when a title does not survive the derivation unchanged -- in the log,
+    in `claude-watchdog.sh --check`, and as a yellow note on the row in the
+    dashboard's `s` view (the SLUG column shows the resolved answer); and
+  * renders the resolved slug and the full handover path INTO the pasted body,
+    above everything else, stating that it wins over anything the brief says.
+
+A brief and the tooling can no longer disagree about what a lane is called.
 
 ## One folder per account
 
@@ -169,7 +200,7 @@ STATUS-<window>.md into the account's handovers/, and `handover.sh done <window>
 moves a finished one into done/. Two accounts working one repo would otherwise
 overwrite each other's STATUS file without a word.
 """)
-    made.append("README.md")
+made.append("README.md")
 
 print("schedules dir:", BASE)
 print("created:", ", ".join(made) if made else "(nothing - all files already present)")

@@ -430,6 +430,57 @@ sched_body() {
   awk 'p{print} /^---$/{p=1}' "$1"
 }
 
+# THE SLUG IS THE LANE'S NAME, and it is the same string in four places: the
+# tmux window, the handover file, the `handover.sh done <slug>` the worker is
+# told to run at the end, and the tree below. One string, or those four
+# disagree.
+#
+# MEASURED, first run of the day: `title: 27-storage wave 2` derived the slug
+# 27-storage-wave-2, while the lane's own brief told the same worker to use
+# `handover.sh path 27-storage`. Two handover files for one lane, nothing
+# watching the one that was written, and no warning anywhere. So:
+#
+#   * an explicit `slug:` field WINS over the title, which is how you pin a
+#     lane's name when its title reads like a sentence;
+#   * a derived slug that is not its source character for character is
+#     REPORTED (sched_slug_warn) rather than adopted in silence;
+#   * and the resolved slug is rendered INTO the pasted body, so the worker
+#     reads the same answer the tooling computed instead of guessing.
+sched_sanitise() {
+  local s
+  s="$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-')"
+  printf '%s' "${s:0:22}"
+}
+
+sched_slug() {
+  local f="$1" s
+  s="$(sched_field "$f" slug)"
+  [ -n "$s" ] || s="$(sched_field "$f" title)"
+  [ -n "$s" ] || s="$(basename "$f" .md)"
+  sched_sanitise "$s"
+}
+
+# Empty when the slug is exactly what was written down; otherwise the sentence
+# that says why it is not. Not fatal -- a name that sanitises is still a name --
+# but it is the difference between a lane the tooling can follow and two files
+# nobody reconciles, so it is said out loud in the log, in --check and in the
+# dashboard rather than left to be rediscovered.
+sched_slug_warn() {
+  local f="$1" raw src slug
+  raw="$(sched_field "$f" slug)"; src="slug"
+  if [ -z "$raw" ]; then raw="$(sched_field "$f" title)"; src="title"; fi
+  [ -n "$raw" ] || return 0
+  slug="$(sched_sanitise "$raw")"
+  [ "$slug" = "$raw" ] && return 0
+  if [ "${#raw}" -gt 22 ] && [ "${raw:0:22}" = "$slug" ]; then
+    printf 'the %s is %s characters, so the slug is TRUNCATED to "%s" -- set slug: to pin it' \
+      "$src" "${#raw}" "$slug"
+  else
+    printf 'the %s "%s" is not a slug; it becomes "%s" -- set slug: to pin it' \
+      "$src" "$raw" "$slug"
+  fi
+}
+
 # Is this item due? "reset" resolves live from the usage cache -- and a FRESH
 # rolling window has no reset time at all (the documented trap), so a budget
 # that simply reads fresh counts as due on its own. Anything else goes through
@@ -459,7 +510,7 @@ sched_mark() {
 # Open the window, get claude to a prompt, paste the body, press Enter.
 launch_schedule() {
   local f="$1"
-  local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust
+  local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
   # (an enabled user unit) long before anyone has run muxtopus, and an item that
@@ -480,16 +531,29 @@ launch_schedule() {
   cwd="$(sched_field "$f" cwd)"
   tmpl="$(sched_field "$f" template)"
 
-  slug="${title:-$(basename "$f" .md)}"
-  slug="$(printf '%s' "$slug" | tr -c 'A-Za-z0-9._-' '-' )"
-  slug="${slug:0:22}"
+  slug="$(sched_slug "$f")"
   wname="➥${slug}"
+  warn="$(sched_slug_warn "$f")"
+  [ -n "$warn" ] && log "schedule $(basename "$f"): $warn"
 
   # Compose what gets pasted. A plan leads with its template (the contracts
   # live there); a work item is followed by the checkpoint footer so every
   # scheduled window is resumable by construction.
+  #
+  # AND EVERY BODY LEADS WITH ITS OWN IDENTITY. The slug is derived out here
+  # and used out here -- for the window name, the handover path and the
+  # `handover.sh done` in the footer -- so the one thing the worker must not
+  # have to guess is what this lane is called. Rendering it into the paste is
+  # what makes the brief and the tooling incapable of disagreeing; before this,
+  # a brief that named its own lane silently won and wrote a second handover.
   bodyf="$STATE_DIR/sched-body.$$"
   {
+    echo "[muxtopus] This window is $wname. Its lane slug is: $slug"
+    echo "[muxtopus] Its handover file is: $HANDOVERS/STATUS-$slug.md"
+    echo "[muxtopus] Use that slug verbatim with handover.sh (path/write/done). If anything"
+    echo "[muxtopus] below names a different one, THIS one wins -- a second handover file is"
+    echo "[muxtopus] not watched by anything."
+    echo
     if [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
       cat "$SCHEDULES/templates/$tmpl.md"
       echo

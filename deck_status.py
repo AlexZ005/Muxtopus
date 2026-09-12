@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import select
+import string
 import subprocess
 import sys
 import termios
@@ -551,6 +552,44 @@ LANE_PREFIX = "::lane:"
 LANES_EMPTY = LANE_PREFIX + "none"
 
 
+SLUG_OK = frozenset(string.ascii_letters + string.digits + "._-")
+
+
+def sanitise_slug(raw: str) -> str:
+    """The executor's rule, character for character: tr -c 'A-Za-z0-9._-' '-'
+    then cut to 22. Mirrored here rather than shelled out to, for the same
+    reason validate_schedule mirrors the executor's other rules -- this side is
+    a linter, and a linter that disagrees with the thing it lints is worse than
+    none."""
+    return "".join(c if c in SLUG_OK else "-" for c in raw)[:22]
+
+
+def resolve_slug(row: dict) -> str:
+    """What the window, the handover file and `handover.sh done` will all be
+    called. An explicit slug: wins over the title; the filename is the last
+    resort."""
+    raw = row.get("slug") or row.get("title") or row["file"].stem
+    return sanitise_slug(raw)
+
+
+def slug_warning(row: dict) -> str:
+    """Empty when the slug is exactly what was written down.
+
+    Not corruption -- a title that sanitises still launches -- but the gap
+    between "27-storage wave 2" and the slug 27-storage-wave-2 is what put a
+    lane's handover in a file nothing was watching, so it is said out loud."""
+    raw = row.get("slug") or row.get("title")
+    src = "slug" if row.get("slug") else "title"
+    if not raw:
+        return ""
+    slug = sanitise_slug(raw)
+    if slug == raw:
+        return ""
+    if len(raw) > 22 and raw[:22] == slug:
+        return "%s truncated to %r — set slug: to pin it" % (src, slug)
+    return "%s is not a slug; it becomes %r — set slug: to pin it" % (src, slug)
+
+
 def read_schedules() -> list[dict]:
     """Parse every schedule file, KEEPING the broken ones.
 
@@ -566,9 +605,10 @@ def read_schedules() -> list[dict]:
     for f in files:
         if f.name == "README.md":
             continue
-        row = {"file": f, "type": "", "at": "", "title": "", "window": "",
-               "cwd": "", "template": "", "status": "", "created": "",
-               "launched": "", "body": "", "bad": ""}
+        row = {"file": f, "type": "", "at": "", "title": "", "slug": "",
+               "window": "", "cwd": "", "template": "", "status": "",
+               "created": "", "launched": "", "body": "", "bad": "",
+               "warn": "", "resolved": ""}
         try:
             text = f.read_text()
         except OSError as exc:
@@ -584,6 +624,8 @@ def read_schedules() -> list[dict]:
             if k in row and k not in ("file", "body", "bad"):
                 row[k] = v.strip()
         row["body"] = body.strip()
+        row["resolved"] = resolve_slug(row)
+        row["warn"] = slug_warning(row)
         if not row["bad"]:
             row["bad"] = validate_schedule(row)
         rows.append(row)
@@ -1252,7 +1294,7 @@ class Dashboard:
         st.add_column("FOR", width=18)
         st.add_column("AT", width=17)
         st.add_column("TITLE", ratio=1, overflow="ellipsis", no_wrap=True)
-        st.add_column("FILE", width=28, overflow="ellipsis", no_wrap=True)
+        st.add_column("SLUG", width=24, overflow="ellipsis", no_wrap=True)
         for i, r in enumerate(rows):
             mark = Text("▸" if i == self.sched_i else " ", style="bold #c9a0dc")
             if r["bad"]:
@@ -1268,13 +1310,18 @@ class Dashboard:
                 when_for = "reset (%s)" % reset_txt
             title = r["title"] or r["file"].stem
             if r["bad"]:
-                title = "%s — %s" % (title, r["bad"])
+                ttx = Text("%s — %s" % (title, r["bad"]), style=RED)
+            elif r["warn"]:
+                # A divergent slug is not corruption -- it launches -- so it is
+                # a warning on an otherwise normal row, not a refusal.
+                ttx = Text.assemble(title, ("  ⚠ " + r["warn"], YELLOW))
             elif r["status"] == "launched" and r["launched"]:
-                title = "%s — launched %s" % (title, r["launched"])
+                ttx = Text("%s — launched %s" % (title, r["launched"]))
+            else:
+                ttx = Text(title)
             st.add_row(mark, stx, Text(r["type"] or "?", style=DIM),
                        Text(when_for), Text(r["created"] or "—", style=DIM),
-                       Text(title, style=RED if r["bad"] else ""),
-                       Text(r["file"].name, style=DIM))
+                       ttx, Text(r["resolved"] or r["file"].name, style=DIM))
         if not rows:
             st.add_row("", Text("—", style=DIM), "",
                        Text("nothing scheduled — press c", style=DIM), "", "", "")
