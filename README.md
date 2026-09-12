@@ -184,7 +184,10 @@ One hand-editable `.md` per window to open later. The daemon launches due items 
 type: work
 at: reset
 title: resume the checkout refactor
-window: api-cleanup
+slug: checkout-refactor       # optional: pins the lane name
+window: api-cleanup           # optional: insert the new window after this one
+after: api-cleanup            # optional: hold until that lane has finished
+parent: api-cleanup           # optional: draw this window under that one
 cwd: /home/you/src/checkout
 status: pending
 created: 2026-09-06 09:55
@@ -193,9 +196,50 @@ launched:
 the prompt body that gets pasted into the new window
 ```
 
-`at: reset` fires when the session limit resets — or when the budget simply reads fresh, because a brand-new rolling window has no reset time at all. An absolute time (`2026-09-06 14:30`, or anything `date -d` accepts) fires when it passes.
-
 The new window opens right after its `window:` target, named with a leading `➥`, and the prompt lands as **one bracketed paste** — never `send-keys`, which submits at every newline. A file the view cannot parse is shown as corrupted with the reason and never launches.
+
+### The slug is the lane's name in four places
+
+It names the window, the handover file, the `handover.sh done <slug>` the worker is told to run, and the entry in the window tree. It is derived from the title by replacing everything outside `A-Za-z0-9._-` with `-` and cutting to 22 characters, which is how `title: 27-storage wave 2` once became the slug `27-storage-wave-2` while the lane's own brief said `27-storage` — two handover files for one lane, nothing watching the one that was written, and no warning anywhere.
+
+So `slug:` pins it and wins over the title; a title that does not survive the derivation unchanged is **warned about** in the log, in `--check` and on the dashboard row; and the resolved slug and full handover path are rendered **into the pasted body**, above everything else, saying they win over anything the brief names. A brief and the tooling can no longer disagree.
+
+### `at: reset` is two gates
+
+An entry fires on whichever comes first:
+
+1. **the budget reads fresh** — `session_pct <= 10`. A rolling window that has just rolled has no reset time at all, so a barely-touched budget is due on its own.
+2. **the window rolled over** — `now >= session_reset_at + 20s`, whatever the budget then reads.
+
+The launch line names which one fired. An absolute time (`2026-09-06 14:30`, or anything `date -d` accepts) fires when it passes.
+
+A budget *reading* older than `WATCHDOG_USAGE_STALE` (default 180 min) cannot fire gate 1 — the bucket refills over five hours, so a three-hour-old percentage says nothing about now. The reset *epoch* is exempt: it is an absolute moment.
+
+### Every pending entry says why it has not fired
+
+`due` · `waiting` · `blocked` · `stalled`, each with the sentence that explains it, republished every pass and rendered under the table in the `s` view.
+
+`stalled` means it cannot be judged at all. That case used to be **silent and permanent**: an empty `session_pct` was coerced to 100 (failing gate 1) and an empty `session_reset_at` failed gate 2, so an unreadable usage cache made every `at: reset` entry undue *forever*, with no log line and no error. Now it is named, it turns the row red, and the watchdog asks for a fresh `/usage` probe to clear it.
+
+```bash
+claude-watchdog.sh --check                    # every entry
+claude-watchdog.sh --check 27-storage         # one, by file, basename or slug
+claude-watchdog.sh --check 27-storage --body  # ...and the exact paste
+```
+
+`--check` resolves an entry without launching anything: the parsed fields, the slug and where it came from, the window name, the handover path, the insert target resolved against the live session, the size of the paste, and the due verdict with its reason.
+
+### A tree of windows
+
+**tmux has no window hierarchy.** Its windows are a flat, indexed list per session — there is no parent to set and nothing to collapse. So the tree is *data* the scheduler keeps (`tree.tsv`: slug, parent, window id, pane id, launched-at) and the dashboard is the *view*.
+
+Parentage fills itself in: `parent:` wins, and otherwise it is derived from `window:` when that names a window the scheduler itself opened. What the flat list *can* honour, it does — the depth rides on the name (`➥lane`, `➥➥child`) and a child is inserted after the last window of its parent's subtree, so a family stays contiguous.
+
+In the dashboard, `←` folds a subtree (the parent shows `+N`), `→` unfolds it, `t` turns the ordering off. With nothing parented the table is exactly what it always was, sessions by context. `claude-watchdog.sh --tree` prints the tree from the shell.
+
+### `after: <slug>`
+
+Holds an entry until that lane is done — its handover marked done by `handover.sh done`, or a window the tree knows about having exited without leaving an open handover. No timeout: a dependency that gives up and runs anyway is worse than one that waits, and the wait is visible with its reason.
 
 In the `s` view: `enter`/`e` edit · `c` create · `l` launch now · `d` delete · `r` reload · `s`/`esc` back.
 
