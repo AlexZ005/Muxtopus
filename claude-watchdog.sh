@@ -99,6 +99,17 @@ SCHEDULES="$MUX_SCHEDULES"
 # what a lane did outlives the lane.
 HANDOVERS="$MUX_HANDOVERS"
 REPOS_AT="$STATE_DIR/repos.at"
+# WHY EACH PENDING ENTRY IS NOT RUNNING, republished every pass:
+#   file <TAB> verdict <TAB> reason <TAB> when
+# verdict is due | waiting | blocked | stalled. It exists because the only
+# answer this scheduler could give to "why has that not fired" used to be
+# silence -- see sched_due. The dashboard renders it; the log carries the
+# CHANGES, so a stall is one line rather than one line every thirty seconds.
+SCHED_WHY="$STATE_DIR/sched-why.tsv"
+# The last time a missing usage reading made us ask for a probe. Bounded, or a
+# permanently broken usage cache would start a throwaway session every pass.
+SCHED_PROBE_AT="$STATE_DIR/sched-probe.at"
+SCHED_PROBE_EVERY=900
 # Working trees change far more slowly than sessions do, and each one costs a
 # git fork, so the repo sweep runs on its own slower clock.
 REPO_EVERY=120
@@ -121,6 +132,13 @@ FRESH_CTX="${WATCHDOG_FRESH_CTX:-150000}"
 # Below this weekly figure /low-priority is on the table: it continues NOW
 # against the weekly budget instead of idling until the session resets.
 LOWPRI_WEEK="${WATCHDOG_LOWPRI_WEEK:-40}"
+# HOW OLD A BUDGET READING MAY BE and still decide anything. The session bucket
+# refills over five hours, so a percentage read three hours ago says nothing
+# useful about now -- and "the budget reads fresh" is a gate that OPENS a
+# window, so it must not open on a figure that predates the work. The reset
+# EPOCH is exempt: it is an absolute moment, and it stays true however old the
+# row that carries it is.
+USAGE_STALE="${WATCHDOG_USAGE_STALE:-180}"
 
 mkdir -p "$STATE_DIR"
 [ -f "$MSGFILE" ] || printf '%s\n' "$DEFAULT_MSG" > "$MSGFILE"
@@ -481,22 +499,154 @@ sched_slug_warn() {
   fi
 }
 
-# Is this item due? "reset" resolves live from the usage cache -- and a FRESH
-# rolling window has no reset time at all (the documented trap), so a budget
-# that simply reads fresh counts as due on its own. Anything else goes through
-# date -d, which also accepts what a hand types ("tomorrow 06:00").
+# How old the usage cache is, in minutes. -1 when there is no readable stamp,
+# which is a different answer from "old" and is treated as one.
+usage_age_min() {
+  local at now
+  at="$(usage_val at)"
+  case "$at" in ''|*[!0-9]*) printf -- '-1'; return 0 ;; esac
+  now="$(date +%s)"
+  printf '%s' $(( (now - at) / 60 ))
+}
+
+# Is this item due, and WHY.
+#
+#   0  due       -- SCHED_WHY_TXT says which gate fired
+#   1  waiting   -- SCHED_WHY_TXT says what it is waiting for
+#   2  stalled   -- it cannot be evaluated at all, and that is now SAID
+#
+# `at: reset` HAS TWO GATES, and they mean materially different things. The
+# README used to describe them as one sentence, which cost a round of guessing
+# about why a window opened:
+#
+#   1. THE BUDGET READS FRESH (session_pct <= 10). A rolling window that has
+#      just rolled has no reset time at all -- the documented trap -- so a
+#      barely-touched budget is due on its own account. It fires when the
+#      account is idle, whether or not anything ever hit a limit.
+#   2. THE WINDOW ROLLED OVER (now >= session_reset_at + GRACE). It fires when
+#      the five hours are up, whatever the budget then reads.
+#
+# Both of today's launches went through this and each took a DIFFERENT gate --
+# the first the reset epoch (10:10 had passed), the second the fresh budget
+# (4%). Which one fired is now in the log line, so a launch is explicable
+# afterwards instead of being reconstructed.
+#
+# AND A MISSING READING IS NOT A "NO". sched_due used to coerce an empty
+# session_pct to 100, which fails gate 1, while an empty session_reset_at
+# fails gate 2 -- so an unreadable usage.tsv made every `at: reset` entry
+# PERMANENTLY undue, with no log line and no error. That is the worst failure a
+# scheduler can have and it is what verdict 2 exists to end.
+SCHED_WHY_TXT=""
+# Set alongside verdict 2 when a fresh /usage reading is what would unblock it.
+SCHED_WANT_PROBE=0
 sched_due() {
-  local at="$1" now="$2" e sp
+  local at="$1" now="$2" e sp age hhmm
+  SCHED_WHY_TXT=""; SCHED_WANT_PROBE=0
   if [ "$at" = reset ]; then
     sp="$(usage_val session_pct)"; sp="${sp%%.*}"
-    case "$sp" in ''|*[!0-9]*) sp=100 ;; esac
-    [ "$sp" -le 10 ] && return 0
     e="$(usage_val session_reset_at)"
-    [ -n "$e" ] && [ "$now" -ge $(( e + GRACE )) ] && return 0
+    age="$(usage_age_min)"
+    case "$sp" in ''|*[!0-9]*) sp="" ;; esac
+    case "$e" in ''|*[!0-9]*) e="" ;; esac
+    hhmm="-"; [ -n "$e" ] && hhmm="$(date -d "@$e" '+%H:%M' 2>/dev/null)"
+
+    # CAN GATE 1 SEE ANYTHING AT ALL? A blind gate is not a closed one, and
+    # the difference is the whole of observation 3: an absent reading used to
+    # be coerced into "not due" and was then indistinguishable from a budget
+    # that is genuinely still full.
+    local blind=""
+    if [ -z "$sp" ]; then
+      blind="$USAGE carries no session_pct"
+    elif [ "$age" -lt 0 ]; then
+      blind="$USAGE carries no readable timestamp, so its ${sp}% cannot be trusted"
+    elif [ "$age" -gt "$USAGE_STALE" ]; then
+      blind="the ${sp}% reading is ${age}m old, past the ${USAGE_STALE}m limit"
+    fi
+
+    if [ -z "$blind" ] && [ "$sp" -le 10 ]; then
+      SCHED_WHY_TXT="due: the budget reads fresh (${sp}%, read ${age}m ago)"
+      return 0
+    fi
+    if [ -n "$e" ] && [ "$now" -ge $(( e + GRACE )) ]; then
+      SCHED_WHY_TXT="due: the session window rolled over at $hhmm"
+      return 0
+    fi
+
+    # Neither gate fired. A blind gate 1 is worth a probe whatever happens
+    # next: it is the only thing that can make this entry due before the reset.
+    [ -n "$blind" ] && SCHED_WANT_PROBE=1
+
+    # STALLED IS RESERVED FOR "no future moment can make this due". With a
+    # reset epoch ahead the entry has a definite appointment, so a stale
+    # budget only costs it the earlier of two gates -- worth saying, not worth
+    # calling a stall.
+    if [ -n "$blind" ] && [ -z "$e" ]; then
+      SCHED_WHY_TXT="STALLED: neither gate can fire -- $blind, and there is no session_reset_at either; asking for a fresh /usage probe"
+      return 2
+    fi
+    if [ -z "$e" ]; then
+      SCHED_WHY_TXT="waiting: the budget is ${sp}% (fires at 10%); there is no session_reset_at, so only the fresh-budget gate can fire"
+      return 1
+    fi
+    if [ -n "$blind" ]; then
+      SCHED_WHY_TXT="waiting: the reset at $hhmm has not passed, and the fresh-budget gate is blind ($blind); a probe has been asked for"
+      return 1
+    fi
+    SCHED_WHY_TXT="waiting: the budget is ${sp}% (fires at 10%) and the reset at $hhmm has not passed"
     return 1
   fi
-  e="$(date -d "$at" +%s 2>/dev/null)" || return 1
-  [ -n "$e" ] && [ "$now" -ge "$e" ]
+  e="$(date -d "$at" +%s 2>/dev/null)"
+  case "$e" in
+    ''|*[!0-9]*) SCHED_WHY_TXT="STALLED: at: \"$at\" is not a time date -d understands"; return 2 ;;
+  esac
+  if [ "$now" -ge "$e" ]; then
+    SCHED_WHY_TXT="due: the time $at passed"
+    return 0
+  fi
+  SCHED_WHY_TXT="waiting: until $at, $(( (e - now + 59) / 60 ))m away"
+  return 1
+}
+
+# Record a verdict for one entry, and LOG IT ONLY WHEN IT CHANGES.
+#
+# Every pass republishes the whole table for the dashboard; the log gets a line
+# the first time an entry starts saying something new. That is the difference
+# between a stall you can see and a stall nobody ever hears about -- and
+# between one log line and 2,880 a day.
+sched_note() {
+  local f="$1" verdict="$2" why="$3" b prev
+  b="$(basename "$f")"
+  prev="$(awk -F'\t' -v b="$b" '$1==b{v=$2"|"$3} END{print v}' "$SCHED_WHY" 2>/dev/null)"
+  printf '%s\t%s\t%s\t%s\n' "$b" "$verdict" "$why" "$(date +%s)" >> "$SCHED_WHY.tmp"
+  [ "$prev" = "$verdict|$why" ] && return 0
+  case "$verdict" in
+    stalled|blocked) log "schedule $b: $why" ;;
+  esac
+  return 0
+}
+
+# A stalled `at: reset` entry is the one case where a probe is worth starting
+# on its own: the entry is waiting on a number the cache does not have, and
+# without one it waits forever. Bounded by its own clock so a permanently
+# broken usage read costs one probe per quarter hour, not one per pass.
+sched_request_probe() {
+  local last=0 now
+  [ -x "$SCRIPT_DIR/claude-usage.sh" ] || return 0
+  [ -f "$MUX_CONFIG_DIR/.credentials.json" ] || return 0
+  [ -f "$SCHED_PROBE_AT" ] && read -r last < "$SCHED_PROBE_AT" 2>/dev/null
+  now="$(date +%s)"
+  [ $(( now - ${last:-0} )) -lt "$SCHED_PROBE_EVERY" ] && return 0
+  printf '%s\n' "$now" > "$SCHED_PROBE_AT"
+  log "schedule: asking for a /usage probe -- an 'at: reset' entry has no readable budget"
+  # In the FOREGROUND, like the hourly probe at the end of a pass: a probe is
+  # about four seconds against a thirty second interval, and a backgrounded one
+  # would have to be reaped by a loop that is already waiting on its own sleep.
+  if [ -n "$MUX_PROFILE" ]; then
+    "$SCRIPT_DIR/claude-usage.sh" --profile "$MUX_PROFILE" --ensure 1 >/dev/null 2>&1
+  else
+    "$SCRIPT_DIR/claude-usage.sh" --ensure 1 >/dev/null 2>&1
+  fi
+  return 0
 }
 
 # Rewrite the status (and stamp launched:) in place. Only the header is
@@ -509,7 +659,7 @@ sched_mark() {
 
 # Open the window, get claude to a prompt, paste the body, press Enter.
 launch_schedule() {
-  local f="$1"
+  local f="$1" why="${2:-}"
   local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
@@ -619,18 +769,28 @@ launch_schedule() {
   rm -f "$bodyf"
 
   sched_mark "$f" launched
-  log "schedule $(basename "$f"): launched $wname (pane $pane) type=$type"
+  # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
+  # and "due: the session window rolled over at 10:10" are different events,
+  # and a launch that cannot be explained afterwards is a launch nobody trusts.
+  log "schedule $(basename "$f"): launched $wname (pane $pane) type=$type slug=$slug -- ${why:-due}"
 }
 
 # One pass over the folder. Gated on the same master switch as the restart
 # prompt -- opening a window spends tokens exactly the way re-prompting does --
 # and a dry run reports without acting, like everywhere else in this file.
+#
+# EVERY PENDING ENTRY LEAVES A VERDICT behind, whether or not it ran. The three
+# reasons an entry used to do nothing -- unparseable, undue, or waiting on a
+# usage figure that never arrived -- were indistinguishable from outside, and
+# the third one never resolved. Now each writes its sentence to SCHED_WHY, the
+# dashboard renders it, and the log takes the changes.
 check_schedules() {
   [ -f "$ENABLED" ] || return 0
   [ "$DRY" = 1 ] && return 0
   [ -d "$SCHEDULES" ] || return 0
-  local f now st type at cwd
+  local f now st type at cwd rc probe=0
   now="$(date +%s)"
+  : > "$SCHED_WHY.tmp"
   for f in "$SCHEDULES"/*.md; do
     [ -f "$f" ] || continue
     case "$f" in */README.md) continue ;; esac
@@ -639,12 +799,30 @@ check_schedules() {
     type="$(sched_field "$f" type)"
     at="$(sched_field "$f" at)"
     cwd="$(sched_field "$f" cwd)"
-    case "$type" in plan|work) ;; *) continue ;; esac
-    [ -n "$cwd" ] && [ -d "$cwd" ] || continue
-    if [ "$type" = work ] && [ -z "$(sched_body "$f")" ]; then continue; fi
-    sched_due "$at" "$now" || continue
-    launch_schedule "$f"
+    case "$type" in
+      plan|work) ;;
+      *) sched_note "$f" stalled "STALLED: type must be plan or work, not \"${type:-}\""; continue ;;
+    esac
+    if [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
+      sched_note "$f" stalled "STALLED: cwd \"${cwd:-}\" is not a directory"; continue
+    fi
+    if [ "$type" = work ] && [ -z "$(sched_body "$f")" ]; then
+      sched_note "$f" stalled "STALLED: a work item with an empty prompt body has nothing to paste"; continue
+    fi
+
+    sched_due "$at" "$now"; rc=$?
+    case "$rc" in
+      2) sched_note "$f" stalled "$SCHED_WHY_TXT"
+         [ "$SCHED_WANT_PROBE" = 1 ] && probe=1
+         continue ;;
+      1) sched_note "$f" waiting "$SCHED_WHY_TXT"; continue ;;
+    esac
+    sched_note "$f" due "$SCHED_WHY_TXT"
+    launch_schedule "$f" "$SCHED_WHY_TXT"
   done
+  mv "$SCHED_WHY.tmp" "$SCHED_WHY" 2>/dev/null
+  [ "$probe" = 1 ] && sched_request_probe
+  return 0
 }
 
 # Last time we prompted this session, as an epoch. The prompted file is the

@@ -590,6 +590,28 @@ def slug_warning(row: dict) -> str:
     return "%s is not a slug; it becomes %r — set slug: to pin it" % (src, slug)
 
 
+# The executor's verdict on each pending entry: file -> (verdict, reason, when).
+# Written every pass by check_schedules, because the one question this
+# scheduler could not answer was "why has that not fired yet".
+WATCHDOG_SCHED_WHY = WATCHDOG_DIR / "sched-why.tsv"
+
+
+def sched_why() -> dict[str, tuple[str, str, int]]:
+    out: dict[str, tuple[str, str, int]] = {}
+    try:
+        for line in WATCHDOG_SCHED_WHY.read_text().splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                try:
+                    at = int(parts[3])
+                except (IndexError, ValueError):
+                    at = 0
+                out[parts[0]] = (parts[1], parts[2], at)
+    except OSError:
+        pass
+    return out
+
+
 def read_schedules() -> list[dict]:
     """Parse every schedule file, KEEPING the broken ones.
 
@@ -1295,14 +1317,26 @@ class Dashboard:
         st.add_column("AT", width=17)
         st.add_column("TITLE", ratio=1, overflow="ellipsis", no_wrap=True)
         st.add_column("SLUG", width=24, overflow="ellipsis", no_wrap=True)
+        why = sched_why()
         for i, r in enumerate(rows):
             mark = Text("▸" if i == self.sched_i else " ", style="bold #c9a0dc")
+            r["why"] = why.get(r["file"].name, ("", "", 0))
+            verdict = r["why"][0]
             if r["bad"]:
                 stx = Text("corrupted", style=RED)
             elif r["status"] == "launched":
                 stx = Text("launched", style=DIM)
             elif r["status"] == "error":
                 stx = Text("error", style=RED)
+            elif verdict == "stalled":
+                # PENDING FOREVER IS NOT PENDING. An entry the executor cannot
+                # judge used to be indistinguishable from one that is simply
+                # early, and it never resolved on its own.
+                stx = Text("stalled", style=RED)
+            elif verdict == "blocked":
+                stx = Text("blocked", style=YELLOW)
+            elif verdict == "due":
+                stx = Text("due", style="bold " + GREEN)
             else:
                 stx = Text("pending", style=GREEN)
             when_for = r["at"] or "?"
@@ -1329,6 +1363,30 @@ class Dashboard:
         parts = [Panel(st, title="[bold]scheduled windows[/] "
                            f"[{DIM}]· {SCHEDULES_DIR} · templates in templates/",
                        title_align="left", border_style=FRAME, box=box.ROUNDED)]
+
+        # WHY THE SELECTED ENTRY IS NOT RUNNING, in the executor's own words.
+        # One line under the table rather than a column: the sentence is long
+        # on purpose (it names the gate, the figure and the threshold) and it
+        # is only ever wanted for the row under the cursor.
+        sel = self._sched_sel()
+        if sel is not None:
+            verdict, reason, at = sel.get("why", ("", "", 0))
+            if sel["bad"]:
+                line = Text.assemble(("will never launch: ", RED), (sel["bad"], RED))
+            elif reason:
+                stale = " (%s ago)" % human_age(time.time() - at) if at else ""
+                line = Text.assemble((reason, RED if verdict == "stalled" else ""),
+                                     (stale, DIM))
+            elif sel["status"] == "launched":
+                line = Text("launched %s — the watchdog only judges pending entries"
+                            % (sel["launched"] or "?"), style=DIM)
+            else:
+                line = Text("no verdict yet — the watchdog writes one every pass",
+                            style=DIM)
+            if sel["warn"]:
+                line = Text.assemble(line, "\n", ("⚠ " + sel["warn"], YELLOW))
+            parts.append(Panel(line, title="[bold]why", title_align="left",
+                               border_style=FRAME, box=box.ROUNDED))
 
         try:
             qfiles = sorted(QUESTIONS_DIR.glob("QUESTIONS-*.md"))

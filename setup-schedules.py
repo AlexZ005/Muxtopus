@@ -138,9 +138,52 @@ Format:
     ---
     the prompt body that gets pasted into the new window
 
-`at: reset` = when the session limit resets (or the budget reads fresh).
 The launched window is named with a leading arrow and appears right after
 `window:` when that window exists.
+
+## `at: reset` is TWO gates, not one
+
+They fire on materially different events, and an entry is launched by whichever
+comes first:
+
+  1. THE BUDGET READS FRESH -- `session_pct <= 10`. A rolling five-hour window
+     that has just rolled has no reset time at all, so a barely-touched budget
+     counts as due on its own. This gate fires on a quiet account whether or not
+     anything ever hit a limit.
+  2. THE WINDOW ROLLED OVER -- `now >= session_reset_at + 20s`. This fires when
+     the five hours are up, whatever the budget then reads.
+
+Both of the entries run on 2026-09-12 took a different gate: the first fired on
+the reset epoch (10:10 had passed), the second on a 4% budget. The log now says
+WHICH, so a launch can be explained after the fact:
+
+    schedule lane-27-storage.md: launched ➥27-storage (pane %401) type=work
+      slug=27-storage -- due: the session window rolled over at 10:10
+
+A budget reading older than WATCHDOG_USAGE_STALE minutes (default 180) cannot
+fire gate 1 -- the bucket refills over five hours, so a three-hour-old
+percentage says nothing about now. The reset EPOCH is exempt: it is an absolute
+moment and stays true however old the row carrying it is.
+
+## Every pending entry says why it has not fired
+
+The watchdog writes a verdict per pending entry every pass, to
+`~/.local/state/claude-watchdog[-suffix]/sched-why.tsv`:
+
+    due | waiting | blocked | stalled   +   the sentence that explains it
+
+`stalled` means it cannot be judged at all and will not resolve on its own.
+That case used to be SILENT and PERMANENT: an empty `session_pct` was coerced to
+100 (failing gate 1) and an empty `session_reset_at` failed gate 2, so an
+unreadable usage cache made every `at: reset` entry undue forever, with no log
+line and no error. Now it is named, it turns the row red in the dashboard's `s`
+view, the reason is printed under the table, and the watchdog asks for a fresh
+`/usage` probe (at most one per quarter hour) to clear it.
+
+Check one entry, or all of them, without launching anything:
+
+    claude-watchdog.sh --check                 every entry
+    claude-watchdog.sh --check lane-27-storage one entry, resolved in full
 
 ## The slug is the lane's name, in four places at once
 
