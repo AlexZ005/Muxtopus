@@ -594,6 +594,20 @@ def slug_warning(row: dict) -> str:
 # Written every pass by check_schedules, because the one question this
 # scheduler could not answer was "why has that not fired yet".
 WATCHDOG_SCHED_WHY = WATCHDOG_DIR / "sched-why.tsv"
+# Proof of life: epoch, sessions, pending schedules, interval. The log records
+# only changes -- measured, its last line was four days old while the daemon was
+# polling every 30s -- so liveness had to be inferred from the mtimes of files
+# it happens to rewrite. This says it outright.
+WATCHDOG_HEARTBEAT = WATCHDOG_DIR / "heartbeat"
+
+
+def heartbeat_age() -> float:
+    """Seconds since the watchdog last completed a pass; -1 if it never has."""
+    try:
+        first = WATCHDOG_HEARTBEAT.read_text().split("\t")[0]
+        return time.time() - int(first)
+    except (OSError, ValueError, IndexError):
+        return -1.0
 
 
 def sched_why() -> dict[str, tuple[str, str, int]]:
@@ -1660,7 +1674,12 @@ class Dashboard:
         sessions, sess_age = claude_sessions()
         sessions = drop_dead(sessions, procs)
         wd_on = WATCHDOG_ENABLED.exists()
-        wd_stale = sess_age < 0 or sess_age > STALE_AFTER
+        # THE HEARTBEAT IS THE DIRECT ANSWER; the status file's mtime is the
+        # inference that used to stand in for it, and it stays as the fallback
+        # for a daemon too old to write one.
+        hb = heartbeat_age()
+        scanned = hb if hb >= 0 else sess_age
+        wd_stale = scanned < 0 or scanned > STALE_AFTER
 
         ordered = sorted(sessions, key=lambda x: -x.ctx)
         # The cursor is tracked by session id, not by row index: the table is
@@ -1756,11 +1775,15 @@ class Dashboard:
         spent_all = sum(s.spent for s in sessions)
         mon_label = ("monitor on", GREEN) if mon else ("monitor off", DIM)
         acct = f" [{PROFILE_LABEL}]" if MULTI_ACCOUNT else ""
+        scan_txt = ("scan %s ago" % human_age(scanned)) if scanned >= 0 \
+            else "never scanned"
         ctitle = Text.assemble(("claude", "bold"),
                                (acct, YELLOW if PROFILE else DIM),
                                (f" · {len(sessions)} session(s) · ", DIM),
                                (human_tokens(spent_all), "bold"), (" spent · ", DIM),
-                               wd_label, (" · ", DIM), mon_label)
+                               wd_label, (" · ", DIM),
+                               (scan_txt, RED if wd_stale else DIM), (" · ", DIM),
+                               mon_label)
 
         # ---- system -------------------------------------------------------
         claude = [p for p in procs if p.comm == "claude"]

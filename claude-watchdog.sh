@@ -123,6 +123,18 @@ SCHED_WHY="$STATE_DIR/sched-why.tsv"
 # so the dashboard can sample the pane and the handover file rather than the
 # scheduler having to follow the work it started.
 TREE="$STATE_DIR/tree.tsv"
+# PROOF OF LIFE, rewritten every pass:
+#   epoch <TAB> sessions <TAB> pending <TAB> interval
+# The log only records CHANGES, which is right for a log and useless for "is it
+# alive": measured on this box, the last line was four days old while the daemon
+# was polling every 30 seconds, and liveness had to be inferred from the mtimes
+# of files it happens to rewrite. So it says so directly, and the dashboard
+# renders it as "scanned 12s ago".
+HEARTBEAT="$STATE_DIR/heartbeat"
+# ...and the log gets one line an hour anyway, because the file above is the
+# CURRENT answer and a log is the only thing that can answer "was it running at
+# 4am". 0 turns it off.
+HEARTBEAT_LOG_MIN="${WATCHDOG_HEARTBEAT_LOG:-60}"
 # A row whose window is long gone stops being interesting; one whose window is
 # gone but recent is still an answer to "has that finished yet".
 TREE_KEEP=$(( 14 * 86400 ))
@@ -170,7 +182,11 @@ case "${1:---once}" in
   --daemon)  MODE=daemon ;;
   --status)  [ -f "$ENABLED" ] && r=on || r=off
              [ -f "$MONITOR" ] && m=on || m=off
-             echo "# account=$MUX_LABEL restart=$r monitor=$m soft=$SOFT_PCT% hard=$HARD_PCT% interval=${INTERVAL}s usage-every=${USAGE_EVERY}m"
+             hb="-"
+             if [ -f "$STATE_DIR/heartbeat" ]; then
+               hb="$(awk -F'\t' -v n="$(date +%s)" '{printf "%ds ago", n-$1}' "$STATE_DIR/heartbeat")"
+             fi
+             echo "# account=$MUX_LABEL restart=$r monitor=$m soft=$SOFT_PCT% hard=$HARD_PCT% interval=${INTERVAL}s usage-every=${USAGE_EVERY}m scanned=$hb"
              [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
   --on)      : > "$ENABLED"; echo "watchdog enabled"; exit 0 ;;
   --off)     rm -f "$ENABLED"; echo "watchdog disabled"; exit 0 ;;
@@ -1281,6 +1297,22 @@ sweep_repos() {
   printf '%s\n' "$now" > "$REPOS_AT"
 }
 
+# One line of proof that this is running, and an hourly one in the log.
+heartbeat() {
+  local sessions="${1:-0}" now pending=0 last=0
+  now="$(date +%s)"
+  pending="$(awk -F'\t' '$2=="waiting"||$2=="blocked"||$2=="stalled"{n++} END{print n+0}' \
+             "$SCHED_WHY" 2>/dev/null)"
+  printf '%s\t%s\t%s\t%s\n' "$now" "${sessions:-0}" "${pending:-0}" "$INTERVAL" > "$HEARTBEAT"
+  [ "${HEARTBEAT_LOG_MIN:-0}" -gt 0 ] 2>/dev/null || return 0
+  [ -f "$HEARTBEAT.log" ] && read -r last < "$HEARTBEAT.log" 2>/dev/null
+  if [ $(( now - ${last:-0} )) -ge $(( HEARTBEAT_LOG_MIN * 60 )) ]; then
+    printf '%s\n' "$now" > "$HEARTBEAT.log"
+    log "alive: ${sessions:-0} session(s), ${pending:-0} pending schedule(s), polling every ${INTERVAL}s"
+  fi
+  return 0
+}
+
 pass() {
   local enabled=0; [ -f "$ENABLED" ] && enabled=1
   local msg; msg="$(head -1 "$MSGFILE" 2>/dev/null)"; msg="${msg:-$DEFAULT_MSG}"
@@ -1412,6 +1444,7 @@ pass() {
   sweep_repos
   tree_adopt
   check_schedules
+  heartbeat "$(grep -c '' "$STATUS" 2>/dev/null)"
   # Keep the limit figures warm on their own hourly clock. --ensure is a no-op
   # when the cache is young, so this costs nothing between the hours, and it is
   # also what catches a limit resetting EARLY: nobody is watching the dashboard

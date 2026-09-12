@@ -62,6 +62,7 @@ WATCHDOG_FRESH_CTX=150000
 WATCHDOG_LOWPRI_WEEK=40
 WATCHDOG_USAGE_EVERY=60
 WATCHDOG_USAGE_STALE=180
+WATCHDOG_HEARTBEAT_LOG=60
 CLAUDE_USAGE_MAX_AGE=20
 CLAUDE_USAGE_MODEL=-
 CLAUDE_CONTEXT_WINDOW=1000000
@@ -141,6 +142,9 @@ mux_key_help() {
     WATCHDOG_USAGE_STALE)   echo "Minutes after which a budget READING is too old to fire a schedule's"
                             echo "'at: reset' fresh-budget gate. The reset epoch is exempt: it is an"
                             echo "absolute moment and stays true however old the row carrying it is." ;;
+    WATCHDOG_HEARTBEAT_LOG) echo "Minutes between the watchdog's 'alive' log lines. The log otherwise"
+                            echo "records only changes, so it cannot answer 'was it running at 4am'."
+                            echo "0 turns it off; the heartbeat FILE is written every pass regardless." ;;
     CLAUDE_USAGE_MAX_AGE)   echo "Minutes: the dashboard's u and R re-read the limits only past this age." ;;
     CLAUDE_USAGE_MODEL)     echo "Which model's limit line the probe reads. Default: the model in"
                             echo "the account's settings.json." ;;
