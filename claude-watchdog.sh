@@ -942,7 +942,7 @@ sched_compose() {
 # Open the window, get claude to a prompt, paste the body, press Enter.
 launch_schedule() {
   local f="$1" why="${2:-}"
-  local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn
+  local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn model
   local parent depth wid
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
@@ -963,6 +963,10 @@ launch_schedule() {
   win="$(sched_field "$f" window)"
   cwd="$(sched_field "$f" cwd)"
   tmpl="$(sched_field "$f" template)"
+  # `model:` pins the window's model (an alias claude accepts: fable, opus,
+  # sonnet, or a full id). Absent, the account's settings.json default applies.
+  model="$(sched_field "$f" model)"
+  case "$model" in *[!a-zA-Z0-9._\[\]-]*) log "schedule $(basename "$f"): ignoring odd model: \"$model\""; model="" ;; esac
 
   slug="$(sched_slug "$f")"
   parent="$(sched_parent "$f")"
@@ -1012,7 +1016,7 @@ launch_schedule() {
   read -r pane wid < <(tmux new-window -d -P -F '#{pane_id} #{window_id}' \
           "${targs[@]}" -n "$wname" -c "$cwd" \
           "${MUX_TMUX_ENV[@]}" \
-          "$HOME/.local/bin/claude" 2>/dev/null)
+          "$HOME/.local/bin/claude" ${model:+--model "$model"} 2>/dev/null)
   if [ -z "$pane" ]; then
     sched_mark "$f" error
     log "schedule $(basename "$f"): could not open a tmux window"
@@ -1053,7 +1057,7 @@ launch_schedule() {
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
-  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent} -- ${why:-due}"
+  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model} -- ${why:-due}"
 }
 
 # ------------------------------------------------------------- --check
@@ -1103,6 +1107,7 @@ sched_check_one() {
   kv type "${type:-(missing)}"
   kv at "${at:-(missing)}"
   kv title "${title:-(none)}"
+  kv model "$(sched_field "$f" model)"; [ -n "$(sched_field "$f" model)" ] || kv model "(account default from settings.json)"
   if [ -n "$(sched_field "$f" slug)" ]; then kv slug "$slug   (pinned by slug:)"
   elif [ -n "$title" ]; then kv slug "$slug   (derived from title: \"$title\")"
   else kv slug "$slug   (derived from the filename)"; fi

@@ -134,6 +134,7 @@ Format:
     window: plan1-fixes            (optional: insert the new window after this one)
     cwd: /home/deck/.code/theprototype-app/core
     template: resume-status        (plan only, optional; a file in templates/)
+    model: opus                    (optional: fable | opus | sonnet | full id; default from settings.json)
     status: pending                (the executor rewrites this)
     created: 2026-09-06 09:55
     launched:
