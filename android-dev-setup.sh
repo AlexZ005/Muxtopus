@@ -5,6 +5,7 @@
 #   android-dev-setup.sh --with-emulator also the emulator and API 26 + API 21 x86_64 images (needs /dev/kvm)
 #   android-dev-setup.sh --project DIR   additionally write DIR/local.properties (sdk.dir=...)
 #   android-dev-setup.sh --udev          add the adb udev rule for the phone (asks for sudo)
+#   android-dev-setup.sh --dev-keystore  create ~/.android/markor-fork.jks for signing release APKs (once)
 #   android-dev-setup.sh --check         print what is installed and exit
 #   android-dev-setup.sh --env           print the export lines and exit (for `eval "$(...)"`)
 #
@@ -40,12 +41,13 @@ SDK_ROOT="$HOME/Android/Sdk"
 ENV_FILE="$HOME/.config/android-dev.env"
 DL_DIR="$HOME/.cache/android-dev-setup"
 
-WITH_EMULATOR=0; PROJECT_DIR=""; DO_UDEV=0; CHECK_ONLY=0; ENV_ONLY=0
+WITH_EMULATOR=0; PROJECT_DIR=""; DO_UDEV=0; CHECK_ONLY=0; ENV_ONLY=0; DEV_KS=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-emulator) WITH_EMULATOR=1; shift ;;
     --project) PROJECT_DIR="${2:?--project needs a directory}"; shift 2 ;;
     --udev) DO_UDEV=1; shift ;;
+    --dev-keystore) DEV_KS=1; shift ;;
     --check) CHECK_ONLY=1; shift ;;
     --env) ENV_ONLY=1; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
@@ -168,6 +170,25 @@ if [ "$DO_UDEV" = 1 ]; then
     echo "$rule" | sudo tee -a /etc/udev/rules.d/51-android.rules >/dev/null
     sudo udevadm control --reload-rules && sudo udevadm trigger
   fi
+fi
+
+# ---------------------------------------------------------- dev keystore
+# A stable self-signed key so release (R8-minified) APKs built here install over
+# each other on a phone. Password kept next to the env file, mode 600; this is a
+# dev key for one person's device, not a store key.
+if [ "$DEV_KS" = 1 ]; then
+  KS="$HOME/.android/markor-fork.jks"; KS_ENV="$HOME/.config/android-dev-keystore.env"
+  if [ ! -f "$KS" ]; then
+    mkdir -p "$HOME/.android"
+    pass="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 24)"
+    umask 077; printf 'export MARKOR_KS="%s"\nexport MARKOR_KS_ALIAS="markor-fork"\nexport MARKOR_KS_PASS="%s"\n' "$KS" "$pass" > "$KS_ENV"; umask 022
+    "$JDK_LINK/bin/keytool" -genkeypair -v -keystore "$KS" -alias markor-fork -keyalg RSA -keysize 4096 \
+      -validity 10950 -storepass "$pass" -keypass "$pass" -dname "CN=Markor fork dev, OU=AlexZ005, O=AlexZ005" >/dev/null 2>&1
+    log "created $KS (password in $KS_ENV)"
+  else
+    log "keystore already present: $KS"
+  fi
+  log "sign with:  . $KS_ENV && apksigner sign --ks \"\$MARKOR_KS\" --ks-key-alias \"\$MARKOR_KS_ALIAS\" --ks-pass env:MARKOR_KS_PASS --key-pass env:MARKOR_KS_PASS --out signed.apk unsigned.apk"
 fi
 
 echo
