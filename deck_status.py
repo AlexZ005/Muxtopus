@@ -703,7 +703,8 @@ def read_schedules() -> list[dict]:
         row = {"file": f, "type": "", "at": "", "title": "", "slug": "",
                "window": "", "cwd": "", "template": "", "status": "",
                "created": "", "launched": "", "after": "", "parent": "",
-               "options": "", "body": "", "bad": "", "warn": "", "resolved": ""}
+               "options": "", "model": "", "effort": "",
+               "body": "", "bad": "", "warn": "", "resolved": ""}
         try:
             text = f.read_text()
         except OSError as exc:
@@ -2019,6 +2020,21 @@ class Dashboard:
             else:
                 line = Text("no verdict yet — the watchdog writes one every pass",
                             style=DIM)
+            # WHAT IT WILL LAUNCH WITH, from the fields the options table
+            # writes: they are header fields, so without this the only way to
+            # see them was to open the file.
+            bits = []
+            if sel["model"]:
+                bits.append("model %s" % sel["model"])
+            if sel["effort"]:
+                bits.append("effort %s" % sel["effort"])
+            if sel["options"]:
+                bits.append("%d option(s)" % len(parse_options_line(sel["options"])))
+            if bits:
+                line = Text.assemble(line, "\n",
+                                     ("  ·  ".join(bits), DIM),
+                                     ("      o reopens the table", DIM)
+                                     if sel["status"] == "pending" else "")
             if sel["warn"]:
                 line = Text.assemble(line, "\n", ("⚠ " + sel["warn"], YELLOW))
             parts.append(Panel(line, title="[bold]why", title_align="left",
@@ -2303,6 +2319,15 @@ class Dashboard:
                 st_txt = Text("limited " + s.reset, style=YELLOW)
             elif s.state == "working":
                 st_txt = Text("working", style=GREEN)
+            elif s.state == "stranded":
+                # THE NEW "nothing is ever going to touch this". idle stays
+                # dim because it is a fact about the last turn and usually
+                # means finished; stranded is a fact about the FUTURE -- an
+                # open handover, past the threshold, and no pending entry
+                # naming the lane -- so it is the one idle state worth a
+                # colour. Eight characters against a 15-wide column: it
+                # cannot wrap the row.
+                st_txt = Text("stranded", style=RED)
             else:
                 st_txt = Text(s.state, style=DIM)
             # An idle window is only interesting once it has been quiet a
@@ -2550,9 +2575,42 @@ HELP = f"""
     window opens right after its `window:` target, named with a leading ➥,
     and the prompt lands as ONE bracketed paste. A file the view cannot parse
     shows as corrupted with the reason, and never launches.
-    In the view: enter/e edit · c create (type, template, then straight into
-    the editor to paste the prompt) · l launch now · d delete · r reload ·
-    s/esc back.
+    In the view: enter/e edit · c create (type, template, THE OPTIONS TABLE,
+    then the editor to paste the prompt) · o reopen the options table on a
+    pending entry · l launch now · d delete · r reload · s/esc back.
+
+  [{DIM}]THE OPTIONS TABLE (c, and o on a pending entry)[/]
+    The checkboxes between the template and the editor: the contract sentences
+    you would otherwise retype into every brief, ticked once. They come from
+
+        {options_paths(PROFILE)[0]}
+
+    which is YOURS -- one block per option, blank-line separated, `key: value`
+    like a schedule header, its own comment block at the top being the format
+    spec. Edit it and the table changes; a second account overrides or adds to
+    it in profiles/<name>.options.md. A block the reader cannot make sense of
+    is shown greyed with the reason rather than dropped, exactly as a
+    corrupted schedule entry is.
+
+    ↑↓ picks, space ticks. An option that needs a number or a time opens the
+    text prompt; one with a list of choices opens the picker (that is how
+    model: and effort: are set). enter continues, esc skips -- and on a reopen
+    esc cancels instead, because the entry already exists.
+
+    A TICK WRITES ONE OF TWO THINGS: a sentence, appended to the body under a
+    `## Options` heading at the END of it, or a header field (model:, effort:)
+    the launcher passes as a flag. The header also records `options:
+    questions, phases, lanes=3`, and THAT is the source of truth: o reopens
+    the table from it and regenerates the section, so a sentence edited by
+    hand in that section is overwritten on the next save. To keep one, move it
+    ABOVE the heading -- everything above it is preserved byte for byte -- or
+    edit it in options.md where it came from.
+
+    Placeholders in a sentence ({{{{SLUG}}}}, {{{{WINDOW}}}}, {{{{HANDOVER}}}},
+    {{{{QUESTIONS}}}}, {{{{SCHEDULES}}}}, {{{{CWD}}}}, {{{{PARENT}}}}) are written out
+    LITERALLY and resolved by the executor when the prompt is pasted, because
+    the slug does not exist yet while the table is open. {{{{VALUE}}}} is the
+    exception -- it is what the prompt collected, and it is resolved here.
 
     WHY AN ENTRY HAS NOT FIRED is printed under the table for the row under the
     cursor, in the executor's own words -- `at: reset` is two gates (the budget
@@ -2627,6 +2685,14 @@ HELP = f"""
 
     [{YELLOW}]limited[/]  stopped at a usage limit, waiting for the reset
     [{RED}]due[/]      the reset has passed and it is still sitting there
+    [{RED}]stranded[/] NOTHING IS EVER GOING TO TOUCH THIS. A ➥ lane, idle past
+             WATCHDOG_STRANDED (120m), with an OPEN handover, and no pending
+             schedule entry naming it -- not by slug, not by after:, not a
+             resume- entry. idle stays dim because it is a fact about the last
+             turn and usually means finished; this is a fact about the future.
+             It is a label, never a trigger: the watchdog only ever prompts a
+             [{RED}]due[/] window. Schedule a ➥resume from the menu, or answer its
+             handover.
 
     [bold]w[/] arms the watchdog: an IDLE window that hit a limit is prompted to
     continue once its reset time passes, once per limit. It never types into a
