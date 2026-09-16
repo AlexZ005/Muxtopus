@@ -136,6 +136,7 @@ Format:
     template: resume-status        (plan only, optional; a file in templates/)
     model: opus                    (optional: fable | opus | sonnet | full id; default from settings.json)
     effort: high                   (optional: low | medium | high | xhigh | max -> claude --effort)
+    permission-mode: bypassPermissions   (optional -> claude --permission-mode)
     options: questions, phases     (written by the dashboard's options table; see below)
     status: pending                (the executor rewrites this)
     created: 2026-09-06 09:55
@@ -186,8 +187,36 @@ That line is the source of truth for reopening the table (`o` in the `s` view),
 which regenerates the `## Options` section at the bottom of the body from it.
 THE EXECUTOR PARSES NOTHING FROM IT. The sentences those options produce are
 ordinary body text by the time this folder is read, and the header fields they
-set (`model:`, `effort:`) are ordinary header fields. Deleting the line changes
+set (`model:`, `effort:`, `permission-mode:`) are ordinary header fields. Deleting the line changes
 nothing about how the entry runs -- only what the table shows when reopened.
+
+## `permission-mode:` -- the one setting that cannot be fixed after launch
+
+A scheduled window is UNATTENDED by definition. Without this field the launcher
+passes no mode, so the window inherits `defaultMode` from settings.json, and a
+window in `auto` that reaches a decision it will not take on its own simply
+STOPS -- silently, with no prompt anyone will answer. Measured 2026-09-16: that
+is how four lanes sat idle for three days.
+
+It cannot be corrected once the window is open, either. shift+tab cycles
+auto -> manual -> accept edits -> plan -> auto, and `bypassPermissions` is NOT
+in that cycle. The only way in is the launch command:
+
+    permission-mode: bypassPermissions
+
+Accepted: whatever `claude --permission-mode` accepts at the installed version,
+which today is `acceptEdits auto bypassPermissions manual dontAsk plan`. Case
+is folded to the CLI's own spelling (`bypasspermissions` works) and the fold is
+logged. Anything else is DROPPED with a log line and no flag is passed, because
+`claude` exits 1 on an invalid mode and the window would never reach a prompt --
+an optional field's typo must not cost the entry its run.
+
+ABSENT MEANS ABSENT: no flag, and the account's own setting applies. That is
+the default and it is deliberately unchanged -- an unattended window that skips
+every permission check is a choice the entry has to make out loud.
+
+`claude-watchdog.sh --check <entry>` reports the resolved mode beside `model`
+and `effort`, and the launch line in the log records it as `perm=<mode>`.
 
 ## `at: reset` is TWO gates, not one
 

@@ -1098,6 +1098,38 @@ sched_effort_ok() {
   return 1
 }
 
+# `permission-mode:` PINS THE PERMISSION MODE of the window's session.
+#
+# WHY IT HAS TO BE AT LAUNCH. A scheduled window is unattended by definition,
+# but the launcher passed no mode, so it inherited `defaultMode` from
+# settings.json -- `auto` on this machine -- and an auto-mode window that meets
+# a decision it will not take on its own simply STOPS, silently, which is
+# exactly how four lanes sat idle for 3 days (MEASURED 2026-09-16). It cannot
+# be fixed afterwards either: shift+tab cycles auto -> manual -> accept edits ->
+# plan -> auto, and bypassPermissions is NOT in that cycle (pressed four times
+# on a live lane to check). Launch is the only way in.
+#
+# THE LIST IS WHAT THE INSTALLED CLI ACCEPTS, read from `claude --help` on this
+# machine, not guessed. Unknown is DROPPED with a log line, like effort: claude
+# exits on an invalid --permission-mode and the window would never reach a
+# prompt. Absent means no flag at all -- the account's own setting, unchanged.
+#
+# CASE IS FOLDED, deliberately: these are the only camelCase values in an
+# otherwise all-lowercase header format, and `bypasspermissions` dropped for
+# its spelling would relaunch the very failure this field exists to prevent --
+# a window that stops and nobody notices. The canonical spelling is what is
+# passed, and the fold is logged so the file can be corrected.
+SCHED_PERM_MODES="acceptEdits auto bypassPermissions manual dontAsk plan"
+# Echoes the canonical spelling of $1 and returns 0, or returns 1.
+sched_perm_canon() {
+  local want m
+  want="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  for m in $SCHED_PERM_MODES; do
+    if [ "$(printf '%s' "$m" | tr 'A-Z' 'a-z')" = "$want" ]; then printf '%s' "$m"; return 0; fi
+  done
+  return 1
+}
+
 # THE SUBSTITUTABLE PART OF THE PASTE, exactly as written and before any
 # placeholder is resolved: the template (plan only), the body, and the work
 # footer. Split out from sched_compose because two things need it -- the
@@ -1235,6 +1267,16 @@ launch_schedule() {
     log "schedule $(basename "$f"): ignoring odd effort: \"$effort\" (one of: $SCHED_EFFORTS)"
     effort=""
   fi
+  pmode="$(sched_field "$f" permission-mode)"
+  if [ -n "$pmode" ]; then
+    if canon="$(sched_perm_canon "$pmode")"; then
+      [ "$canon" = "$pmode" ] || log "schedule $(basename "$f"): permission-mode \"$pmode\" -> $canon"
+      pmode="$canon"
+    else
+      log "schedule $(basename "$f"): ignoring odd permission-mode: \"$pmode\" (one of: $SCHED_PERM_MODES)"
+      pmode=""
+    fi
+  fi
 
   slug="$(sched_slug "$f")"
   parent="$(sched_parent "$f")"
@@ -1286,7 +1328,8 @@ launch_schedule() {
   read -r pane wid < <(tmux new-window -d -P -F '#{pane_id} #{window_id}' \
           "${targs[@]}" -n "$wname" -c "$cwd" \
           "${MUX_TMUX_ENV[@]}" \
-          "$HOME/.local/bin/claude" ${model:+--model "$model"} ${effort:+--effort "$effort"} 2>/dev/null)
+          "$HOME/.local/bin/claude" ${model:+--model "$model"} ${effort:+--effort "$effort"} \
+            ${pmode:+--permission-mode "$pmode"} 2>/dev/null)
   if [ -z "$pane" ]; then
     sched_mark "$f" error
     log "schedule $(basename "$f"): could not open a tmux window"
@@ -1327,7 +1370,7 @@ launch_schedule() {
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
-  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort} -- ${why:-due}"
+  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort}${pmode:+ perm=$pmode} -- ${why:-due}"
 }
 
 # ------------------------------------------------------------- --check
@@ -1386,6 +1429,15 @@ sched_check_one() {
     kv effort "$effort   (claude --effort $effort)"
   else
     kv effort "$effort   -- not one of: $SCHED_EFFORTS; it is DROPPED and no flag is passed"
+  fi
+  pmode="$(sched_field "$f" permission-mode)"
+  if [ -z "$pmode" ]; then
+    kv permission "(the account's own defaultMode -- no --permission-mode flag is passed)"
+  elif canon="$(sched_perm_canon "$pmode")"; then
+    if [ "$canon" = "$pmode" ]; then kv permission "$pmode   (claude --permission-mode $pmode)"
+    else kv permission "$pmode   -> $canon (claude --permission-mode $canon)"; fi
+  else
+    kv permission "$pmode   -- not one of: $SCHED_PERM_MODES; it is DROPPED and no flag is passed"
   fi
   if [ -n "$(sched_field "$f" slug)" ]; then kv slug "$slug   (pinned by slug:)"
   elif [ -n "$title" ]; then kv slug "$slug   (derived from title: \"$title\")"

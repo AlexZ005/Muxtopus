@@ -191,6 +191,7 @@ parent: api-cleanup           # optional: draw this window under that one
 cwd: /home/you/src/checkout
 model: opus                   # optional: claude --model
 effort: high                  # optional: claude --effort
+permission-mode: bypassPermissions   # optional: claude --permission-mode
 options: questions, phases, lanes=3, model=opus[1m]   # written by the options table
 status: pending
 created: 2026-09-06 09:55
@@ -200,6 +201,14 @@ the prompt body that gets pasted into the new window
 ```
 
 The new window opens right after its `window:` target, named with a leading `➥`, and the prompt lands as **one bracketed paste** — never `send-keys`, which submits at every newline. A file the view cannot parse is shown as corrupted with the reason and never launches.
+
+### `permission-mode:`, the one setting that cannot be fixed after launch
+
+A scheduled window is unattended by definition. Without this field the launcher passes no mode, so the window inherits `defaultMode` from settings.json — and a window in `auto` that reaches a decision it will not take on its own simply **stops**, silently, with no prompt anyone is there to answer. Measured 2026-09-16: that is how four lanes sat idle for three days.
+
+Nor can it be corrected once the window is open: shift+tab cycles auto → manual → accept edits → plan → auto, and `bypassPermissions` is **not** in that cycle. The launch command is the only way in.
+
+Accepted values are whatever `claude --permission-mode` takes at the installed version — today `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`. Case is folded to the CLI's spelling and the fold is logged; anything else is dropped with a log line and no flag, because `claude` exits 1 on an invalid mode and the window would then never reach a prompt. **Absent means absent** — no flag, the account's own setting — and that stays the default, because an unattended window that skips every permission check is a choice the entry should have to make out loud.
 
 ### The options table
 
