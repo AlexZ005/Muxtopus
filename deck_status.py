@@ -703,7 +703,7 @@ def read_schedules() -> list[dict]:
         row = {"file": f, "type": "", "at": "", "title": "", "slug": "",
                "window": "", "cwd": "", "template": "", "status": "",
                "created": "", "launched": "", "after": "", "parent": "",
-               "body": "", "bad": "", "warn": "", "resolved": ""}
+               "options": "", "body": "", "bad": "", "warn": "", "resolved": ""}
         try:
             text = f.read_text()
         except OSError as exc:
@@ -840,6 +840,75 @@ def asked_value(kind: str, text: str) -> tuple[str, str]:
     if kind == "number" and not text.isdigit():
         return "", "a number, please (got %r)" % text
     return text, ""
+
+
+def rewrite_options(text: str, opts: list[dict], on: dict) -> tuple[str, str]:
+    """(new file text, error) with ONLY three things replaced: the `options:`
+    line, the header fields owned by `set:` options, and the `## Options`
+    section from its heading to the end of the body.
+
+    EVERY OTHER BYTE IS PRESERVED, and that is the whole contract of the `o`
+    key: the body above the heading is where the task is written, often at
+    length and by hand, and an editor that reflowed it would be one nobody
+    dared press. So the head is rebuilt line by line from the file's own lines
+    and the body is sliced at the heading, rather than either being
+    regenerated from a parse."""
+    head, sep, body = text.partition("\n---\n")
+    if not sep:
+        return "", "no --- separator line"
+    managed = {o["set"] for o in opts if o["set"]}
+    want = dict(options_fields(opts, on))
+    line = options_line(opts, on)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in head.split("\n"):
+        k = raw.partition(":")[0].strip()
+        if k == "options":
+            seen.add("options")
+            if line:
+                out.append("options: " + line)
+            continue
+        if k in managed:
+            seen.add(k)
+            if k in want:
+                out.append("%s: %s" % (k, want[k]))
+            # An UNTICKED set: option drops its header field. That is only
+            # ever a deliberate untick, because a field already in the file is
+            # ticked back on when the table opens.
+            continue
+        out.append(raw)
+
+    # New fields go where the create flow puts them: with cwd -- what the
+    # entry IS -- and ahead of the bookkeeping.
+    at = len(out)
+    for i, raw in enumerate(out):
+        if raw.partition(":")[0].strip() in ("status", "created", "launched"):
+            at = i
+            break
+    fresh = ["%s: %s" % (k, v) for k, v in want.items() if k not in seen]
+    if line and "options" not in seen:
+        fresh.append("options: " + line)
+    out[at:at] = fresh
+
+    section = options_section(opts, on)
+    blines = body.split("\n")
+    pos = None
+    at_char = 0
+    for l in blines:
+        if l.rstrip() == OPTIONS_HEADING:
+            pos = at_char
+            break
+        at_char += len(l) + 1
+    if pos is not None:
+        new_body = body[:pos] + section
+    elif section:
+        # Appended, which is the one case that has to touch the end of the
+        # body: separated by a blank line, nothing above it altered.
+        new_body = body.rstrip("\n") + "\n\n" + section if body.strip() else section
+    else:
+        new_body = body
+    return "\n".join(out) + "\n---\n" + new_body, ""
 
 
 def human_tokens(n: int) -> str:
@@ -1332,6 +1401,57 @@ class Dashboard:
         self.pending_edit = str(r["file"])
         return ""
 
+    def reopen_options(self) -> str:
+        """o: the same table on an entry that already exists.
+
+        Pre-ticked from its own header, values and all, because the header is
+        the source of truth -- opening boxes that disagree with the sentences
+        underneath is exactly the lie this key exists to prevent."""
+        r = self._sched_sel()
+        if r is None:
+            return "nothing selected — c creates one"
+        if r["bad"]:
+            return "cannot reopen: %s" % r["bad"]
+        if r["status"] != "pending":
+            return ("only a pending entry's options can be changed "
+                    "(this one is %s)" % (r["status"] or "?"))
+        opts = read_options(PROFILE)
+        on = parse_options_line(r["options"])
+        # A HEADER FIELD WRITTEN BY HAND TICKS ITS BOX. Otherwise `model: opus`
+        # in a hand-edited entry would read as off here and be deleted by the
+        # first save -- the table owns those fields, so it has to show what is
+        # actually in the file.
+        try:
+            head = r["file"].read_text().partition("\n---\n")[0]
+        except OSError as exc:
+            return "cannot read: %s" % exc
+        have = {}
+        for l in head.split("\n"):
+            k, sep, v = l.partition(":")
+            if sep and v.strip():
+                have[k.strip()] = v.strip()
+        for o in opts:
+            if o["set"] and o["key"] not in on and have.get(o["set"]):
+                on[o["key"]] = have[o["set"]]
+        self.open_options(r["file"].name[:-3], r["type"], opts, on,
+                          lambda st, f=r["file"]: self._write_options(f, st),
+                          esc="cancel")
+        return ""
+
+    def _write_options(self, f, st: dict) -> str:
+        try:
+            text = f.read_text()
+            new, err = rewrite_options(text, st["all"], st["on"])
+            if err:
+                return "cannot rewrite: %s" % err
+            if new == text:
+                return "%s unchanged" % f.name
+            f.write_text(new)
+            n = len(parse_options_line(options_line(st["all"], st["on"])))
+            return "%s — %d option(s)" % (f.name, n)
+        except OSError as exc:
+            return "rewrite failed: %s" % exc
+
     def start_create(self) -> None:
         self.picker = {"title": "schedule what?", "i": 0,
                        "options": ["plan", "work"], "fn": self._create_type}
@@ -1414,11 +1534,16 @@ class Dashboard:
     # menu_activate), and it reuses the existing prompt and picker for the
     # two options that need a value. Nothing new in the input layer.
     def open_options(self, title: str, typ: str, opts: list[dict],
-                     on: dict, fn) -> None:
+                     on: dict, fn, esc: str = "skip") -> None:
         """opts is SNAPSHOT at open: the ticks are keyed by option key, and a
         list that re-read itself every frame could reorder under the cursor
-        while someone is halfway down it."""
-        self.options = {"title": title, "typ": typ, "all": opts,
+        while someone is halfway down it.
+
+        esc="skip" continues with nothing ticked (the create flow: the entry
+        is written either way, so esc is a skip). esc="cancel" changes nothing
+        (a reopen: the entry already exists, and a stray key must not untick
+        everything -- see QUESTIONS-sched-options-table §1)."""
+        self.options = {"title": title, "typ": typ, "all": opts, "esc": esc,
                         "on": dict(on), "i": 0, "fn": fn}
         self.options_move(0)
 
@@ -1434,13 +1559,27 @@ class Dashboard:
             return []
         rows: list[dict] = []
         group = None
+        known = set()
         for o in st["all"]:
-            if not o["bad"] and o["types"] not in ("both", st["typ"]):
+            known.add(o["key"])
+            # A TICKED OPTION IS ALWAYS SHOWN, even where types: would hide it:
+            # a hand-edited entry can carry one, and a tick nobody can see is a
+            # tick nobody can take off.
+            if (not o["bad"] and o["types"] not in ("both", st["typ"])
+                    and o["key"] not in st["on"]):
                 continue
             if o["group"] != group:
                 group = o["group"]
                 rows.append({"head": group.upper()})
             rows.append({"opt": o, "disabled": o["bad"]})
+        gone = [k for k in st["on"] if k not in known]
+        if gone:
+            rows.append({"head": "NOT IN options.md"})
+            for k in gone:
+                rows.append({"opt": {"key": k, "label": k, "hint": "", "bad":
+                                     "gone from options.md — dropped on save",
+                                     "set": "", "ask": "", "line": ""},
+                             "disabled": "gone"})
         return rows
 
     def options_move(self, delta: int) -> None:
@@ -1517,12 +1656,14 @@ class Dashboard:
             self.options = None
             self.say(fn(st))
         elif key == "\x1b":
-            # esc CONTINUES with nothing ticked -- it is a skip, not a cancel:
-            # the entry is still wanted, the contract sentences are not.
-            fn = st["fn"]
-            st["on"] = {}
             self.options = None
-            self.say(fn(st))
+            if st["esc"] == "cancel":
+                self.say("unchanged")
+                return
+            # In the create flow esc CONTINUES with nothing ticked -- a skip,
+            # not a cancel: the entry is still wanted, the sentences are not.
+            st["on"] = {}
+            self.say(st["fn"](st))
 
     def options_panel(self) -> Panel:
         """One row per option, laid out like the menu. Every cell that can grow
@@ -1557,7 +1698,9 @@ class Dashboard:
         if not rows:
             g.add_row("", "", Text("no options", style=DIM),
                       Text(str(options_paths(PROFILE)[0]), style=DIM))
-        keys = Text("   ↑↓ pick · space toggle · enter continue · esc skip", style=DIM)
+        keys = Text("   ↑↓ pick · space toggle · enter %s · esc %s"
+                    % (("save" if st["esc"] == "cancel" else "continue"),
+                       ("cancel" if st["esc"] == "cancel" else "skip")), style=DIM)
         # THE NOTICE HAS TO LIVE HERE. The footer is this panel while the table
         # is open, so a refused value ("a number, please — not ticked") reached
         # self.say and was then drawn nowhere at all.
@@ -1894,7 +2037,8 @@ class Dashboard:
 
         keys = Text.assemble(
             (" ↑↓", DIM), " pick  ", ("enter", DIM), "/", ("e", DIM), " edit  ",
-            ("c", DIM), " create  ", ("l", DIM), " launch now  ",
+            ("c", DIM), " create  ", ("o", DIM), " options  ",
+            ("l", DIM), " launch now  ",
             ("d", DIM), " delete  ", ("r", DIM), " reload  ",
             ("s", DIM), "/", ("esc", DIM), " back  ", ("q", DIM), " quit",
         )
@@ -2714,6 +2858,11 @@ def main() -> int:
                         continue
                     if key == "c":
                         dash.start_create()
+                        continue
+                    if key == "o":
+                        m = dash.reopen_options()
+                        if m:
+                            dash.say(m)
                         continue
                     if key == "l":
                         dash.say(dash.launch_selected_now())
