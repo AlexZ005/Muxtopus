@@ -975,31 +975,108 @@ tree_wname() {
   printf '%s%s' "$m" "$slug"
 }
 
+# THE SUBSTITUTABLE PART OF THE PASTE, exactly as written and before any
+# placeholder is resolved: the template (plan only), the body, and the work
+# footer. Split out from sched_compose because two things need it -- the
+# composer, which substitutes over it, and the placeholder report, which has to
+# see what was WRITTEN rather than what came out.
+#
+# The footer is itself written in placeholders. It says the same bytes it
+# always did, but it now says them through the same table the body uses, so
+# there is one definition of "the handover file" rather than two.
+sched_raw() {
+  local f="$1" footer="${2:-1}" type tmpl
+  type="$(sched_field "$f" type)"
+  tmpl="$(sched_field "$f" template)"
+  if [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
+    cat "$SCHEDULES/templates/$tmpl.md"
+    echo
+  fi
+  sched_body "$f"
+  if [ "$type" = work ] && [ "$footer" = 1 ]; then
+    echo
+    echo "Work in phases, one commit per phase. When done -- or when asked to stop -- write {{HANDOVER}} saying what is done, what is next, and anything half-finished. When the whole item is finished, run: ~/.code/scripts/handover.sh done {{SLUG}}"
+  fi
+}
+
+# THE PLACEHOLDER TABLE. Every name this scheduler resolves, and nothing else.
+#
+# The values are only knowable at PASTE time: a sentence written into an entry
+# (or into a template shared by twenty of them) cannot name the slug, because
+# the slug does not exist until the entry does. So the body carries {{SLUG}}
+# and this resolves it the moment the window opens -- which is also why the
+# substitution lives in the composer and not in whatever wrote the file.
+#
+# Pattern quoted, replacement not: quoting the pattern is what stops bash
+# treating a placeholder as a glob, and the replacements are paths that must go
+# in verbatim.
+SCHED_PLACEHOLDERS="SLUG WINDOW HANDOVER QUESTIONS SCHEDULES CWD PARENT"
+sched_subst() {
+  local txt="$1" slug="$2" wname="$3" cwd="$4" parent="$5"
+  txt="${txt//"{{SLUG}}"/$slug}"
+  txt="${txt//"{{WINDOW}}"/$wname}"
+  txt="${txt//"{{HANDOVER}}"/$HANDOVERS/STATUS-$slug.md}"
+  txt="${txt//"{{QUESTIONS}}"/$HANDOVERS/QUESTIONS-$slug.md}"
+  txt="${txt//"{{SCHEDULES}}"/$SCHEDULES}"
+  txt="${txt//"{{CWD}}"/$cwd}"
+  txt="${txt//"{{PARENT}}"/$parent}"
+  printf '%s' "$txt"
+}
+
+# Every {{NAME}} a HUMAN wrote into an entry, one per line, deduplicated. The
+# footer is left out on purpose: its two placeholders are this scheduler's own
+# and would otherwise be reported on every work item as if the author had
+# chosen them.
+sched_placeholders() {
+  sched_raw "$1" 0 | grep -o '{{[A-Za-z0-9_]\{1,\}}}' 2>/dev/null | sort -u
+}
+
+# Empty when every placeholder in the entry is one of the above; otherwise the
+# sentence that says which are not.
+#
+# AN UNKNOWN PLACEHOLDER IS LEFT ALONE, never blanked: a body that meant to say
+# {{PORT}} literally still says it, and one that meant a real substitution gets
+# a warning instead of a silently empty sentence. Same rule as the slug -- said
+# out loud in the log, in --check and on the dashboard row, rather than
+# rediscovered by reading a pane.
+sched_placeholder_warn() {
+  local f="$1" p unknown=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case " $SCHED_PLACEHOLDERS " in *" ${p:2:${#p}-4} "*) continue ;; esac
+    unknown="$unknown $p"
+  done < <(sched_placeholders "$f")
+  [ -n "$unknown" ] || return 0
+  printf 'the body contains%s, which this scheduler does not resolve -- it is pasted as literal text (the table is: %s)' \
+    "$unknown" "$(printf '{{%s}} ' $SCHED_PLACEHOLDERS | sed 's/ $//')"
+}
+
 # EXACTLY WHAT GETS PASTED, on stdout. One function, so --check reports the
 # real thing rather than a description of it that can drift from it.
 #
 # A plan leads with its template (the contracts live there); a work item is
 # followed by the checkpoint footer so every scheduled window is resumable by
 # construction. Both lead with the window's own identity -- see sched_slug.
+#
+# THE IDENTITY LINES ARE NOT SUBSTITUTED. They are built from the resolved
+# values out here, so a {{SLUG}} in them would be a placeholder resolving to
+# the thing it was already printed from; and a body that contains the literal
+# text "{{SLUG}}" -- a brief explaining this feature, say -- must not have the
+# header rewritten under it.
 sched_compose() {
-  local f="$1" slug="$2" wname="$3" type tmpl
-  type="$(sched_field "$f" type)"
-  tmpl="$(sched_field "$f" template)"
+  local f="$1" slug="$2" wname="$3" parent="${4-}" rest
+  [ $# -ge 4 ] || parent="$(sched_parent "$f")"
   echo "[muxtopus] This window is $wname. Its lane slug is: $slug"
   echo "[muxtopus] Its handover file is: $HANDOVERS/STATUS-$slug.md"
   echo "[muxtopus] Use that slug verbatim with handover.sh (path/write/done). If anything"
   echo "[muxtopus] below names a different one, THIS one wins -- a second handover file is"
   echo "[muxtopus] not watched by anything."
   echo
-  if [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
-    cat "$SCHEDULES/templates/$tmpl.md"
-    echo
-  fi
-  sched_body "$f"
-  if [ "$type" = work ]; then
-    echo
-    echo "Work in phases, one commit per phase. When done -- or when asked to stop -- write $HANDOVERS/STATUS-$slug.md saying what is done, what is next, and anything half-finished. When the whole item is finished, run: ~/.code/scripts/handover.sh done $slug"
-  fi
+  # The X sentinel keeps the trailing newlines a command substitution would
+  # otherwise eat, so the paste is byte-identical to what the files hold.
+  rest="$( sched_raw "$f"; printf X )"
+  rest="${rest%X}"
+  sched_subst "$rest" "$slug" "$wname" "$(sched_field "$f" cwd)" "$parent"
 }
 
 # Open the window, get claude to a prompt, paste the body, press Enter.
@@ -1038,6 +1115,8 @@ launch_schedule() {
   wname="$(tree_wname "$slug" "$depth")"
   warn="$(sched_slug_warn "$f")"
   [ -n "$warn" ] && log "schedule $(basename "$f"): $warn"
+  warn="$(sched_placeholder_warn "$f")"
+  [ -n "$warn" ] && log "schedule $(basename "$f"): $warn"
 
   # Compose what gets pasted. A plan leads with its template (the contracts
   # live there); a work item is followed by the checkpoint footer so every
@@ -1050,7 +1129,7 @@ launch_schedule() {
   # what makes the brief and the tooling incapable of disagreeing; before this,
   # a brief that named its own lane silently won and wrote a second handover.
   bodyf="$STATE_DIR/sched-body.$$"
-  sched_compose "$f" "$slug" "$wname" > "$bodyf"
+  sched_compose "$f" "$slug" "$wname" "$parent" > "$bodyf"
 
   # WHERE IT LANDS. A child goes after the LAST window of its parent's subtree,
   # which keeps a family contiguous in tmux's flat list as siblings accumulate;
@@ -1155,7 +1234,7 @@ kv() { printf '  %-14s %s\n' "$1" "$2"; }
 sched_check_one() {
   local f="$1" body="${2:-}"
   local type at title win cwd tmpl st slug wname warn now rc idx nlines nbytes rcout=0
-  local parent depth after blocked
+  local parent depth after blocked pwarn resolved
   type="$(sched_field "$f" type)"; at="$(sched_field "$f" at)"
   title="$(sched_field "$f" title)"; win="$(sched_field "$f" window)"
   cwd="$(sched_field "$f" cwd)"; tmpl="$(sched_field "$f" template)"
@@ -1222,7 +1301,7 @@ sched_check_one() {
   fi
 
   nlines="$(sched_body "$f" | grep -c '' 2>/dev/null)"
-  nbytes="$(sched_compose "$f" "$slug" "$wname" | wc -c)"
+  nbytes="$(sched_compose "$f" "$slug" "$wname" "$parent" | wc -c)"
   local parts="identity header"
   [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ] && parts="$parts + template"
   parts="$parts + body"
@@ -1234,6 +1313,10 @@ sched_check_one() {
   case "$type" in plan|work) ;; *) kv "" "-- type must be plan or work"; rcout=1 ;; esac
 
   [ -n "$warn" ] && printf '  %-14s %s\n' WARNING "$warn"
+  pwarn="$(sched_placeholder_warn "$f")"
+  [ -n "$pwarn" ] && printf '  %-14s %s\n' WARNING "$pwarn"
+  resolved="$(sched_placeholders "$f" | paste -sd' ' -)"
+  [ -n "$resolved" ] && kv placeholders "$resolved"
 
   sched_due "$at" "$now"; rc=$?
   case "$rc" in
@@ -1253,7 +1336,7 @@ sched_check_one() {
   if [ -n "$body" ]; then
     echo
     echo "--- what would be pasted -------------------------------------------"
-    sched_compose "$f" "$slug" "$wname"
+    sched_compose "$f" "$slug" "$wname" "$parent"
     echo "--------------------------------------------------------------------"
   fi
   return "$rcout"
