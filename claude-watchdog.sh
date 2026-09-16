@@ -660,12 +660,15 @@ sched_due() {
   return 1
 }
 
-# IS THIS ENTRY'S DEPENDENCY FINISHED?
+# ARE THIS ENTRY'S DEPENDENCIES FINISHED?
 #
-# `after: <slug>` holds an entry until that lane is done. It exists because the
-# release entry today depended on a PR merge landing first and there was no way
-# to say so -- the only options were to launch it too early or to sit watching
-# for the moment to launch it by hand.
+# `after: <slug>` holds an entry until that lane is done, and `after: a, b, c`
+# holds it until ALL of them are. It exists because the release entry once
+# depended on a PR merge landing first and there was no way to say so -- the
+# only options were to launch it too early or to sit watching for the moment to
+# launch it by hand. The LIST is what an orchestrator needs: "integrate the
+# four lanes" is one entry waiting on four, not four entries waiting in a
+# chain, and a chain would also serialise work that ran in parallel.
 #
 # FINISHED MEANS ONE OF TWO THINGS, in this order:
 #   * its handover has been marked done (moved into done/ by handover.sh) --
@@ -679,32 +682,89 @@ sched_due() {
 # is worse than one that waits, and a wait is now visible in three places
 # (--check, the WHY line in the dashboard, and a log line when the verdict
 # changes) rather than being the silence it would once have been.
-sched_after_ok() {
-  local dep="$1" self="${2:-}" wid
-  SCHED_WHY_TXT=""
-  [ -n "$dep" ] || return 0
-  if [ "$dep" = "$self" ]; then
-    SCHED_WHY_TXT="STALLED: after: names this entry's own slug ($dep), which can never finish first"
-    return 2
-  fi
+
+# How long ago a file was written, as one short human figure.
+ago_hm() {
+  local t n d
+  t="$(stat -c %Y "$1" 2>/dev/null)" || { printf '?'; return 0; }
+  n="$(date +%s)"; d=$(( n - ${t:-0} ))
+  [ "$d" -lt 0 ] && d=0
+  if   [ "$d" -lt 3600 ];   then printf '%dm' $(( d / 60 ))
+  elif [ "$d" -lt 172800 ]; then printf '%dh' $(( d / 3600 ))
+  else                           printf '%dd' $(( d / 86400 )); fi
+}
+
+# ONE dependency, judged. The short reason goes to stdout; the verdict is the
+# exit code: 0 finished, 1 still holding.
+sched_dep_state() {
+  local dep="$1" wid
   if [ -f "$HANDOVERS/done/STATUS-$dep.md" ]; then
-    SCHED_WHY_TXT="after $dep: finished (its handover is in done/)"
-    return 0
+    printf 'its handover is in done/'; return 0
   fi
   if [ -f "$HANDOVERS/STATUS-$dep.md" ]; then
-    SCHED_WHY_TXT="blocked: waiting for $dep -- its handover is written but not marked done (handover.sh done $dep)"
+    printf 'handover open %s ago, not marked done (handover.sh done %s)' \
+      "$(ago_hm "$HANDOVERS/STATUS-$dep.md")" "$dep"
     return 1
   fi
   wid="$(tree_field "$dep" 3)"
   if [ -n "$wid" ]; then
     if tree_live_windows | grep -qxF "$wid"; then
-      SCHED_WHY_TXT="blocked: waiting for $dep -- its window $wid is still open and it has written no handover"
-      return 1
+      printf 'its window %s is still open and it has written no handover' "$wid"; return 1
     fi
-    SCHED_WHY_TXT="after $dep: finished (its window $wid has exited)"
+    printf 'its window %s has exited' "$wid"; return 0
+  fi
+  printf 'nothing by that name has launched, and there is no handover for it'
+  return 1
+}
+
+# The slugs in an `after:` field. Comma or space separated, because both read
+# naturally in a header line and neither can occur inside a slug.
+sched_after_deps() {
+  local list="${1//,/ }"
+  printf '%s\n' $list
+}
+
+# The whole field, judged. 0 every named lane is finished, 1 at least one is
+# still holding, 2 it can never resolve.
+#
+# The sentence names the FIRST lane still holding and how many are left, rather
+# than all of them: that is the one to look at, and a verdict that lists four
+# reasons is a verdict nobody reads. --check prints the per-lane breakdown when
+# there is more than one.
+sched_after_ok() {
+  local list="$1" self="${2:-}" dep reason rc n=0 held=0 first="" firstwhy="" last=""
+  SCHED_WHY_TXT=""
+  [ -n "$list" ] || return 0
+  local -a deps=()
+  while IFS= read -r dep; do [ -n "$dep" ] && deps+=("$dep"); done < <(sched_after_deps "$list")
+  n=${#deps[@]}
+  [ "$n" -gt 0 ] || return 0
+  # SELF-REFERENCE IN ANY POSITION, checked before anything is evaluated: an
+  # entry that waits for itself can never fire, and finding that out from the
+  # third slug of a list is no different from finding it out from the first.
+  for dep in "${deps[@]}"; do
+    if [ "$dep" = "$self" ]; then
+      SCHED_WHY_TXT="STALLED: after: names this entry's own slug ($dep), which can never finish first"
+      return 2
+    fi
+  done
+  for dep in "${deps[@]}"; do
+    reason="$(sched_dep_state "$dep")"; rc=$?
+    last="$reason"
+    [ "$rc" = 0 ] && continue
+    held=$(( held + 1 ))
+    [ -n "$first" ] || { first="$dep"; firstwhy="$reason"; }
+  done
+  if [ "$held" = 0 ]; then
+    if [ "$n" = 1 ]; then SCHED_WHY_TXT="after ${deps[0]}: finished ($last)"
+    else SCHED_WHY_TXT="after: all $n finished (${deps[*]})"; fi
     return 0
   fi
-  SCHED_WHY_TXT="blocked: waiting for $dep -- nothing by that name has launched, and there is no handover for it"
+  if [ "$n" = 1 ]; then
+    SCHED_WHY_TXT="blocked: waiting for $first -- $firstwhy"
+  else
+    SCHED_WHY_TXT="blocked: waiting for $held of $n -- next: $first, $firstwhy"
+  fi
   return 1
 }
 
@@ -1303,6 +1363,18 @@ sched_check_one() {
     [ "$rc" = 1 ] && blocked=1
     [ "$rc" = 2 ] && rcout=1
     kv after "$SCHED_WHY_TXT"
+    # THE PER-LANE BREAKDOWN, only for a list: the verdict names the first lane
+    # still holding, which is the one to act on, but "why is this still
+    # blocked" is a question about all of them.
+    local -a adeps=(); local d r drc
+    while IFS= read -r d; do [ -n "$d" ] && adeps+=("$d"); done < <(sched_after_deps "$after")
+    if [ "${#adeps[@]}" -gt 1 ] && [ "$rc" != 2 ]; then
+      for d in "${adeps[@]}"; do
+        r="$(sched_dep_state "$d")"; drc=$?
+        if [ "$drc" = 0 ]; then kv "" "  $d: finished -- $r"
+        else kv "" "  $d: HOLDING -- $r"; fi
+      done
+    fi
   fi
   if [ -f "$HANDOVERS/STATUS-$slug.md" ]; then
     kv handover "$HANDOVERS/STATUS-$slug.md   (open, $(date -r "$HANDOVERS/STATUS-$slug.md" '+%b %d %H:%M'))"
