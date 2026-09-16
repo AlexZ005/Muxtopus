@@ -33,6 +33,7 @@ that costs no tokens. What it lacks is three small things:
 | `after:` takes one slug | accept a comma list; "all of them done" | S |
 | a lane the watchdog wound down is never resumed by anything | when a lane is idle with an OPEN handover, was wound down by the watchdog (band 2 in `wound`), and the budget is back, write `resume-<slug>.md` for it — exactly what the menu's "Schedule ➥resume" does by hand (`act_schedule_resume`), driven from the daemon; opt-in (`WATCHDOG_AUTO_RESUME=1`), one per lane per reset | M |
 | the dashboard says `idle 3d` where it should say *nothing will ever touch this* | STATE `stranded` (red) for a ➥ lane idle > N with an open handover and no pending entry naming it | S |
+| a scheduled window inherits `defaultMode` and cannot be changed afterwards | `permission-mode:` header → `claude --permission-mode`; measured 2026-09-16, shift+tab cycles auto → manual → accept edits → plan, and bypass is NOT in it | S |
 
 With those, the orchestrator pattern becomes a **prompt sentence** (the
 `orchestrate` checkbox below): *write one schedule entry per lane with
