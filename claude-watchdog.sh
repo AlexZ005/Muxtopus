@@ -171,6 +171,13 @@ LOWPRI_WEEK="${WATCHDOG_LOWPRI_WEEK:-40}"
 # EPOCH is exempt: it is an absolute moment, and it stays true however old the
 # row that carries it is.
 USAGE_STALE="${WATCHDOG_USAGE_STALE:-180}"
+# HOW LONG A LANE MAY SIT BEFORE NOTHING IS GOING TO TOUCH IT. A scheduled
+# window that is idle this long with an OPEN handover and no pending entry
+# naming it is reported as `stranded` rather than `idle`. MEASURED this week:
+# four lanes sat at `idle 3d` with open handovers and nothing anywhere said so;
+# `idle` is a fact about the last turn, `stranded` is a fact about the future.
+# 0 turns it off.
+STRANDED_MIN="${WATCHDOG_STRANDED:-120}"
 
 mkdir -p "$STATE_DIR"
 [ -f "$MSGFILE" ] || printf '%s\n' "$DEFAULT_MSG" > "$MSGFILE"
@@ -683,15 +690,20 @@ sched_due() {
 # (--check, the WHY line in the dashboard, and a log line when the verdict
 # changes) rather than being the silence it would once have been.
 
-# How long ago a file was written, as one short human figure.
-ago_hm() {
-  local t n d
-  t="$(stat -c %Y "$1" 2>/dev/null)" || { printf '?'; return 0; }
-  n="$(date +%s)"; d=$(( n - ${t:-0} ))
+# A duration in seconds as one short human figure, and the same for a file's age.
+dur_hm() {
+  local d="${1:-0}"
+  case "$d" in ''|*[!0-9-]*) d=0 ;; esac
   [ "$d" -lt 0 ] && d=0
   if   [ "$d" -lt 3600 ];   then printf '%dm' $(( d / 60 ))
   elif [ "$d" -lt 172800 ]; then printf '%dh' $(( d / 3600 ))
   else                           printf '%dd' $(( d / 86400 )); fi
+}
+ago_hm() {
+  local t n
+  t="$(stat -c %Y "$1" 2>/dev/null)" || { printf '?'; return 0; }
+  n="$(date +%s)"
+  dur_hm $(( n - ${t:-0} ))
 }
 
 # ONE dependency, judged. The short reason goes to stdout; the verdict is the
@@ -765,6 +777,42 @@ sched_after_ok() {
   else
     SCHED_WHY_TXT="blocked: waiting for $held of $n -- next: $first, $firstwhy"
   fi
+  return 1
+}
+
+# WHICH LANES ANY PENDING ENTRY WOULD TOUCH, as one space-delimited set built
+# at most once per pass. Cheap because the answer is the same for every session
+# in a pass, and a pass that never asks never pays for it.
+#
+# Three ways an entry names a lane: it IS that lane (its slug), it is the
+# `resume-<lane>.md` the dashboard's "Schedule ➥resume" writes, or its `after:`
+# is waiting for it. The basename goes in as well as the slug because a resume
+# entry's SLUG is truncated to 22 characters while its filename is not --
+# `resume-sched-options-core` keeps its name and loses its slug.
+SCHED_NAMED=""
+sched_named_slugs() {
+  local f st b
+  SCHED_NAMED=" "
+  [ -d "$SCHEDULES" ] || return 0
+  for f in "$SCHEDULES"/*.md; do
+    [ -f "$f" ] || continue
+    case "$f" in */README.md) continue ;; esac
+    st="$(sched_field "$f" status)"
+    [ "$st" = pending ] || continue
+    b="$(basename "$f" .md)"
+    SCHED_NAMED="$SCHED_NAMED$(sched_slug "$f") $b $(sched_after_deps "$(sched_field "$f" after)" | paste -sd' ' -) "
+  done
+  return 0
+}
+
+# Is some pending entry going to touch this lane? Its own slug, the resume
+# entry written for it, or an after: that names it.
+sched_names_slug() {
+  local slug="$1" r
+  [ -n "$SCHED_NAMED" ] || sched_named_slugs
+  case "$SCHED_NAMED" in *" $slug "*|*" resume-$slug "*) return 0 ;; esac
+  r="$(sched_sanitise "resume-$slug")"
+  case "$SCHED_NAMED" in *" $r "*) return 0 ;; esac
   return 1
 }
 
@@ -1586,6 +1634,9 @@ pass() {
 
   local f pid sid pane paneid ver st kind cwd tr ctx name text reset epoch state acted
   local spent rd resumed model optout idle jobid cwd turn_at wound moptout
+  local prev lane stranded
+  # Rebuilt lazily, once per pass at most, by the stranded test below.
+  SCHED_NAMED=""
   # Read once per pass, not once per session: every session is judged against
   # the same account-wide figures.
   local spct wpct rkey
@@ -1691,6 +1742,48 @@ pass() {
         log "prompted ${sid:0:8} in $name (pane $paneid) after reset $reset"
         state="working"
       fi
+    fi
+
+    # STRANDED: NOTHING IS EVER GOING TO TOUCH THIS WINDOW.
+    #
+    # `idle` is a fact about the last turn; it is the same word for a lane that
+    # finished ten minutes ago and for one that stopped mid-phase three days
+    # ago with its handover half-written. MEASURED this week: four lanes sat at
+    # `idle 3d` with open handovers, no schedule entry naming any of them, and
+    # nothing anywhere said so -- the dashboard's most important sentence was
+    # one it could not say.
+    #
+    # All five conditions, because each one removes a lane that IS accounted
+    # for: a ➥ name (it is a scheduled lane, not a window someone is sitting
+    # in), idle (not working), idle for long enough, an OPEN handover (there is
+    # unfinished work; a done handover means the lane finished), and no pending
+    # entry naming it -- its slug, its resume entry, or an `after:` waiting on
+    # it -- because such an entry IS the thing that will touch it.
+    #
+    # IT IS A FACT SHOWN TO A HUMAN, NOT A TRIGGER. It deliberately cannot
+    # reach the due/prompt path: it is only ever derived FROM idle, and the
+    # restart above only ever acts on `due`. Automatic resume is a separate,
+    # opt-in decision that is NOT being built -- an unrequested turn is a turn,
+    # and this week showed what four of them cost.
+    prev="$(awk -F'\t' -v s="$sid" '$1==s{v=$6} END{print v}' "$STATUS" 2>/dev/null)"
+    stranded=""; lane=""
+    if [ "$state" = idle ] && [ "${STRANDED_MIN:-0}" -gt 0 ] 2>/dev/null \
+       && [ "$idle" -ge $(( ${STRANDED_MIN:-0} * 60 )) ] 2>/dev/null; then
+      case "$name" in
+        ➥*) lane="$(lane_slug_of "$name")"
+            if [ -n "$lane" ] && [ -f "$HANDOVERS/STATUS-$lane.md" ] \
+               && [ ! -f "$HANDOVERS/done/STATUS-$lane.md" ] \
+               && ! sched_names_slug "$lane"; then
+              stranded=1
+            fi ;;
+      esac
+    fi
+    if [ -n "$stranded" ]; then
+      state=stranded
+      [ "$prev" = stranded ] || \
+        log "stranded: $name idle $(dur_hm "$idle") with an open handover ($HANDOVERS/STATUS-$lane.md) and no pending schedule entry naming it"
+    elif [ "$prev" = stranded ]; then
+      log "no longer stranded: $name is now $state"
     fi
 
     # PID IS THE LAST COLUMN, and it is there for the dashboard rather than for

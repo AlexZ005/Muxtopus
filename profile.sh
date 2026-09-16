@@ -63,6 +63,7 @@ WATCHDOG_LOWPRI_WEEK=40
 WATCHDOG_USAGE_EVERY=60
 WATCHDOG_USAGE_STALE=180
 WATCHDOG_HEARTBEAT_LOG=60
+WATCHDOG_STRANDED=120
 CLAUDE_USAGE_MAX_AGE=20
 CLAUDE_USAGE_MODEL=-
 CLAUDE_CONTEXT_WINDOW=1000000
@@ -145,6 +146,10 @@ mux_key_help() {
     WATCHDOG_HEARTBEAT_LOG) echo "Minutes between the watchdog's 'alive' log lines. The log otherwise"
                             echo "records only changes, so it cannot answer 'was it running at 4am'."
                             echo "0 turns it off; the heartbeat FILE is written every pass regardless." ;;
+    WATCHDOG_STRANDED)      echo "Minutes a scheduled lane may sit idle with an OPEN handover and no"
+                            echo "pending schedule entry naming it before its state becomes 'stranded'"
+                            echo "instead of 'idle' -- nothing is ever going to touch that window."
+                            echo "0 turns it off. It is a fact shown to a human, never a trigger." ;;
     CLAUDE_USAGE_MAX_AGE)   echo "Minutes: the dashboard's u and R re-read the limits only past this age." ;;
     CLAUDE_USAGE_MODEL)     echo "Which model's limit line the probe reads. Default: the model in"
                             echo "the account's settings.json." ;;
