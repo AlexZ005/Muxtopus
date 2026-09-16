@@ -792,6 +792,37 @@ tree_record() {
   mv "$TREE.tmp" "$TREE"
 }
 
+# FILL IN A PARENT ON A ROW THAT ALREADY EXISTS. Only ever writes an EMPTY
+# parent: one already recorded -- by a launch, or by a hand editing the file --
+# is never overwritten, so this can run every pass without fighting anybody.
+tree_set_parent() {
+  local slug="$1" parent="$2"
+  [ -f "$TREE" ] || return 1
+  awk -F'\t' -v OFS='\t' -v s="$slug" -v p="$parent" \
+      '$1==s && $2==""{$2=p} {print}' "$TREE" > "$TREE.tmp" 2>/dev/null || return 1
+  mv "$TREE.tmp" "$TREE"
+}
+
+# ADOPT A WINDOW BY NAME, as a root. `window:` names the window a lane is
+# launched from, and that is its parent whether or not this scheduler opened
+# it: the commonest parent on this machine is v113-orchestrator, a hand-made
+# orchestrator window that spawned five lanes. Requiring the scheduler to have
+# opened the target left every one of those five a root, tree.tsv held nothing
+# but roots, and the dashboard's fold keys had no subtree to fold -- the
+# feature looked broken because the data said there was no tree.
+tree_adopt_name() {
+  local name="$1" row wid pane
+  [ -n "$name" ] || return 1
+  [ -n "$(tree_field "$name" 1)" ] && return 0
+  row="$(tmux list-windows -t "$MUX_TMUX" \
+           -F $'#{window_name}\t#{window_id}\t#{pane_id}' 2>/dev/null \
+         | awk -F'\t' -v n="$name" '$1==n{print $2 "\t" $3; exit}')"
+  [ -n "$row" ] || return 1
+  wid="${row%%	*}"; pane="${row##*	}"
+  [ -n "$wid" ] || return 1
+  tree_record "$name" "" "$wid" "$pane" "(adopted)"
+}
+
 # How deep a slug sits, counting ancestors. Bounded, so a row that somehow
 # names itself as its own parent cannot hang the daemon.
 tree_depth() {
@@ -886,10 +917,14 @@ tree_print() {
 # dashboard records it when one window schedules another. Otherwise it is
 # DERIVED from `window:`: the target a new window is inserted after is, in
 # practice, the window it was launched from, and taking it as the parent is
-# what makes the tree fill itself in without anyone maintaining it. Only a
-# window this scheduler opened counts, so `window: Plan4` -- a hand-made window
-# -- stays a plain insertion target and its child stays a root, exactly as
-# before.
+# what makes the tree fill itself in without anyone maintaining it.
+#
+# ANY LIVE WINDOW COUNTS, not only one this scheduler opened. That earlier
+# restriction meant `window: v113-orchestrator` -- an orchestrator opened by
+# hand, which is how every lane on this machine was actually launched -- left
+# the lane a root, and a tree whose every node is a root is a flat list. The
+# named window is adopted as a root on the way past, so the child has something
+# to hang from. A window that is not there at all still yields no parent.
 sched_parent() {
   local f="$1" p win
   p="$(sched_field "$f" parent)"
@@ -897,7 +932,35 @@ sched_parent() {
   win="$(sched_field "$f" window)"
   win="${win//➥/}"
   [ -n "$win" ] || return 0
+  [ -n "$(tree_field "$win" 1)" ] || tree_adopt_name "$win" >/dev/null 2>&1
   [ -n "$(tree_field "$win" 1)" ] && printf '%s' "$win"
+  return 0
+}
+
+# RE-ASK THE SCHEDULE FILES WHO THE PARENTS ARE, once a pass.
+#
+# tree_adopt records a window it finds in tmux as a root, because a bare sweep
+# of tmux cannot know parentage -- and a lane launched before its parent was
+# adoptable was recorded as a root too. Either way the row is then "known" and
+# nothing ever revisits it, so a stranding is permanent. This re-derives the
+# parent from the entry that launched the lane and fills it in, and only when
+# the row's parent is still empty.
+tree_reparent() {
+  local f slug parent
+  [ -d "$SCHEDULES" ] || return 0
+  for f in "$SCHEDULES"/*.md; do
+    [ -f "$f" ] || continue
+    case "$f" in */README.md) continue ;; esac
+    slug="$(sched_slug "$f")"
+    [ -n "$slug" ] || continue
+    [ -n "$(tree_field "$slug" 1)" ] || continue   # not a window we know
+    [ -n "$(tree_field "$slug" 2)" ] && continue   # already has a parent
+    parent="$(sched_parent "$f")"
+    [ -n "$parent" ] || continue
+    [ "$parent" = "$slug" ] && continue            # self-parenting is a cycle
+    tree_set_parent "$slug" "$parent" \
+      && log "tree: $slug adopted under $parent (from $(basename "$f"))"
+  done
   return 0
 }
 
@@ -1461,6 +1524,7 @@ pass() {
   mv "$tmp" "$STATUS"
   sweep_repos
   tree_adopt
+  tree_reparent
   check_schedules
   heartbeat "$(grep -c '' "$STATUS" 2>/dev/null)"
   # Keep the limit figures warm on their own hourly clock. --ensure is a no-op
@@ -1493,6 +1557,7 @@ pass() {
 
 if [ "$MODE" = tree ]; then
   tree_adopt
+  tree_reparent
   { printf 'WINDOW\tID\tSTATE\tOPENED\n'; tree_print; } | column -t -s $'\t'
   exit 0
 fi

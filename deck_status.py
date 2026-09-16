@@ -1844,14 +1844,21 @@ class Dashboard:
         # no_wrap or a long background-job name wraps and breaks the row;
         # ellipsis only applies to text that is not allowed to wrap.
         ct.add_column("WINDOW", overflow="ellipsis", no_wrap=True, ratio=1)
-        ct.add_column("MODEL", width=11, overflow="ellipsis")
+        ct.add_column("MODEL", width=11, overflow="ellipsis", no_wrap=True)
         ct.add_column("CONTEXT", width=29)
         ct.add_column("SPENT", justify="right", width=8)
         ct.add_column("IDLE", justify="right", width=6)
-        ct.add_column("STATE", width=15)
+        ct.add_column("STATE", width=15, overflow="ellipsis", no_wrap=True)
         ct.add_column("DIRTY", justify="right", width=6)
-        ct.add_column("WOUND", width=11)
-        ct.add_column("RESUMED", width=11)
+        # 12, NOT 11, AND no_wrap. when() renders a stamp older than today as
+        # "%b %-d %H:%M" -- "Sep 5 21:13" is 11 and fitted, "Sep 12 12:21" is 12
+        # and did not, so every row wound or resumed on a two-digit day wrapped
+        # onto a second line and tore the table in half. A width that depends on
+        # the day of the month is a width that is wrong two thirds of the time;
+        # no_wrap is the belt to that braces, because a cell that cannot wrap
+        # can never take a row with it.
+        ct.add_column("WOUND", width=12, overflow="ellipsis", no_wrap=True)
+        ct.add_column("RESUMED", width=12, overflow="ellipsis", no_wrap=True)
 
         skipped = opted_out()
         mskipped = monitor_opted_out()

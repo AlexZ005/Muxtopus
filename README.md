@@ -233,7 +233,7 @@ claude-watchdog.sh --check 27-storage --body  # ...and the exact paste
 
 **tmux has no window hierarchy.** Its windows are a flat, indexed list per session — there is no parent to set and nothing to collapse. So the tree is *data* the scheduler keeps (`tree.tsv`: slug, parent, window id, pane id, launched-at) and the dashboard is the *view*.
 
-Parentage fills itself in: `parent:` wins, and otherwise it is derived from `window:` when that names a window the scheduler itself opened. What the flat list *can* honour, it does — the depth rides on the name (`➥lane`, `➥➥child`) and a child is inserted after the last window of its parent's subtree, so a family stays contiguous.
+Parentage fills itself in: `parent:` wins, and otherwise it is derived from `window:` whenever that names a live window — hand-made orchestrators included, which is how most lanes are actually launched. The named window is adopted as a root so the child has something to hang from, and a lane already recorded as a root is re-parented from its entry on the next pass, so an existing tree fills in without being rewritten. What the flat list *can* honour, it does — the depth rides on the name (`➥lane`, `➥➥child`) and a child is inserted after the last window of its parent's subtree, so a family stays contiguous.
 
 In the dashboard, `←` folds a subtree (the parent shows `+N`), `→` unfolds it, `t` turns the ordering off. With nothing parented the table is exactly what it always was, sessions by context. `claude-watchdog.sh --tree` prints the tree from the shell.
 
