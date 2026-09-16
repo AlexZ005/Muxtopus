@@ -68,7 +68,8 @@ STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local" / "state"
 # WHERE THE DATA LIVES comes from muxconfig, which reads the SAME file
 # profile.sh reads -- the shell half and the python half must never disagree
 # about it, and one reader is how that is guaranteed rather than hoped for.
-from muxconfig import mux_dir, knob, profile_of
+from muxconfig import (mux_dir, knob, profile_of,
+                       options as read_options, options_paths)
 
 CONFIG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(HOME / ".claude")))
 PROFILE = CONFIG_DIR.name
@@ -755,6 +756,92 @@ def validate_schedule(row: dict) -> str:
     return ""
 
 
+# ------------------------------------------------------- schedule options
+# The checkboxes offered between the template and the editor. The OPTIONS
+# LIST comes from muxconfig (~/.config/muxtopus/options.md); everything here
+# is about the entry FILE -- what a tick writes, and how it is read back.
+#
+# THE HEADER IS THE SOURCE OF TRUTH. `options: questions, phases, lanes=3`
+# says which boxes were ticked and with what; the `## Options` section at the
+# foot of the body is REGENERATED from it. Otherwise reopening the table is a
+# lie: it would show boxes that no longer match the text underneath.
+OPTIONS_HEADING = "## Options"
+
+
+def options_line(opts: list[dict], on: dict) -> str:
+    """The `options:` header value, keys in FILE order.
+
+    Comma-separated because the rest of the header is prose and this has to be
+    read by eye as much as by the parser -- which is also why a collected
+    value may not contain a comma (asked_value refuses one).
+    """
+    bits = []
+    for o in opts:
+        if o["bad"] or o["key"] not in on:
+            continue
+        v = on[o["key"]]
+        bits.append(o["key"] if v is True else "%s=%s" % (o["key"], v))
+    return ", ".join(bits)
+
+
+def parse_options_line(value: str) -> dict:
+    """`questions, lanes=3` -> {"questions": True, "lanes": "3"}."""
+    on: dict = {}
+    for bit in value.split(","):
+        bit = bit.strip()
+        if not bit:
+            continue
+        k, sep, v = bit.partition("=")
+        on[k.strip()] = v.strip() if sep else True
+    return on
+
+
+def options_section(opts: list[dict], on: dict) -> str:
+    """The `## Options` block: one `- <sentence>` per ticked line option.
+
+    {{VALUE}} is resolved HERE, because only this side knows what the prompt
+    collected. Every other placeholder ({{SLUG}}, {{HANDOVER}}, …) is written
+    out literally and resolved by the executor at paste time, when the slug
+    finally exists."""
+    lines = []
+    for o in opts:
+        if o["bad"] or o["key"] not in on or not o["line"]:
+            continue
+        v = on[o["key"]]
+        text = o["line"] if v is True else o["line"].replace("{{VALUE}}", str(v))
+        lines.append("- " + text)
+    if not lines:
+        return ""
+    return OPTIONS_HEADING + "\n" + "\n".join(lines) + "\n"
+
+
+def options_fields(opts: list[dict], on: dict) -> list[tuple[str, str]]:
+    """The header fields a ticked `set:` option writes -- (name, value) pairs,
+    e.g. ("model", "opus-5"). The launcher passes these as flags."""
+    out = []
+    for o in opts:
+        if o["bad"] or not o["set"] or o["key"] not in on:
+            continue
+        v = on[o["key"]]
+        if v is not True:
+            out.append((o["set"], str(v)))
+    return out
+
+
+def asked_value(kind: str, text: str) -> tuple[str, str]:
+    """(value, complaint) for what an `ask:` option collected."""
+    text = text.strip()
+    if not text:
+        return "", "nothing entered"
+    if "," in text:
+        # The options: header line is comma separated and must round-trip, so
+        # a comma is refused OUT LOUD rather than quietly rewritten.
+        return "", "no commas — the options: line is comma separated"
+    if kind == "number" and not text.isdigit():
+        return "", "a number, please (got %r)" % text
+    return text, ""
+
+
 def human_tokens(n: int) -> str:
     return f"{n / 1_000_000:.2f}M" if n >= 1_000_000 else f"{n // 1000}k" if n >= 1000 else str(n)
 
@@ -873,6 +960,9 @@ class Dashboard:
         self.prompt: dict | None = None    # inline text entry (rename)
         self.confirm: dict | None = None   # yes/no gate (close)
         self.picker: dict | None = None    # arrow-driven option list (create flow)
+        # The checkbox table: one more submode, between the template and the
+        # editor. None when closed; see open_options for its shape.
+        self.options: dict | None = None
         self.pending_edit: str | None = None   # file the main loop opens in an editor
         self.view = "main"                 # "main" | "sched"
         self.sched_i = 0
@@ -1203,6 +1293,8 @@ class Dashboard:
             body.append("   ↑↓ pick · enter choose · esc cancel", style=DIM)
             return Panel(body, title="[bold]" + self.picker["title"],
                          title_align="left", border_style="#c9a0dc", box=box.ROUNDED)
+        if self.options is not None:
+            return self.options_panel()
         return None
 
     def picker_key(self, key: str) -> None:
@@ -1251,12 +1343,25 @@ class Dashboard:
                 self.picker = {"title": "from which template?", "i": 0,
                                "options": tpls, "fn": self._create_tpl}
                 return ""
-        return self._create_write(choice, "")
+        return self._create_options(choice, "")
 
     def _create_tpl(self, choice: str) -> str:
-        return self._create_write("plan", choice)
+        return self._create_options("plan", choice)
 
-    def _create_write(self, typ: str, tpl: str) -> str:
+    def _create_options(self, typ: str, tpl: str) -> str:
+        """The step the plan added between the template and the editor.
+
+        The FILENAME is settled here rather than in _create_write, so the
+        table can name the entry it is about to write in its own title."""
+        name = "%s-%s.md" % (typ, time.strftime("%Y%m%d-%H%M%S"))
+        opts = read_options(PROFILE)
+        on = {o["key"]: True for o in opts
+              if o["default"] and not o["bad"] and o["types"] in ("both", typ)}
+        self.open_options(name[:-3], typ, opts, on,
+                          lambda st: self._create_write(typ, tpl, name, st))
+        return ""
+
+    def _create_write(self, typ: str, tpl: str, name: str, st: dict) -> str:
         """Write a pre-filled item and drop straight into the editor on it.
 
         The chosen template is COPIED into the body rather than referenced, so
@@ -1264,7 +1369,7 @@ class Dashboard:
         would be prepended again by the executor."""
         try:
             SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
-            f = SCHEDULES_DIR / ("%s-%s.md" % (typ, time.strftime("%Y%m%d-%H%M%S")))
+            f = SCHEDULES_DIR / name
             cwd = self.cwds.get(self.cursor, "")
             if not cwd or cwd == "-":
                 cwd = str(HOME / ".code" / "theprototype-app" / "core")
@@ -1274,19 +1379,193 @@ class Dashboard:
                     body = (SCHED_TEMPLATES / (tpl + ".md")).read_text()
                 except OSError:
                     body = ""
+            opts, on = st["all"], st["on"]
+            # The set: fields and options: sit with cwd -- what the entry IS --
+            # and ahead of status/created/launched, which are bookkeeping.
+            extra = "".join("%s: %s\n" % kv for kv in options_fields(opts, on))
+            line = options_line(opts, on)
+            if line:
+                extra += "options: %s\n" % line
+            section = options_section(opts, on)
+            if section:
+                # AT THE END of the body, after the template: the body starts
+                # with the task, as every brief does, and the contract follows.
+                body = (body.rstrip() + "\n\n" if body.strip() else "") + section
             f.write_text("type: %s\n" % typ
                          + "at: reset\n"
                          + "title: \n"
                          + "window: \n"
                          + "cwd: %s\n" % cwd
+                         + extra
                          + "status: pending\n"
                          + "created: %s\n" % time.strftime("%Y-%m-%d %H:%M")
                          + "launched:\n"
                          + "---\n" + body)
             self.pending_edit = str(f)
-            return "created %s — set the title and time, paste the prompt" % f.name
+            n = len(parse_options_line(line))
+            return ("created %s with %d option(s) — set the title and time, "
+                    "paste the prompt" % (f.name, n))
         except OSError as exc:
             return "create failed: %s" % exc
+
+    # ------------------------------------------------- the options table
+    # Rendered and driven exactly like the space menu (option_rows /
+    # options_move / options_key mirror menu_entries / menu_move /
+    # menu_activate), and it reuses the existing prompt and picker for the
+    # two options that need a value. Nothing new in the input layer.
+    def open_options(self, title: str, typ: str, opts: list[dict],
+                     on: dict, fn) -> None:
+        """opts is SNAPSHOT at open: the ticks are keyed by option key, and a
+        list that re-read itself every frame could reorder under the cursor
+        while someone is halfway down it."""
+        self.options = {"title": title, "typ": typ, "all": opts,
+                        "on": dict(on), "i": 0, "fn": fn}
+        self.options_move(0)
+
+    def option_rows(self) -> list[dict]:
+        """Group headings and option rows, in file order.
+
+        A broken block is shown greyed with its reason and cannot be ticked --
+        the same rule the schedule view applies to a corrupted entry, for the
+        same reason: silently dropping it makes a typo look like a file nobody
+        ever wrote."""
+        st = self.options
+        if st is None:
+            return []
+        rows: list[dict] = []
+        group = None
+        for o in st["all"]:
+            if not o["bad"] and o["types"] not in ("both", st["typ"]):
+                continue
+            if o["group"] != group:
+                group = o["group"]
+                rows.append({"head": group.upper()})
+            rows.append({"opt": o, "disabled": o["bad"]})
+        return rows
+
+    def options_move(self, delta: int) -> None:
+        rows = self.option_rows()
+        if not rows:
+            return
+        i = self.options["i"]
+        if delta == 0 and 0 <= i < len(rows) and not rows[i].get("head") \
+                and not rows[i].get("disabled"):
+            return
+        step = delta or 1
+        for _ in range(len(rows)):
+            i = (i + step) % len(rows)
+            if not rows[i].get("head") and not rows[i].get("disabled"):
+                self.options["i"] = i
+                return
+
+    def _option_sel(self) -> dict | None:
+        rows = self.option_rows()
+        i = self.options["i"] if self.options else -1
+        if 0 <= i < len(rows) and rows[i].get("opt") and not rows[i].get("disabled"):
+            return rows[i]["opt"]
+        return None
+
+    def options_toggle(self) -> str:
+        """space: tick, untick, or ask for the value the tick needs."""
+        o = self._option_sel()
+        if o is None:
+            return ""
+        st = self.options
+        if o["key"] in st["on"]:
+            del st["on"][o["key"]]
+            return ""
+        if o["set"]:
+            self.picker = {"title": o["set"] + ":", "i": 0, "options": o["choices"],
+                           "fn": lambda c, k=o["key"]: self._option_chose(k, c)}
+            return ""
+        if o["ask"]:
+            self.prompt = {"title": o["label"], "buf": "",
+                           "fn": lambda s, k=o["key"], a=o["ask"]: self._option_asked(k, a, s)}
+            return ""
+        st["on"][o["key"]] = True
+        return ""
+
+    def _option_chose(self, key: str, choice: str) -> str:
+        if self.options is not None:
+            self.options["on"][key] = choice
+        return ""
+
+    def _option_asked(self, key: str, kind: str, text: str) -> str:
+        value, why = asked_value(kind, text)
+        if why:
+            # LEFT UNTICKED rather than ticked with a value nobody can use: the
+            # sentence would go out with {{VALUE}} still in it.
+            return "%s: %s — not ticked" % (key, why)
+        if self.options is not None:
+            self.options["on"][key] = value
+        return ""
+
+    def options_key(self, key: str) -> None:
+        st = self.options
+        if st is None:
+            return
+        if key == "UP":
+            self.options_move(-1)
+        elif key == "DOWN":
+            self.options_move(1)
+        elif key == " ":
+            msg = self.options_toggle()
+            if msg:
+                self.say(msg)
+        elif key in ("\r", "\n"):
+            fn = st["fn"]
+            self.options = None
+            self.say(fn(st))
+        elif key == "\x1b":
+            # esc CONTINUES with nothing ticked -- it is a skip, not a cancel:
+            # the entry is still wanted, the contract sentences are not.
+            fn = st["fn"]
+            st["on"] = {}
+            self.options = None
+            self.say(fn(st))
+
+    def options_panel(self) -> Panel:
+        """One row per option, laid out like the menu. Every cell that can grow
+        is no_wrap + ellipsis: a hint is a whole sentence, and a row that wraps
+        tears the table in half (see the WOUND column)."""
+        st = self.options
+        g = Table.grid(padding=(0, 1), expand=True)
+        g.add_column(width=1)                                     # cursor
+        g.add_column(width=3)                                     # [x]
+        g.add_column(width=38, overflow="ellipsis", no_wrap=True)  # label
+        g.add_column(ratio=1, overflow="ellipsis", no_wrap=True)   # hint
+        rows = self.option_rows()
+        for i, r in enumerate(rows):
+            if r.get("head"):
+                g.add_row("", "", Text(r["head"], style="bold " + DIM), "")
+                continue
+            o = r["opt"]
+            cur = (i == st["i"])
+            mark = Text("▸" if cur else " ", style="bold #c9a0dc")
+            if o["bad"]:
+                g.add_row(mark, Text("   ", style=FRAME),
+                          Text(o["label"], style=FRAME),
+                          Text(o["bad"], style=FRAME))
+                continue
+            v = st["on"].get(o["key"])
+            label = o["label"] if v in (None, True) else "%s: %s" % (o["label"], v)
+            box_txt = Text("[x]" if v is not None else "[ ]",
+                           style=("bold " + GREEN) if v is not None else DIM)
+            g.add_row(mark, box_txt,
+                      Text(label, style="bold" if cur else ""),
+                      Text(o["hint"], style=DIM))
+        if not rows:
+            g.add_row("", "", Text("no options", style=DIM),
+                      Text(str(options_paths(PROFILE)[0]), style=DIM))
+        keys = Text("   ↑↓ pick · space toggle · enter continue · esc skip", style=DIM)
+        # THE NOTICE HAS TO LIVE HERE. The footer is this panel while the table
+        # is open, so a refused value ("a number, please — not ticked") reached
+        # self.say and was then drawn nowhere at all.
+        if self.notice and time.time() - self.notice_at < 8:
+            keys = Text.assemble(("   " + self.notice, "#c9a0dc"), "\n", keys)
+        return Panel(Group(g, keys),
+                     title="[bold]options[/] [%s]· %s" % (DIM, st["title"]),
+                     title_align="left", border_style="#c9a0dc", box=box.ROUNDED)
 
     def launch_selected_now(self) -> str:
         """Make the item due immediately; the daemon does the actual launch on
@@ -2395,6 +2674,7 @@ def main() -> int:
                 if key is not None and (dash.prompt is not None
                                         or dash.confirm is not None
                                         or dash.picker is not None
+                                        or dash.options is not None
                                         or dash.menu_open):
                     if dash.prompt is not None:
                         dash.prompt_key(key)
@@ -2402,6 +2682,12 @@ def main() -> int:
                         dash.confirm_key(key)
                     elif dash.picker is not None:
                         dash.picker_key(key)
+                    # The table is checked AFTER those three, so a value the
+                    # prompt or the picker is collecting FOR it still owns the
+                    # keys while it is up, and the table comes back when it is
+                    # answered.
+                    elif dash.options is not None:
+                        dash.options_key(key)
                     elif key == "UP":
                         dash.menu_move(-1)
                     elif key == "DOWN":
