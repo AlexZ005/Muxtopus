@@ -133,7 +133,7 @@ and overrides or adds by `key`. Seeded by `install.sh` the way templates are
 Variants:
 
     set: model                # writes a header field instead of a line
-    choices: opus-5, fable-5-1, sonnet-5, haiku-4-5
+    choices: opus, opus[1m], fable, sonnet, haiku   # CLI aliases, NOT the dashboard MODEL column
     ask: number               # collects {{VALUE}} on toggle (number | text)
     types: work               # only offered for this type (plan | work)
 
