@@ -214,7 +214,7 @@ Accepted values are whatever `claude --permission-mode` takes at the installed v
 
 Five sentences go into nearly every brief anyone writes — *don't ask questions, nobody is watching*; *one commit per phase*; *don't push*; *`/low-priority` on a limit*; *a change you never ran is not verified*. `c` now offers them as checkboxes between the template and the editor, and `o` reopens the table on a pending entry.
 
-They come from `~/.config/muxtopus/options.md`, which is **yours**: one block per option, blank-line separated, the same `key: value` syntax as a schedule header, `#` comments anywhere. The comment block at the top of the file is the format spec. `install.sh` seeds it if it is missing and never rewrites it; `profiles/<name>.options.md` overrides or adds to it **field by field** for one account.
+They come from `~/.config/muxtopus/options.md`, which is **yours**: one block per option, blank-line separated, the same `key: value` syntax as a schedule header, `#` comments anywhere. The comment block at the top of the file is the format spec. `install.sh` copies it from `seeds/options.md` in this checkout if it is missing, and never rewrites it after that; `profiles/<name>.options.md` overrides or adds to it **field by field** for one account.
 
 ```
 key: questions            # the id in `options:`, [a-z0-9-]+, unique

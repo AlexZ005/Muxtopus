@@ -118,6 +118,24 @@ else
   ok "$CFG written"
 fi
 
+# options.md -- the schedule-options checkbox table, read by the dashboard from
+# beside the config file (muxconfig.options_paths), NOT from MUXTOPUS_HOME.
+# ONLY IF MISSING, and never rewritten: the sentences in it are the user's own
+# contract with their lanes, and an installer that "updates" them would silently
+# retract whatever they had edited. A new option in a later release is a line in
+# the release notes, not an overwrite.
+OPTS="$CFG_DIR/options.md"
+if [ -f "$OPTS" ]; then
+  skip "$OPTS already exists, leaving it alone"
+elif [ ! -f "$SRC/seeds/options.md" ]; then
+  warn "no seeds/options.md in $SRC -- the table will open empty until you write one"
+elif [ "$DRY" = 1 ]; then
+  printf '    \033[90m$ cp %s %s\033[0m\n' "$SRC/seeds/options.md" "$OPTS"
+else
+  cp "$SRC/seeds/options.md" "$OPTS"
+  ok "$OPTS seeded ($(grep -c '^key: ' "$OPTS") options)"
+fi
+
 # ---------------------------------------------------------------- 4. the link
 step "4/5  muxtopus"
 run chmod +x "$SRC/muxtopus" "$SRC"/*.sh
