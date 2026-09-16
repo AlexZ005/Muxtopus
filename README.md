@@ -149,7 +149,7 @@ The **menu** (`space`) carries two per-session switches and then everything you 
 
 - **deck** — memory, swap, CPU, and the usage limits top right.
 - **lanes** — dev servers by port, with age and whether the tree is dirty.
-- **claude** — one row per session: context used, tokens spent, idle time, state, when it was last wound down and when it was last resumed. The account name appears in the title once you have more than one.
+- **claude** — one row per session: context used, tokens spent, idle time, state, when it was last wound down and when it was last resumed. The account name appears in the title once you have more than one. A scheduled window that has been idle past `WATCHDOG_STRANDED` (default 120 min) with an open handover and nothing pending that names it reads **`stranded`** rather than `idle` — see below.
 - **uncommitted** — its own table rather than a column, because dirty trees and sessions do not line up: a repo can be dirty with no session and no dev server near it, and that is the copy most likely to be lost.
 
 ---
@@ -186,9 +186,11 @@ at: reset
 title: resume the checkout refactor
 slug: checkout-refactor       # optional: pins the lane name
 window: api-cleanup           # optional: insert the new window after this one
-after: api-cleanup            # optional: hold until that lane has finished
+after: api-cleanup, db-migrate # optional: hold until ALL of those have finished
 parent: api-cleanup           # optional: draw this window under that one
 cwd: /home/you/src/checkout
+model: opus                   # optional: claude --model
+effort: high                  # optional: claude --effort
 status: pending
 created: 2026-09-06 09:55
 launched:
@@ -237,9 +239,29 @@ Parentage fills itself in: `parent:` wins, and otherwise it is derived from `win
 
 In the dashboard, `←` folds a subtree (the parent shows `+N`), `→` unfolds it, `t` turns the ordering off. With nothing parented the table is exactly what it always was, sessions by context. `claude-watchdog.sh --tree` prints the tree from the shell.
 
-### `after: <slug>`
+### Placeholders in the body
 
-Holds an entry until that lane is done — its handover marked done by `handover.sh done`, or a window the tree knows about having exited without leaving an open handover. No timeout: a dependency that gives up and runs anyway is worse than one that waits, and the wait is visible with its reason.
+Seven names are resolved when the body is *pasted*, over the template, the body and the work footer — never over the `[muxtopus]` identity lines, which are built from the resolved values already:
+
+```
+{{SLUG}}  {{WINDOW}}  {{HANDOVER}}  {{QUESTIONS}}  {{SCHEDULES}}  {{CWD}}  {{PARENT}}
+```
+
+The slug is not knowable when a body is *written* — least of all in a template shared by twenty entries — so a sentence that needs it carries a placeholder and the executor resolves it as the window opens. A name outside that table is left in the paste as literal text and warned about, in `--check`, in the log and on the dashboard row. `--check <entry> --body` shows the substituted paste.
+
+### `model:` and `effort:`
+
+`model: opus` becomes `claude --model opus`, `effort: high` becomes `claude --effort high` (`low` · `medium` · `high` · `xhigh` · `max`). Absent means the account default from `settings.json`; a value the CLI would reject is logged and dropped rather than passed through, because `claude` exits on a bad flag and the window would never reach a prompt.
+
+### `after: <slug>[, <slug>…]`
+
+Holds an entry until *every* named lane is done — each one's handover marked done by `handover.sh done`, or a window the tree knows about having exited without leaving an open handover. The verdict names the first lane still holding and how many are left (`blocked: waiting for 2 of 3 — next: 24-stars, handover open 31m ago`); `--check` prints the per-lane breakdown. A slug naming the entry's own lane is refused from any position. No timeout: a dependency that gives up and runs anyway is worse than one that waits, and the wait is visible with its reason.
+
+### `stranded`, and why the orchestrator is a pattern rather than a process
+
+An orchestrator doing two jobs at once — splitting a plan into lanes and writing their briefs, which needs a model, and noticing when a lane stops, which needs a clock — spends tokens on the second. Measured: four lanes settled into one state and stayed there for 3½ days, and the first change the watching loop saw woke the orchestrator to broadcast a pause to four windows, four turns for a message that said "do nothing". **So the liveness half belongs here, in a deterministic loop that costs nothing, and the judgment half belongs in a Claude window that stops between the two** — the window writes one entry per lane and one more with `after:` naming all of them, then ends its turn.
+
+That needs the scheduler to say when a lane has gone quiet for good, which is what `stranded` is: a `➥` window, idle past `WATCHDOG_STRANDED` minutes, with an **open** handover, and no pending entry naming it — not its slug, not its `resume-` entry, not an `after:` waiting on it. `idle` is a fact about the last turn; `stranded` is a fact about the future, and it is shown to a human rather than acted on. Nothing automatically resumes a stranded lane: an unrequested turn is still a turn.
 
 In the `s` view: `enter`/`e` edit · `c` create · `l` launch now · `d` delete · `r` reload · `s`/`esc` back.
 
@@ -286,6 +308,7 @@ The same keys mean the same thing in both files; the per-account file only narro
 | `WATCHDOG_FRESH_CTX` | `150000` | context above which restarting from a handoff beats carrying on |
 | `WATCHDOG_LOWPRI_WEEK` | `40` | weekly % below which `/low-priority` is offered |
 | `WATCHDOG_USAGE_EVERY` | `60` | minutes between the watchdog's `/usage` probes |
+| `WATCHDOG_STRANDED` | `120` | minutes a `➥` lane may sit idle with an open handover and nothing pending naming it before its state reads `stranded`; `0` turns it off |
 | `CLAUDE_USAGE_MAX_AGE` | `20` | minutes; the dashboard's `u` and `R` refresh only past this age |
 | `CLAUDE_USAGE_MODEL` | from `settings.json` | which model's limit line the probe reads |
 | `CLAUDE_CONTEXT_WINDOW` | `1000000` | what the dashboard draws the context bar against |

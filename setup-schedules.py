@@ -129,12 +129,14 @@ Format:
     at: reset | 2026-09-06 14:30
     title: Resume 24-C2 row identity
     slug: 24-c2-rows                (optional: pins the lane name -- see below)
-    after: 24-c1-schema             (optional: hold until that lane has finished)
+    after: 24-c1-schema, 24-c2-rows (optional: hold until ALL of those have finished)
     parent: 24-c1-schema            (optional: draw this window under that one)
     window: plan1-fixes            (optional: insert the new window after this one)
     cwd: /home/deck/.code/theprototype-app/core
     template: resume-status        (plan only, optional; a file in templates/)
     model: opus                    (optional: fable | opus | sonnet | full id; default from settings.json)
+    effort: high                   (optional: low | medium | high | xhigh | max -> claude --effort)
+    options: questions, phases     (written by the dashboard's options table; see below)
     status: pending                (the executor rewrites this)
     created: 2026-09-06 09:55
     launched:
@@ -143,6 +145,49 @@ Format:
 
 The launched window is named with a leading arrow and appears right after
 `window:` when that window exists.
+
+## Placeholders, resolved when the body is PASTED
+
+The body is not a literal string. Seven names are substituted the moment the
+window opens, over the template, the body and the work footer -- never over the
+`[muxtopus]` identity lines at the top, which are built from the resolved values
+already:
+
+    {{SLUG}}       27-storage
+    {{WINDOW}}     the tmux window name, arrows included: ➥27-storage
+    {{HANDOVER}}   <handovers>/STATUS-27-storage.md
+    {{QUESTIONS}}  <handovers>/QUESTIONS-27-storage.md
+    {{SCHEDULES}}  this folder
+    {{CWD}}        the entry's cwd: field
+    {{PARENT}}     the entry's parent slug, or empty for a root window
+
+They exist because the slug is not knowable when the body is WRITTEN -- least of
+all in a template shared by twenty entries -- so a sentence that needs it can
+only carry a placeholder and have the executor resolve it at paste time. One
+function does the substitution, shared by the launcher and by `--check --body`,
+so the report and the paste cannot drift apart.
+
+A `{{NAME}}` that is not in that table is left in the paste as LITERAL TEXT and
+warned about -- in `claude-watchdog.sh --check`, in the log at launch, and as a
+yellow note on the dashboard row, the same way a derived slug is. It is never
+blanked: a body that meant to say `{{PORT}}` still says it.
+
+`claude-watchdog.sh --check <entry> --body` prints the substituted paste, so a
+wrong placeholder is visible before anything launches.
+
+## `options:` -- what the create-time options table ticked
+
+The dashboard's `c` flow offers a table of checkboxes and records what was
+ticked as one header line:
+
+    options: questions, phases, lanes=3
+
+That line is the source of truth for reopening the table (`o` in the `s` view),
+which regenerates the `## Options` section at the bottom of the body from it.
+THE EXECUTOR PARSES NOTHING FROM IT. The sentences those options produce are
+ordinary body text by the time this folder is read, and the header fields they
+set (`model:`, `effort:`) are ordinary header fields. Deleting the line changes
+nothing about how the entry runs -- only what the table shows when reopened.
 
 ## `at: reset` is TWO gates, not one
 
@@ -183,11 +228,12 @@ line and no error. Now it is named, it turns the row red in the dashboard's `s`
 view, the reason is printed under the table, and the watchdog asks for a fresh
 `/usage` probe (at most one per quarter hour) to clear it.
 
-## `after: <slug>` -- run this one only when that one has finished
+## `after: <slug>[, <slug>...]` -- run this one only when those have finished
 
     after: 27-storage
+    after: 24-c1-schema, 24-c2-rows, 24-c3-ui     (comma or space separated)
 
-The entry is held until the named lane is done. "Done" means, in order:
+The entry is held until EVERY named lane is done. "Done" means, in order:
 
   * its handover has been marked done -- moved into `handovers/done/` by
     `handover.sh done <slug>`, which is the lane saying so itself; or
@@ -198,10 +244,47 @@ An OPEN handover means the lane is still running -- that file is written early
 and lives until it is marked done. A dependency nothing has ever launched holds
 the entry too, and says so.
 
+The list is what an orchestrator needs: "integrate the four lanes" is ONE entry
+waiting on four, not four entries in a chain -- and a chain would also serialise
+work that ran in parallel. The verdict names the first lane still holding and
+how many are left, because that is the one to act on:
+
+    blocked: waiting for 2 of 3 -- next: 24-stars, handover open 31m ago,
+    not marked done (handover.sh done 24-stars)
+
+`claude-watchdog.sh --check` prints the per-lane breakdown underneath when there
+is more than one. A slug naming the entry's OWN lane is refused from any
+position: it can never finish first.
+
 There is deliberately NO TIMEOUT. A dependency that gives up and runs anyway is
 worse than one that waits, and a wait is visible in three places: `--check`, the
 WHY line under the dashboard table, and one log line when the verdict changes.
 Editing or deleting the entry is the escape hatch.
+
+## `stranded` -- nothing is ever going to touch that window
+
+Not a field: a STATE the watchdog publishes for a window, beside `working`,
+`idle`, `limited` and `due`. A scheduled window (its name starts with `➥`) is
+called `stranded` instead of `idle` when all five of these are true:
+
+  * it is idle -- not mid-turn;
+  * it has been idle for at least `WATCHDOG_STRANDED` minutes (default 120);
+  * it has an OPEN handover -- `handovers/STATUS-<slug>.md`, not one in `done/`,
+    so there is unfinished work;
+  * and NO pending entry in this folder names it: not its slug, not the
+    `resume-<slug>.md` the dashboard's "Schedule ➥resume" writes, and not an
+    `after:` waiting on it.
+
+`idle` is a fact about the last turn -- the same word for a lane that finished
+ten minutes ago and for one that stopped mid-phase three days ago with its
+handover half-written. MEASURED: four lanes sat at `idle 3d` with open handovers,
+nothing pending named any of them, and nothing anywhere said so.
+
+IT IS A FACT SHOWN TO A HUMAN, NEVER A TRIGGER. It is derived only from `idle`,
+and the restart path only ever acts on `due`, so a stranded window is never
+prompted by it; the cure is to write an entry for it (or mark the handover done).
+`WATCHDOG_STRANDED=0` turns it off. One log line when a window becomes stranded
+and one when it stops being stranded -- not one per pass.
 
 ## `parent: <slug>` -- draw this window under that one
 
