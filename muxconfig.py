@@ -20,6 +20,13 @@ file -- the same order profile.sh applies.
     mux_home("work")               -> Path            that account's home
     mux_dir("schedules", "work")   -> Path            one account's folder
     profile_of()                   -> "" | "work"     (from CLAUDE_CONFIG_DIR)
+
+It also reads the one file that is NOT shell -- options.md, the checkbox table
+the dashboard offers when a schedule entry is created. Same two layers, same
+precedence, a different syntax (see "schedule options" below):
+
+    options("work")                -> list[dict]      every checkbox, in order
+    python3 muxconfig.py --options [profile]          the same, as a table
 """
 import os
 import pathlib
@@ -148,3 +155,193 @@ def suffix_of(profile: str) -> str:
     """The path suffix. The default account takes NONE, which is the whole
     reason a single-account machine sees no change at all."""
     return ("-" + profile) if profile else ""
+
+
+# ------------------------------------------------------- schedule options
+# The checkbox table the dashboard shows between picking a template and
+# opening the editor. One block per option in
+#
+#     ~/.config/muxtopus/options.md                  every account
+#     ~/.config/muxtopus/profiles/<name>.options.md  one account's overrides
+#
+# blank-line separated, `key: value` lines, `#` comments anywhere (including
+# INSIDE a block -- the `model` option carries a measurement in three comment
+# lines and must still parse). The same syntax a schedule file's header uses,
+# for the same reason: it is read and written by hand, beside the schedules it
+# configures, and its sentences are prose full of colons.
+#
+# THE SECOND FILE MERGES FIELD BY FIELD, it does not replace the block: the
+# common override is one line ("default: off for me"), and re-declaring a
+# whole block to change one field is how a `line:` sentence silently gets
+# forgotten. Adding a key not in the base file adds an option.
+#
+# A BROKEN BLOCK IS RETURNED WITH `bad`, NEVER DROPPED. That is the schedule
+# view's own rule for a corrupted entry, and for the same reason: an option
+# that quietly disappears is indistinguishable from one nobody ever wrote,
+# and the table shows it greyed with the reason instead.
+OPTION_FIELDS = ("key", "group", "label", "hint", "default",
+                 "line", "set", "choices", "ask", "types")
+OPTION_KEY_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
+OPTION_TYPES = ("plan", "work", "both")
+OPTION_ASKS = ("number", "text")
+OPTIONS_FILE = "options.md"
+
+
+def options_paths(profile: str = "") -> list[pathlib.Path]:
+    """The files read, in the order they are read. The shared one sits beside
+    the config file, so a sandbox with its own MUXTOPUS_CONFIG gets its own
+    options.md without any further variable."""
+    base = config_path().parent / OPTIONS_FILE
+    if not profile:
+        return [base]
+    d = os.environ.get("MUXTOPUS_PROFILES_DIR") or str(config_path().parent / "profiles")
+    return [base, pathlib.Path(d) / (profile + "." + OPTIONS_FILE)]
+
+
+def _option_blocks(text: str, src: pathlib.Path) -> list[tuple]:
+    """(fields, complaints, src) per blank-line separated block.
+
+    Nothing is validated here; a line this cannot make sense of becomes a
+    complaint carried on the block rather than a parse error, because the file
+    is hand-edited and the useful answer is always "this block, this line"."""
+    out: list[tuple] = []
+    fields: dict[str, str] = {}
+    junk: list[str] = []
+
+    def flush() -> None:
+        if fields or junk:
+            out.append((dict(fields), list(junk), src))
+        fields.clear()
+        del junk[:]
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            flush()
+            continue
+        if line.startswith("#"):
+            continue
+        k, sep, v = line.partition(":")
+        k = k.strip()
+        if not sep or k not in OPTION_FIELDS:
+            junk.append("not a field: %r" % (line[:40] + ("…" if len(line) > 40 else "")))
+        elif k in fields:
+            junk.append("%s: given twice" % k)
+        else:
+            fields[k] = v.strip()
+    flush()
+    return out
+
+
+def _option_bad(o: dict, junk: list[str]) -> str:
+    """Why this block will not be offered. The §3 rules, in the order a reader
+    would check them: the identity first, then the shape, then the details."""
+    if junk:
+        return junk[0]
+    if not o["key"]:
+        return "no key:"
+    if not set(o["key"]) <= OPTION_KEY_OK:
+        return "key %r is not [a-z0-9-]+" % o["key"]
+    if bool(o["line"]) == bool(o["set"]):
+        return "needs exactly one of line: or set:"
+    if o["set"] and not o["choices"]:
+        return "set: %s needs choices:" % o["set"]
+    if o["ask"] and o["ask"] not in OPTION_ASKS:
+        return "ask: must be %s (got %r)" % (" or ".join(OPTION_ASKS), o["ask"])
+    if o["ask"] and "{{VALUE}}" not in o["line"]:
+        return "ask: but the line has no {{VALUE}}"
+    if o["raw_default"] not in ("on", "off"):
+        return "default: must be on or off (got %r)" % o["raw_default"]
+    if o["types"] not in OPTION_TYPES:
+        return "types: must be %s (got %r)" % ("/".join(OPTION_TYPES), o["types"])
+    return ""
+
+
+def _make_option(fields: dict, junk: list[str], src: pathlib.Path) -> dict:
+    key = fields.get("key", "")
+    o = {
+        "key": key,
+        "group": fields.get("group", "") or "other",
+        # The key is a usable label and a missing one is nearly always a typo
+        # in the field name -- which `junk` has already reported. A blank row
+        # would hide both.
+        "label": fields.get("label", "") or key or "(no key)",
+        "hint": fields.get("hint", ""),
+        "raw_default": fields.get("default", "off"),
+        "default": fields.get("default", "off") == "on",
+        "line": fields.get("line", ""),
+        "set": fields.get("set", ""),
+        "choices": [c.strip() for c in fields.get("choices", "").split(",") if c.strip()],
+        "ask": fields.get("ask", ""),
+        "types": fields.get("types", "") or "both",
+        "file": str(src),
+        "bad": "",
+    }
+    o["bad"] = _option_bad(o, junk)
+    return o
+
+
+def options(profile: str = "") -> list[dict]:
+    """Every schedule option, in file order, broken ones included.
+
+    Each is a dict: key, group, label, hint, default (bool), line, set,
+    choices (list), ask, types, file, bad. `bad` non-empty means the table
+    shows it greyed with that reason and will not let it be ticked."""
+    merged: list[list] = []
+    index: dict[str, list] = {}
+    for path in options_paths(profile):
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        for fields, junk, src in _option_blocks(text, path):
+            key = fields.get("key", "")
+            entry = index.get(key) if key else None
+            if entry is not None and entry[2] != src:
+                entry[0].update(fields)      # a LATER FILE overrides field by field
+                entry[1].extend(junk)
+                entry[2] = src
+                continue
+            if entry is not None:
+                # A key repeated in ONE file is a mistake, so the SECOND block
+                # is the broken one and the index goes on pointing at the
+                # first: a profile override must land on the good block, not
+                # on the typo that follows it.
+                junk = junk + ["duplicate key %r" % key]
+            entry = [dict(fields), list(junk), src]
+            merged.append(entry)
+            if key and key not in index:
+                index[key] = entry
+    return [_make_option(*e) for e in merged]
+
+
+def _print_options(profile: str = "") -> int:
+    """`muxconfig.py --options [profile]` -- the table, for a reader with no
+    dashboard and for the sandbox tests."""
+    opts = options(profile)
+    for p in options_paths(profile):
+        print("# %s%s" % (p, "" if p.exists() else "   (absent)"))
+    if not opts:
+        print("no options")
+        return 1
+    print("%-12s %-9s %-5s %-14s %-5s %s"
+          % ("KEY", "GROUP", "DEF", "KIND", "TYPES", "LABEL"))
+    bad = 0
+    for o in opts:
+        kind = ("set:" + o["set"]) if o["set"] else ("ask:" + o["ask"]) if o["ask"] else "line"
+        if o["bad"]:
+            bad += 1
+        print("%-12s %-9s %-5s %-14s %-5s %s"
+              % (o["key"] or "-", o["group"], "on" if o["default"] else "off",
+                 kind, o["types"],
+                 ("BAD — " + o["bad"]) if o["bad"] else o["label"]))
+    print("\n%d option(s), %d broken" % (len(opts), bad))
+    return 2 if bad else 0
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--options":
+        sys.exit(_print_options(sys.argv[2] if len(sys.argv) > 2 else ""))
+    print(__doc__.strip())
+    sys.exit(2)
