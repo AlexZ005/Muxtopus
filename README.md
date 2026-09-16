@@ -191,6 +191,7 @@ parent: api-cleanup           # optional: draw this window under that one
 cwd: /home/you/src/checkout
 model: opus                   # optional: claude --model
 effort: high                  # optional: claude --effort
+options: questions, phases, lanes=3, model=opus[1m]   # written by the options table
 status: pending
 created: 2026-09-06 09:55
 launched:
@@ -199,6 +200,30 @@ the prompt body that gets pasted into the new window
 ```
 
 The new window opens right after its `window:` target, named with a leading `➥`, and the prompt lands as **one bracketed paste** — never `send-keys`, which submits at every newline. A file the view cannot parse is shown as corrupted with the reason and never launches.
+
+### The options table
+
+Five sentences go into nearly every brief anyone writes — *don't ask questions, nobody is watching*; *one commit per phase*; *don't push*; *`/low-priority` on a limit*; *a change you never ran is not verified*. `c` now offers them as checkboxes between the template and the editor, and `o` reopens the table on a pending entry.
+
+They come from `~/.config/muxtopus/options.md`, which is **yours**: one block per option, blank-line separated, the same `key: value` syntax as a schedule header, `#` comments anywhere. The comment block at the top of the file is the format spec. `install.sh` seeds it if it is missing and never rewrites it; `profiles/<name>.options.md` overrides or adds to it **field by field** for one account.
+
+```
+key: questions            # the id in `options:`, [a-z0-9-]+, unique
+group: contract           # the table's section heading
+label: questions go to a file
+hint: nobody is watching: QUESTIONS-{{SLUG}}.md, recommended answer
+default: on               # ticked when the table opens
+types: work               # optional: only offered for this type
+line: Nobody is watching this window: do not ask questions. …
+```
+
+A tick writes one of two things: a **sentence**, appended to the body under a `## Options` heading at the end of it, or a **header field** — `set: model` with `choices:` opens the picker and writes `model:`, which the launcher passes as `claude --model`. `ask: number` (or `text`) collects a value on toggle and substitutes it into `{{VALUE}}`.
+
+The header also records `options: questions, phases, lanes=3`, and **that is the source of truth**. `o` reopens the table from it and regenerates the section, so a sentence edited by hand in that section is overwritten on the next save — move it above the heading (everything above is preserved byte for byte) or edit it in `options.md` where it came from.
+
+Every other placeholder — `{{SLUG}}`, `{{WINDOW}}`, `{{HANDOVER}}`, `{{QUESTIONS}}`, `{{SCHEDULES}}`, `{{CWD}}`, `{{PARENT}}` — is written out **literally** and resolved when the prompt is pasted, because the slug does not exist while the table is open.
+
+A block the reader cannot make sense of is shown greyed with its reason and cannot be ticked, exactly as a corrupted schedule entry is — it is never silently dropped. `python3 muxconfig.py --options` prints the same verdicts without a dashboard.
 
 ### The slug is the lane's name in four places
 
@@ -263,7 +288,7 @@ An orchestrator doing two jobs at once — splitting a plan into lanes and writi
 
 That needs the scheduler to say when a lane has gone quiet for good, which is what `stranded` is: a `➥` window, idle past `WATCHDOG_STRANDED` minutes, with an **open** handover, and no pending entry naming it — not its slug, not its `resume-` entry, not an `after:` waiting on it. `idle` is a fact about the last turn; `stranded` is a fact about the future, and it is shown to a human rather than acted on. Nothing automatically resumes a stranded lane: an unrequested turn is still a turn.
 
-In the `s` view: `enter`/`e` edit · `c` create · `l` launch now · `d` delete · `r` reload · `s`/`esc` back.
+In the `s` view: `enter`/`e` edit · `c` create · `o` reopen the options table on the selected pending entry · `l` launch now · `d` delete · `r` reload · `s`/`esc` back.
 
 ---
 
