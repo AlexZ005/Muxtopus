@@ -975,6 +975,21 @@ tree_wname() {
   printf '%s%s' "$m" "$slug"
 }
 
+# `effort:` PINS THE REASONING EFFORT of the window's session -- the same knob
+# as `effortLevel` in settings.json, handed to `claude --effort` at launch.
+#
+# THE LIST IS WHAT THE INSTALLED CLI ACCEPTS, read from `claude --help` on this
+# machine (2.1.x: low, medium, high, xhigh, max), not what the plan guessed. An
+# unknown value is DROPPED with a log line rather than passed through, because
+# claude exits on an invalid --effort and the window would then never reach a
+# prompt: the entry would be marked error for a typo in an optional field.
+# Absent means no flag at all, which is the account default.
+SCHED_EFFORTS="low medium high xhigh max"
+sched_effort_ok() {
+  case " $SCHED_EFFORTS " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
 # THE SUBSTITUTABLE PART OF THE PASTE, exactly as written and before any
 # placeholder is resolved: the template (plan only), the body, and the work
 # footer. Split out from sched_compose because two things need it -- the
@@ -1082,7 +1097,7 @@ sched_compose() {
 # Open the window, get claude to a prompt, paste the body, press Enter.
 launch_schedule() {
   local f="$1" why="${2:-}"
-  local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn model
+  local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn model effort
   local parent depth wid
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
@@ -1107,6 +1122,11 @@ launch_schedule() {
   # sonnet, or a full id). Absent, the account's settings.json default applies.
   model="$(sched_field "$f" model)"
   case "$model" in *[!a-zA-Z0-9._\[\]-]*) log "schedule $(basename "$f"): ignoring odd model: \"$model\""; model="" ;; esac
+  effort="$(sched_field "$f" effort)"
+  if [ -n "$effort" ] && ! sched_effort_ok "$effort"; then
+    log "schedule $(basename "$f"): ignoring odd effort: \"$effort\" (one of: $SCHED_EFFORTS)"
+    effort=""
+  fi
 
   slug="$(sched_slug "$f")"
   parent="$(sched_parent "$f")"
@@ -1158,7 +1178,7 @@ launch_schedule() {
   read -r pane wid < <(tmux new-window -d -P -F '#{pane_id} #{window_id}' \
           "${targs[@]}" -n "$wname" -c "$cwd" \
           "${MUX_TMUX_ENV[@]}" \
-          "$HOME/.local/bin/claude" ${model:+--model "$model"} 2>/dev/null)
+          "$HOME/.local/bin/claude" ${model:+--model "$model"} ${effort:+--effort "$effort"} 2>/dev/null)
   if [ -z "$pane" ]; then
     sched_mark "$f" error
     log "schedule $(basename "$f"): could not open a tmux window"
@@ -1199,7 +1219,7 @@ launch_schedule() {
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
-  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model} -- ${why:-due}"
+  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort} -- ${why:-due}"
 }
 
 # ------------------------------------------------------------- --check
@@ -1234,7 +1254,7 @@ kv() { printf '  %-14s %s\n' "$1" "$2"; }
 sched_check_one() {
   local f="$1" body="${2:-}"
   local type at title win cwd tmpl st slug wname warn now rc idx nlines nbytes rcout=0
-  local parent depth after blocked pwarn resolved
+  local parent depth after blocked pwarn resolved model effort
   type="$(sched_field "$f" type)"; at="$(sched_field "$f" at)"
   title="$(sched_field "$f" title)"; win="$(sched_field "$f" window)"
   cwd="$(sched_field "$f" cwd)"; tmpl="$(sched_field "$f" template)"
@@ -1249,7 +1269,16 @@ sched_check_one() {
   kv type "${type:-(missing)}"
   kv at "${at:-(missing)}"
   kv title "${title:-(none)}"
-  kv model "$(sched_field "$f" model)"; [ -n "$(sched_field "$f" model)" ] || kv model "(account default from settings.json)"
+  model="$(sched_field "$f" model)"
+  kv model "${model:-(account default from settings.json)}"
+  effort="$(sched_field "$f" effort)"
+  if [ -z "$effort" ]; then
+    kv effort "(account default -- no --effort flag is passed)"
+  elif sched_effort_ok "$effort"; then
+    kv effort "$effort   (claude --effort $effort)"
+  else
+    kv effort "$effort   -- not one of: $SCHED_EFFORTS; it is DROPPED and no flag is passed"
+  fi
   if [ -n "$(sched_field "$f" slug)" ]; then kv slug "$slug   (pinned by slug:)"
   elif [ -n "$title" ]; then kv slug "$slug   (derived from title: \"$title\")"
   else kv slug "$slug   (derived from the filename)"; fi
