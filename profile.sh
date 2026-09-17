@@ -26,16 +26,21 @@
 # WHERE THE DATA LIVES is a setting, not a constant: this started life in a
 # personal ~/.code and is published for people who reasonably expect XDG.
 #
-# TWO LAYERS OF PLAIN SHELL, sourced:
+# FOUR LAYERS OF PLAIN SHELL, sourced -- two hand-written, two the dashboard
+# writes (its Settings menu; the DASHBOARD_* keys):
 #
-#   ~/.config/muxtopus/config                 every account: paths, defaults
-#   ~/.config/muxtopus/profiles/<name>.conf   one named account's overrides
+#   ~/.config/muxtopus/config                           every account: paths, defaults
+#   ~/.config/muxtopus/dashboard.conf                   every account, dashboard-written
+#   ~/.config/muxtopus/profiles/<name>.conf             one named account's overrides
+#   ~/.config/muxtopus/profiles/<name>.dashboard.conf   one account, dashboard-written
 #
-# The same keys mean the same thing in both; the second file only narrows the
-# scope. Precedence, lowest first: built-in default, environment, config,
-# profile file -- so an existing install keeps its paths by having them
-# written down, a fresh one is well behaved with no file at all, and one
-# account can differ from the rest without touching the others.
+# The same keys mean the same thing in all of them; the per-account files only
+# narrow the scope. Precedence, lowest first: built-in default, environment,
+# config, dashboard.conf, profile file, profile dashboard file -- so an
+# existing install keeps its paths by having them written down, a fresh one is
+# well behaved with no file at all, one account can differ from the rest
+# without touching the others, and what the dashboard's menu writes is what
+# is read next (muxsettings.py says why it sits above the hand-written file).
 #
 # THERE IS NO REGISTRY OF PROFILES. An account exists because ~/.claude-<name>
 # does (mux_profiles, below); its .conf is optional and describes it, it does
@@ -45,6 +50,11 @@
 # configuration, and named accounts layer on top of that.
 MUX_CONFIG="${MUXTOPUS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/muxtopus/config}"
 MUX_PROFILES_DIR="${MUXTOPUS_PROFILES_DIR:-${MUX_CONFIG%/*}/profiles}"
+# THE FILE THE DASHBOARD WRITES (muxsettings.py), read as a layer above the
+# hand-written file at the same scope: `config` is the user's, full of their
+# comments, and a program rewriting it would eventually eat them. Sourced
+# right after `config`; the per-account one right after the profile file.
+MUX_CONFIG_DASH="${MUX_CONFIG%/*}/dashboard.conf"
 
 # EVERY KEY A CONFIG FILE MAY SET, with its built-in default. ONE LIST, and
 # muxconfig.py carries the same one, so the shell half and the python half
@@ -67,6 +77,14 @@ WATCHDOG_STRANDED=120
 CLAUDE_USAGE_MAX_AGE=20
 CLAUDE_USAGE_MODEL=-
 CLAUDE_CONTEXT_WINDOW=1000000
+DASHBOARD_MENU_LAYOUT=table
+DASHBOARD_NEW_PERMISSION_MODE=ask
+DASHBOARD_PERMANENT_MODE_SCOPE=project
+DASHBOARD_NEW_WATCHDOG=on
+DASHBOARD_NEW_MONITOR=on
+DASHBOARD_NEW_MODEL=-
+DASHBOARD_NEW_EFFORT=-
+DASHBOARD_NEW_CWD=-
 "
 
 # The checkout these scripts live in, from this file's own location, so a
@@ -95,14 +113,20 @@ mux_load_config() {
   done
   # shellcheck disable=SC1090
   [ -f "$MUX_CONFIG" ] && . "$MUX_CONFIG"
+  # shellcheck disable=SC1090
+  [ -f "$MUX_CONFIG_DASH" ] && . "$MUX_CONFIG_DASH"
   MUXTOPUS_DIR="${MUXTOPUS_DIR:-$_MUX_SELF_DIR}"
   MUXTOPUS_HOME="${MUXTOPUS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/muxtopus}"
   MUX_SHARED_HOME="$MUXTOPUS_HOME"
   MUX_PROFILE_CONF=""
+  MUX_PROFILE_DASH=""
   if [ -n "$p" ]; then
     MUX_PROFILE_CONF="$MUX_PROFILES_DIR/$p.conf"
+    MUX_PROFILE_DASH="$MUX_PROFILES_DIR/$p.dashboard.conf"
     # shellcheck disable=SC1090
     [ -f "$MUX_PROFILE_CONF" ] && . "$MUX_PROFILE_CONF"
+    # shellcheck disable=SC1090
+    [ -f "$MUX_PROFILE_DASH" ] && . "$MUX_PROFILE_DASH"
   fi
   # THIS account's home may differ from the shared one; MUX_HOME carries it.
   # The exported MUXTOPUS_HOME keeps meaning the SHARED home, or a child
@@ -154,6 +178,24 @@ mux_key_help() {
     CLAUDE_USAGE_MODEL)     echo "Which model's limit line the probe reads. Default: the model in"
                             echo "the account's settings.json." ;;
     CLAUDE_CONTEXT_WINDOW)  echo "Tokens the dashboard draws the context bar against." ;;
+    # The dashboard's own, normally written by its Settings menu (esc) into
+    # dashboard.conf beside this file, which wins over a value set here.
+    DASHBOARD_MENU_LAYOUT)  echo "How the dashboard draws a context menu: table (under the panel the"
+                            echo "cursor is in), modal (centred) or bottom (the footer, scrolling)." ;;
+    DASHBOARD_NEW_PERMISSION_MODE) echo "Permission mode preselected when the dashboard's c creates a window:"
+                            echo "ask, or one of acceptEdits auto bypassPermissions manual dontAsk plan." ;;
+    DASHBOARD_PERMANENT_MODE_SCOPE) echo "Which settings.json 'make it the default' writes: project"
+                            echo "(<cwd>/.claude/settings.json) or account (~/.claude/settings.json)." ;;
+    DASHBOARD_NEW_WATCHDOG) echo "on: a window the dashboard creates is restarted after a limit;"
+                            echo "off: the entry carries watchdog: off and the launcher opts it out." ;;
+    DASHBOARD_NEW_MONITOR)  echo "on: a window the dashboard creates may be wound down near the limit;"
+                            echo "off: the entry carries monitor: off and the launcher opts it out." ;;
+    DASHBOARD_NEW_MODEL)    echo "Model alias preselected for a new window (opus, fable, sonnet…);"
+                            echo "empty is the account default, no --model flag." ;;
+    DASHBOARD_NEW_EFFORT)   echo "Effort preselected for a new window (low medium high xhigh max);"
+                            echo "empty is the account default, no --effort flag." ;;
+    DASHBOARD_NEW_CWD)      echo "Working folder offered first when the dashboard creates a window or"
+                            echo "a schedule entry; empty falls back to the selected session's cwd." ;;
     *)                      echo "(undocumented)" ;;
   esac
 }
@@ -202,6 +244,7 @@ mux_show_config() {
   printf '%-24s %s\n' claude-config "$MUX_CONFIG_DIR"
   printf '%-24s %s\n' tmux-session "$MUX_TMUX"
   printf '%-24s %s%s\n' config "$MUX_CONFIG" "$([ -f "$MUX_CONFIG" ] || printf ' (absent)')"
+  printf '%-24s %s%s\n' dashboard-config "$MUX_CONFIG_DASH" "$([ -f "$MUX_CONFIG_DASH" ] || printf ' (absent)')"
   [ -n "$p" ] && printf '%-24s %s%s\n' profile-config "$MUX_PROFILE_CONF" \
                    "$([ -f "$MUX_PROFILE_CONF" ] || printf ' (absent)')"
   printf '%-24s %s\n' schedules "$MUX_SCHEDULES"
@@ -211,7 +254,9 @@ mux_show_config() {
   echo
   for kv in $MUX_CONFIG_KEYS; do
     k="${kv%%=*}"; d="${kv#*=}"; v="_MUX_ENV_$k"
-    if [ -n "$MUX_PROFILE_CONF" ] && grep -q "^[[:space:]]*$k=" "$MUX_PROFILE_CONF" 2>/dev/null; then src=profile
+    if [ -n "$MUX_PROFILE_DASH" ] && grep -q "^[[:space:]]*$k=" "$MUX_PROFILE_DASH" 2>/dev/null; then src=profile-dashboard
+    elif [ -n "$MUX_PROFILE_CONF" ] && grep -q "^[[:space:]]*$k=" "$MUX_PROFILE_CONF" 2>/dev/null; then src=profile
+    elif grep -q "^[[:space:]]*$k=" "$MUX_CONFIG_DASH" 2>/dev/null; then src=dashboard
     elif grep -q "^[[:space:]]*$k=" "$MUX_CONFIG" 2>/dev/null; then src=config
     elif [ -n "${!v+x}" ]; then src=environment
     elif [ "$d" != "-" ]; then src=default
@@ -298,7 +343,7 @@ mux_use_profile() {
   # A label for anywhere a column or a log line has to name the account, where
   # an empty string would read as missing data rather than as the default one.
   MUX_LABEL="${p:-personal}"
-  export MUX_PROFILE MUX_SUFFIX MUX_CONFIG_DIR MUX_TMUX MUX_HOME MUX_PROFILE_CONF \
+  export MUX_PROFILE MUX_SUFFIX MUX_CONFIG_DIR MUX_TMUX MUX_HOME MUX_PROFILE_CONF MUX_PROFILE_DASH \
          MUX_SCHEDULES MUX_BACKUPS MUX_HANDOVERS MUX_STATE MUX_UNIT MUX_LABEL
 }
 

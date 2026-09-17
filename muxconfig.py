@@ -6,13 +6,19 @@ plain shell (KEY="value") and this is a READER, not an interpreter: only the
 keys in KEYS are honoured, and anything cleverer in a file is ignored rather
 than half-executed.
 
-Two layers, both optional:
+Four layers, all optional -- two hand-written, two the dashboard writes
+(muxsettings.py; the DASHBOARD_* keys):
 
-    ~/.config/muxtopus/config                 every account
-    ~/.config/muxtopus/profiles/<name>.conf   one named account's overrides
+    ~/.config/muxtopus/config                           every account
+    ~/.config/muxtopus/dashboard.conf                   every account, dashboard-written
+    ~/.config/muxtopus/profiles/<name>.conf             one named account's overrides
+    ~/.config/muxtopus/profiles/<name>.dashboard.conf   one account, dashboard-written
 
-Precedence, lowest first: built-in default, environment, config, profile
-file -- the same order profile.sh applies.
+Precedence, lowest first: built-in default, environment, config,
+dashboard.conf, profile file, profile dashboard file -- the same order
+profile.sh applies. The dashboard-written file sits above the hand-written
+one at the same scope, so a value set in the menu reads back as set; the
+account's own files still beat the shared ones.
 
     from muxconfig import settings, knob, mux_home, mux_dir, profile_of
     settings("work")               -> dict            everything, effective
@@ -53,6 +59,17 @@ KEYS = {
     "CLAUDE_USAGE_MAX_AGE": "20",
     "CLAUDE_USAGE_MODEL": None,
     "CLAUDE_CONTEXT_WINDOW": "1000000",
+    # THE DASHBOARD'S OWN, written by its Settings menu into dashboard.conf
+    # (muxsettings.py has the labels, choices and the writer). None here is
+    # "unset": no flag, no header field, the account default.
+    "DASHBOARD_MENU_LAYOUT": "table",
+    "DASHBOARD_NEW_PERMISSION_MODE": "ask",
+    "DASHBOARD_PERMANENT_MODE_SCOPE": "project",
+    "DASHBOARD_NEW_WATCHDOG": "on",
+    "DASHBOARD_NEW_MONITOR": "on",
+    "DASHBOARD_NEW_MODEL": None,
+    "DASHBOARD_NEW_EFFORT": None,
+    "DASHBOARD_NEW_CWD": None,
 }
 KINDS = ("schedules", "backups", "handovers")
 
@@ -66,6 +83,14 @@ def config_path() -> pathlib.Path:
 def profile_conf_path(profile: str) -> pathlib.Path:
     d = os.environ.get("MUXTOPUS_PROFILES_DIR") or str(config_path().parent / "profiles")
     return pathlib.Path(d) / (profile + ".conf")
+
+
+def dashboard_conf_path(profile: str = "") -> pathlib.Path:
+    """The file the dashboard writes: beside config for the default account,
+    beside the profile file for a named one -- the shape options.md uses."""
+    if not profile:
+        return config_path().parent / "dashboard.conf"
+    return profile_conf_path(profile).with_name(profile + ".dashboard.conf")
 
 
 def _read(f: pathlib.Path) -> dict:
@@ -102,8 +127,10 @@ def settings(profile: str = "") -> dict:
         if k in os.environ:
             out[k] = os.environ[k]
     out.update(read_config())
+    out.update(_read(dashboard_conf_path("")))
     if profile:
         out.update(_read(profile_conf_path(profile)))
+        out.update(_read(dashboard_conf_path(profile)))
     return out
 
 

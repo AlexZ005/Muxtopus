@@ -70,6 +70,9 @@ STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local" / "state"
 # about it, and one reader is how that is guaranteed rather than hoped for.
 from muxconfig import (mux_dir, knob, profile_of,
                        options as read_options, options_paths)
+# THE SETTINGS THE DASHBOARD OWNS AND WRITES (dashboard.conf), and the one
+# settings.json edit it is allowed to make. muxconfig reads; this writes.
+import muxsettings
 
 CONFIG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(HOME / ".claude")))
 PROFILE = CONFIG_DIR.name
@@ -1023,10 +1026,16 @@ class Dashboard:
         self.jobs: dict[str, str] = {}    # session id -> bg job id, for attach
         self.windows: dict[str, str] = {}  # session id -> tmux window name
         # Space opens a menu rather than toggling one setting, because the
-        # useful actions outgrew the keyboard: two global switches plus six
-        # things to do to the window under the cursor.
-        self.menu_open = False
-        self.menu_i = 0
+        # useful actions outgrew the keyboard. ONE STATE FOR EVERY MENU: the
+        # per-window one on space ("session"), the per-entry one on space in
+        # the schedule view ("sched"), the dashboard's own on esc ("mux") and
+        # its Settings submenu ("settings"). They share the mover, the
+        # activator and the drawing; only menu_entries() looks at the kind.
+        self.menu: dict | None = None      # {"kind": ..., "i": int}
+        # Reload and quit have to happen in main(), where Live and the saved
+        # terminal state are; a menu row can only ask for them.
+        self.pending_reload = False
+        self.pending_quit = False
         self.prompt: dict | None = None    # inline text entry (rename)
         self.confirm: dict | None = None   # yes/no gate (close)
         self.picker: dict | None = None    # arrow-driven option list (create flow)
@@ -1098,7 +1107,139 @@ class Dashboard:
 
     # ---------------------------------------------------------------- menu
     def menu_entries(self) -> list[dict]:
-        """Rebuilt every frame so the labels state what is true right now."""
+        """The rows of whichever menu is open, rebuilt every frame so the
+        labels state what is true right now."""
+        kind = self.menu["kind"] if self.menu else "session"
+        if kind == "mux":
+            return self.mux_menu_entries()
+        if kind == "settings":
+            return self.settings_menu_entries()
+        return self.session_menu_entries()
+
+    def menu_title(self) -> str:
+        kind = self.menu["kind"] if self.menu else "session"
+        if kind == "mux":
+            return "[bold]muxtopus"
+        if kind == "settings":
+            return "[bold]settings[/] [%s]· %s" % (
+                DIM, str(muxsettings.dashboard_conf_path(PROFILE)).replace(str(HOME), "~"))
+        return "[bold]menu"
+
+    def menu_hint(self) -> str:
+        kind = self.menu["kind"] if self.menu else "session"
+        if kind == "settings":
+            return "   ↑↓ pick · enter change · esc back"
+        return "   ↑↓ pick · enter choose · esc close"
+
+    def mux_menu_entries(self) -> list[dict]:
+        """The dashboard's own menu (esc): what is not about one row. The two
+        global switches are here by their full names because a menu is where
+        a hand looks for them; w and m stay as the fast path."""
+        wd = WATCHDOG_ENABLED.exists()
+        mon = monitor_on()
+        items: list[dict] = [
+            {"label": "Settings ▸  menu layout, defaults for a new window, where a mode is made permanent",
+             "sub": "settings"},
+            {"sep": True},
+            {"label": "Watchdog: %s  restart a limited window once its limit resets"
+                      % ("ON" if wd else "off"),
+             "on": wd, "act": toggle_watchdog, "stay": True},
+            {"label": "Monitor: %s  ask a working window to wind down near the limit"
+                      % ("ON" if mon else "off"),
+             "on": mon, "act": self.act_monitor, "stay": True},
+            {"sep": True},
+            {"label": "Disconnect  detach this tmux client; the dashboard and every window keep running",
+             "act": self.act_disconnect},
+            {"label": "Reload the dashboard  re-exec this script, as R does",
+             "act": self.act_reload},
+            {"label": "Quit the dashboard", "act": self.act_quit, "danger": True},
+        ]
+        if not os.environ.get("TMUX"):
+            items[5]["disabled"] = "not inside tmux"
+        return items
+
+    def act_disconnect(self) -> str:
+        """`tmux detach-client` with no target: inside a pane TMUX names the
+        server and tmux resolves the current client from it. Every window,
+        this one included, keeps running; `muxtopus` attaches again."""
+        try:
+            r = subprocess.run(["tmux", "detach-client"], capture_output=True,
+                               text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return "detach failed: %s" % exc
+        return "" if r.returncode == 0 else "detach failed: %s" % r.stderr.strip()
+
+    def act_reload(self) -> str:
+        self.pending_reload = True
+        return ""
+
+    def act_quit(self) -> str:
+        self.pending_quit = True
+        return ""
+
+    # ------------------------------------------------------------ settings
+    def model_choices(self) -> list[str]:
+        """The CLI aliases options.md's `model` block offers -- the same list
+        the options table uses, because `--model opus-5` (the MODEL column's
+        spelling) is refused by the CLI and kills the window after it has
+        eaten the paste. The literal list is the fallback for a missing or
+        broken block."""
+        for o in read_options(PROFILE):
+            if o["key"] == "model" and not o["bad"] and o["choices"]:
+                return list(o["choices"])
+        return ["opus", "opus[1m]", "fable", "sonnet", "haiku"]
+
+    def settings_menu_entries(self) -> list[dict]:
+        """One row per setting, label and current value. Every row stays open
+        after a change so several can be set in one visit; the notice says
+        what was written and to which file."""
+        items: list[dict] = []
+        for key, meta in muxsettings.DASHBOARD_KEYS.items():
+            val = muxsettings.get(key, PROFILE)
+            if meta["kind"] == "onoff":
+                items.append({"label": "%s: %s  %s" % (meta["label"], "ON" if val == "on" else "off",
+                                                        meta["hint"]),
+                              "on": val == "on", "act": lambda k=key: self._setting_edit(k),
+                              "stay": True})
+                continue
+            if key == "DASHBOARD_NEW_CWD":
+                shown = val or "(the selected session's cwd)"
+            else:
+                shown = val or "(account default)"
+            items.append({"label": "%s: %s  %s" % (meta["label"], shown, meta["hint"]),
+                          "act": lambda k=key: self._setting_edit(k), "stay": True})
+        items.append({"sep": True})
+        items.append({"label": "Back", "sub": "mux"})
+        return items
+
+    def _setting_edit(self, key: str) -> str:
+        meta = muxsettings.DASHBOARD_KEYS[key]
+        cur = muxsettings.get(key, PROFILE)
+        if meta["kind"] == "onoff":
+            return self._setting_put(key, "off" if cur == "on" else "on")
+        if meta["kind"] == "choice":
+            choices = list(meta["choices"]) if meta["choices"] is not None \
+                else [""] + self.model_choices()
+            shown = [c or "(account default)" for c in choices]
+            i = choices.index(cur) if cur in choices else 0
+            self.picker = {"title": meta["label"], "i": i, "options": shown,
+                           "fn": lambda c, k=key: self._setting_put(
+                               k, "" if c == "(account default)" else c)}
+            return ""
+        self.prompt = {"title": meta["label"], "buf": cur, "keep_menu": True,
+                       "fn": lambda s, k=key: self._setting_put(k, s.strip())}
+        return ""
+
+    def _setting_put(self, key: str, value: str) -> str:
+        label = muxsettings.DASHBOARD_KEYS[key]["label"]
+        err = muxsettings.put(key, value, PROFILE)
+        if err:
+            return "%s: %s" % (label, err)
+        return "%s = %s  · %s" % (label, value or "(account default)",
+                                  muxsettings.dashboard_conf_path(PROFILE).name)
+
+    def session_menu_entries(self) -> list[dict]:
+        """The per-window menu (space in the main view)."""
         wd_all = WATCHDOG_ENABLED.exists()
         mon_all = monitor_on()
         sid = self.cursor
@@ -1159,27 +1300,47 @@ class Dashboard:
                 it["disabled"] = "background session, no window"
         return items
 
+    def open_menu(self, kind: str) -> None:
+        self.menu = {"kind": kind, "i": 0}
+        self.menu_move(0)
+
     def menu_move(self, delta: int) -> None:
+        if self.menu is None:
+            return
         items = self.menu_entries()
-        i = self.menu_i
+        if not items:
+            return
+        i = self.menu["i"]
+        if delta == 0 and 0 <= i < len(items) and not items[i].get("sep") \
+                and not items[i].get("disabled"):
+            return
+        step = delta or 1
         for _ in range(len(items)):
-            i = (i + delta) % len(items)
+            i = (i + step) % len(items)
             if not items[i].get("sep") and not items[i].get("disabled"):
-                self.menu_i = i
+                self.menu["i"] = i
                 return
 
     def menu_activate(self) -> None:
-        items = self.menu_entries()
-        if not (0 <= self.menu_i < len(items)):
+        if self.menu is None:
             return
-        it = items[self.menu_i]
+        items = self.menu_entries()
+        i = self.menu["i"]
+        if not (0 <= i < len(items)):
+            return
+        it = items[i]
         if it.get("sep") or it.get("disabled"):
             return
+        if it.get("sub"):
+            self.open_menu(it["sub"])
+            return
         msg = it["act"]()
-        # A submode owns the screen until it is answered; a plain action is done.
-        if self.prompt is None and self.confirm is None:
-            if it.get("key") not in ("watchdog", "monitor"):
-                self.menu_open = False
+        # A submode owns the screen until it is answered; a plain action is
+        # done, unless the row says it stays (a toggle you may want to flip
+        # back, a setting beside other settings).
+        if self.prompt is None and self.confirm is None and self.picker is None:
+            if not it.get("stay"):
+                self.menu = None
         if msg:
             self.say(msg)
 
@@ -1316,7 +1477,8 @@ class Dashboard:
             fn = pr["fn"]
             text = pr["buf"]
             self.prompt = None
-            self.menu_open = False
+            if not pr.get("keep_menu"):
+                self.menu = None
             self.say(fn(text))
         elif key == "\x1b":
             self.prompt = None
@@ -1333,7 +1495,7 @@ class Dashboard:
         if key in ("y", "Y"):
             fn = cf["fn"]
             self.confirm = None
-            self.menu_open = False
+            self.menu = None
             self.say(fn())
         elif key in ("n", "N", "\x1b", "\r", "\n"):
             self.confirm = None
@@ -2417,6 +2579,7 @@ class Dashboard:
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " schedules  ",
             ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",
+            ("esc", DIM), " muxtopus  ",
             ("←→", DIM), " fold  ", ("t", DIM), " tree  ",
             ("f", DIM), " all lanes  ", ("p", DIM), " btop  ", ("?", DIM), " help",
         )
@@ -2437,13 +2600,13 @@ class Dashboard:
         sub = self._submode_foot()
         if sub is not None:
             foot = sub
-        elif self.menu_open:
+        elif self.menu is not None:
             body = Text()
             for i, it in enumerate(self.menu_entries()):
                 if it.get("sep"):
                     body.append("   " + "·" * 52 + "\n", style=FRAME)
                     continue
-                cur = (i == self.menu_i)
+                cur = (i == self.menu["i"])
                 if it.get("disabled"):
                     body.append("     " + it["label"], style=FRAME)
                     body.append("  (%s)\n" % it["disabled"], style=FRAME)
@@ -2457,8 +2620,14 @@ class Dashboard:
                 elif not cur:
                     style = ""
                 body.append(it["label"] + "\n", style=style)
-            body.append("   ↑↓ pick · enter choose · esc close", style=DIM)
-            foot = Panel(body, title="[bold]menu", title_align="left",
+            # THE NOTICE HAS TO LIVE HERE while a menu is open: this panel
+            # replaces the footer that normally shows it, and a Settings row
+            # that stays open would otherwise report "not a directory" to
+            # nobody -- the same hole the options table had.
+            if self.notice and time.time() - self.notice_at < 8:
+                body.append("   " + self.notice + "\n", style="#c9a0dc")
+            body.append(self.menu_hint(), style=DIM)
+            foot = Panel(body, title=self.menu_title(), title_align="left",
                          border_style="#c9a0dc", box=box.ROUNDED)
 
         # UNCOMMITTED WORK GETS ITS OWN TABLE, not a column on the sessions.
@@ -2509,7 +2678,7 @@ HELP = f"""
   [bold]q[/] quit        [bold]r[/] redraw now      [bold]R[/] reload this script
   [bold]s[/] scheduled windows      [bold]enter[/] on the extras row stops/starts them
   [bold]w[/] watchdog    [bold]m[/] monitoring      [bold]p[/] btop   [bold]?[/] this screen
-  [bold]u[/] read usage limits      [bold]up/down[/] pick   [bold]space[/] menu
+  [bold]u[/] read usage limits      [bold]up/down[/] pick   [bold]space[/] menu   [bold]esc[/] muxtopus menu
   [bold]enter[/] open the selected session's window (Ctrl-b 0 comes back here)
   [bold]f[/] lanes: this account only / every account
   [bold]←/→[/] fold / unfold a subtree      [bold]t[/] tree ordering on / off
@@ -2539,6 +2708,28 @@ HELP = f"""
     Two switches at the top, then everything you can do to the window under
     the cursor: open, rename, skip it, wind it down, resume it, continue it at
     low priority, or close it. Arrows pick, enter chooses, esc closes.
+
+  [{DIM}]THE MUXTOPUS MENU (esc) AND SETTINGS[/]
+    esc opens the dashboard's own menu -- what is not about one row: Settings,
+    the watchdog and monitor switches by their full names (w and m stay the
+    fast path), Disconnect (detaches this tmux client; every window keeps
+    running, `muxtopus` attaches again), Reload (R) and Quit.
+
+    Settings are written to
+
+        {muxsettings.dashboard_conf_path(PROFILE)}
+
+    a file the DASHBOARD owns, in the same KEY="value" shell as config -- kept
+    apart from config because that one is yours and full of your comments, and
+    a program that rewrites it would eventually eat them. It is read as a
+    layer ABOVE config (and profiles/<name>.dashboard.conf above
+    profiles/<name>.conf), so what the menu writes is what the next frame
+    reads; a value is only reported as saved once it has been read back from
+    disk. `muxtopus -c` shows every setting with the layer it came from.
+    The settings: the menu layout (table, modal, bottom), the permission mode,
+    model and effort preselected when c creates a window, whether such a window
+    is watched and monitored, the working folder offered first, and which
+    settings.json "make it the default" writes to.
 
   [{DIM}]SESSION MONITORING[/]
     Off by default, and a separate switch from the watchdog because they are
@@ -2875,6 +3066,19 @@ def main() -> int:
                     live.start()
                     continue
 
+                if dash.pending_quit:
+                    break
+                if dash.pending_reload:
+                    # A running process holds the copy it started with; re-exec
+                    # so an edited script takes effect without respawning tmux.
+                    # Also nudge the limits, but through --ensure: a reload is
+                    # not a reason to start a probe if the figures are minutes
+                    # old, and R gets pressed a lot while editing.
+                    refresh_usage()
+                    live.stop()
+                    termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+                    os.execv(sys.executable, [sys.executable, __file__] + args)
+
                 key = read_key(interval)
 
                 # A SUBMODE OWNS THE KEYBOARD while it is open, and it is
@@ -2885,7 +3089,7 @@ def main() -> int:
                                         or dash.confirm is not None
                                         or dash.picker is not None
                                         or dash.options is not None
-                                        or dash.menu_open):
+                                        or dash.menu is not None):
                     if dash.prompt is not None:
                         dash.prompt_key(key)
                     elif dash.confirm is not None:
@@ -2905,7 +3109,12 @@ def main() -> int:
                     elif key in ("\r", "\n"):
                         dash.menu_activate()
                     elif key in ("\x1b", " ", "q", "Q"):
-                        dash.menu_open = False
+                        # esc means "back" in a submenu and "close" at the top,
+                        # exactly as it does everywhere else on this screen.
+                        if key == "\x1b" and dash.menu["kind"] == "settings":
+                            dash.open_menu("mux")
+                        else:
+                            dash.menu = None
                     continue
 
                 # The schedule view owns most keys while open; q, R, ? and p
@@ -2950,15 +3159,8 @@ def main() -> int:
                 if key in ("q", "Q"):
                     break
                 if key == "R":
-                    # A running process holds the copy it started with; re-exec
-                    # so an edited script takes effect without respawning tmux.
-                    # Also nudge the limits, but through --ensure: a reload is
-                    # not a reason to start a probe if the figures are minutes
-                    # old, and R gets pressed a lot while editing.
-                    refresh_usage()
-                    live.stop()
-                    termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-                    os.execv(sys.executable, [sys.executable, __file__] + args)
+                    dash.pending_reload = True
+                    continue
                 if key == "?":
                     live.stop()
                     console.clear()
@@ -2982,8 +3184,11 @@ def main() -> int:
                 elif key in ("\r", "\n"):
                     dash.say(dash.open_selected())
                 elif key == " ":
-                    dash.menu_open = True
-                    dash.menu_i = 0
+                    dash.open_menu("session")
+                elif key == "\x1b":
+                    # The dashboard's own menu: settings, the global switches,
+                    # disconnect, reload, quit. Unbound here until now.
+                    dash.open_menu("mux")
                 elif key in ("w", "W"):
                     dash.say(toggle_watchdog())
                 elif key in ("m", "M"):
