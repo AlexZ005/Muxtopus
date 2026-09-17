@@ -39,6 +39,7 @@ from rich import box
 from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -73,6 +74,9 @@ from muxconfig import (mux_dir, knob, profile_of,
 # THE SETTINGS THE DASHBOARD OWNS AND WRITES (dashboard.conf), and the one
 # settings.json edit it is allowed to make. muxconfig reads; this writes.
 import muxsettings
+# THE MENU DRAWING, at an exact height. Pure: no dashboard state in it, so it
+# could be built and proven on its own (tests/test_menulayout.py).
+from menulayout import MENU_MIN, menu_needed, menu_panel, rendered_height
 
 CONFIG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(HOME / ".claude")))
 PROFILE = CONFIG_DIR.name
@@ -1014,9 +1018,13 @@ def sparkline(pcts: list[int]) -> Text:
 # frame
 # --------------------------------------------------------------------------
 class Dashboard:
-    def __init__(self, interval: float) -> None:
+    def __init__(self, interval: float, console: Console | None = None) -> None:
         self.cpu = Cpu()
         self.interval = interval
+        # The console is what knows the terminal's height, and the height is
+        # what a menu is measured against (place_menu). One object, shared
+        # with Live, so the size it reports is the size being drawn to.
+        self.console = console or Console()
         self.notice: str | None = None
         self.notice_at = 0.0
         self.party_at = 0.0
@@ -1117,19 +1125,73 @@ class Dashboard:
         return self.session_menu_entries()
 
     def menu_title(self) -> str:
+        """Markup, minus the leading [bold] menu_panel adds. Names are escaped:
+        a window called [x] would otherwise be read as a style."""
         kind = self.menu["kind"] if self.menu else "session"
         if kind == "mux":
-            return "[bold]muxtopus"
+            return "muxtopus"
         if kind == "settings":
-            return "[bold]settings[/] [%s]· %s" % (
-                DIM, str(muxsettings.dashboard_conf_path(PROFILE)).replace(str(HOME), "~"))
-        return "[bold]menu"
+            return "settings[/] [%s]· %s" % (
+                DIM, escape(str(muxsettings.dashboard_conf_path(PROFILE)).replace(str(HOME), "~")))
+        win = self.windows.get(self.cursor, "")
+        if win:
+            return "menu[/] [%s]· %s" % (DIM, escape(win))
+        return "menu"
 
     def menu_hint(self) -> str:
         kind = self.menu["kind"] if self.menu else "session"
-        if kind == "settings":
-            return "   ↑↓ pick · enter change · esc back"
-        return "   ↑↓ pick · enter choose · esc close"
+        hint = "↑↓ pick · enter change · esc back" if kind == "settings" \
+            else "↑↓ pick · enter choose · esc close"
+        # THE NOTICE HAS TO LIVE HERE while a menu is open: the menu replaces
+        # the footer that normally shows it, and a Settings row that stays
+        # open would otherwise report "not a directory" to nobody -- the same
+        # hole the options table had. It shares the hint line, so the panel's
+        # height is the same with or without it.
+        if self.notice and time.time() - self.notice_at < 8:
+            return "%s   ·   %s" % (self.notice, hint)
+        return hint
+
+    def place_menu(self, sections: list, at: int) -> Group:
+        """The frame with the open menu in it, NEVER clipped.
+
+        `sections` are the frame's panels top to bottom and `at` is the index
+        of the one the cursor is in. Which of them stay depends on the
+        layout setting; the room left under the ones that stay is MEASURED
+        (rendered_height: what Rich will really draw, not a row count), and
+        the menu is given min(room, what it needs) lines and scrolls inside
+        them. That is the whole fix for the reported bug -- the footer menu
+        was the last thing in a Group that Live crops from the bottom.
+
+          table   the cursor's panel stays, the menu goes right under it,
+                  everything below is dropped while it is open
+          modal   the menu alone, centred; the frame comes back on esc
+          bottom  the old position, capped and scrolling
+
+        With less than MENU_MIN lines left -- a 24-row terminal and a tall
+        sessions table -- the frame degrades to modal for this one open,
+        and the title says so; a menu is scrolled, never cut."""
+        layout = knob("DASHBOARD_MENU_LAYOUT", PROFILE) or "table"
+        items = self.menu_entries()
+        cur = self.menu["i"]
+        height = self.console.size.height
+        if layout == "bottom":
+            kept = [p for _n, p in sections]
+        elif layout == "modal":
+            kept = []
+        else:
+            layout = "table"
+            kept = [p for _n, p in sections[:at + 1]]
+        room = height - rendered_height(self.console, Group(*kept)) if kept else height
+        title = self.menu_title()
+        if room < MENU_MIN:
+            layout, kept, room = "modal", [], height
+            title += "[/] [%s](modal: no room below)" % DIM
+        rows = max(MENU_MIN, min(room, menu_needed(items)))
+        panel = menu_panel(items, cur, title, rows, self.menu_hint())
+        if layout == "modal":
+            panel.expand = False
+            return Group(Align.center(panel, vertical="middle", height=height))
+        return Group(*kept, panel)
 
     def mux_menu_entries(self) -> list[dict]:
         """The dashboard's own menu (esc): what is not about one row. The two
@@ -2600,35 +2662,6 @@ class Dashboard:
         sub = self._submode_foot()
         if sub is not None:
             foot = sub
-        elif self.menu is not None:
-            body = Text()
-            for i, it in enumerate(self.menu_entries()):
-                if it.get("sep"):
-                    body.append("   " + "·" * 52 + "\n", style=FRAME)
-                    continue
-                cur = (i == self.menu["i"])
-                if it.get("disabled"):
-                    body.append("     " + it["label"], style=FRAME)
-                    body.append("  (%s)\n" % it["disabled"], style=FRAME)
-                    continue
-                body.append(" ▸ " if cur else "   ", style="bold #c9a0dc")
-                style = "bold"
-                if it.get("danger"):
-                    style = "bold " + RED if cur else RED
-                elif "on" in it:
-                    style = ("bold " + GREEN) if it["on"] else ("bold " if cur else DIM)
-                elif not cur:
-                    style = ""
-                body.append(it["label"] + "\n", style=style)
-            # THE NOTICE HAS TO LIVE HERE while a menu is open: this panel
-            # replaces the footer that normally shows it, and a Settings row
-            # that stays open would otherwise report "not a directory" to
-            # nobody -- the same hole the options table had.
-            if self.notice and time.time() - self.notice_at < 8:
-                body.append("   " + self.notice + "\n", style="#c9a0dc")
-            body.append(self.menu_hint(), style=DIM)
-            foot = Panel(body, title=self.menu_title(), title_align="left",
-                         border_style="#c9a0dc", box=box.ROUNDED)
 
         # UNCOMMITTED WORK GETS ITS OWN TABLE, not a column on the sessions.
         # The two do not line up: a repo can be dirty with no session and no
@@ -2654,19 +2687,30 @@ class Dashboard:
                                 f"{sum(n for _p, _n, n in dirty_list)} file(s)",
                                 title_align="left", border_style=FRAME, box=box.ROUNDED))
 
-        return Group(
-            Panel(head, title="[bold]deck", subtitle=f"[{DIM}]{subtitle}",
-                  subtitle_align="right", border_style=FRAME, box=box.ROUNDED),
-            Panel(lanes,
-                  title=f"[bold]lanes[/] [{DIM}]· {len(shown)} server(s) · {human_mb(total_mb)}{lane_scope}",
-                  title_align="left", border_style=FRAME, box=box.ROUNDED),
-            Panel(ct, title=ctitle, title_align="left",
-                  border_style=FRAME, box=box.ROUNDED),
-            *panels,
-            Panel(sysrow, title="[bold]system", title_align="left",
-                  border_style=FRAME, box=box.ROUNDED),
-            foot,
-        )
+        sections = [
+            ("deck", Panel(head, title="[bold]deck", subtitle=f"[{DIM}]{subtitle}",
+                           subtitle_align="right", border_style=FRAME, box=box.ROUNDED)),
+            ("lanes", Panel(lanes,
+                            title=f"[bold]lanes[/] [{DIM}]· {len(shown)} server(s) · {human_mb(total_mb)}{lane_scope}",
+                            title_align="left", border_style=FRAME, box=box.ROUNDED)),
+            ("claude", Panel(ct, title=ctitle, title_align="left",
+                             border_style=FRAME, box=box.ROUNDED)),
+            *[("uncommitted", p) for p in panels],
+            ("system", Panel(sysrow, title="[bold]system", title_align="left",
+                             border_style=FRAME, box=box.ROUNDED)),
+        ]
+        if self.menu is not None and sub is None:
+            # Which panel the cursor is in: a lane row, the extras row on the
+            # system line, or a session. The muxtopus and settings menus
+            # follow the cursor too -- there is no better anchor.
+            if self.cursor.startswith(LANE_PREFIX):
+                at = 1
+            elif self.cursor == EXTRAS_SENTINEL:
+                at = len(sections) - 1
+            else:
+                at = 2
+            return self.place_menu(sections, at)
+        return Group(*[p for _n, p in sections], foot)
 
 
 SOFT = knob("WATCHDOG_SOFT_PCT", PROFILE)
@@ -3036,7 +3080,7 @@ def main() -> int:
     once = "--once" in args
 
     console = Console()
-    dash = Dashboard(interval)
+    dash = Dashboard(interval, console)
 
     if once or not sys.stdout.isatty():
         dash.build()          # prime the CPU deltas so the frame is real
