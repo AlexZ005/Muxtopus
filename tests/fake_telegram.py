@@ -140,7 +140,7 @@ class H(BaseHTTPRequestHandler):
                     mid = int(p.get("message_id") or 0)
             return self.reply(200, {"ok": True, "result": {
                 "message_id": mid, "chat": {"id": chat}, "text": p.get("text", "")}})
-        if method == "answerCallbackQuery":
+        if method in ("answerCallbackQuery", "setMyCommands"):
             return self.reply(200, {"ok": True, "result": True})
         return self.reply(404, {"ok": False, "error_code": 404, "description": "Not Found"})
 

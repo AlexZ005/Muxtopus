@@ -162,11 +162,19 @@ def read_json(path: pathlib.Path) -> dict | None:
         return None
 
 
+_HOLDING = False
+
+
 @contextlib.contextmanager
 def locked(wait: float | None):
     """The one-poller lock. wait=None: do not wait at all (yield False when it
     is held). Otherwise wait up to that many seconds, then carry on unlocked
-    rather than lose a message."""
+    rather than lose a message. Re-entrant within this process: a command
+    handled under poll's lock re-issues prompts without deadlocking on it."""
+    global _HOLDING
+    if _HOLDING:
+        yield True
+        return
     SHARED.mkdir(parents=True, exist_ok=True)
     f = open(SHARED / "lock", "w")
     got = False
@@ -175,7 +183,7 @@ def locked(wait: float | None):
         while True:
             try:
                 fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                got = True
+                got = _HOLDING = True
                 break
             except OSError:
                 if wait is None or time.time() >= deadline:
@@ -184,6 +192,7 @@ def locked(wait: float | None):
         yield got
     finally:
         if got:
+            _HOLDING = False
             fcntl.flock(f, fcntl.LOCK_UN)
         f.close()
 
@@ -304,7 +313,12 @@ def send(text: str, keyboard: list | None = None, reply_to: int | None = None) -
 
 
 def send_prompt_message(profile: str, pane: str, sha: str, yes: bool, more: bool,
-                        title: str, body: str) -> int | None:
+                        title: str, body: str, push: bool = True) -> int | None:
+    """push=True is the watchdog telling; a /mute holds it back. A pull
+    (/pending, /windows) is somebody asking, and is never muted."""
+    if push and muted_until() > time.time():
+        log("muted: %s" % title)
+        return None
     actions = ([("Yes", "yes")] if yes else []) + [("No", "no")] + ([("More", "more")] if more else [])
     text = title + "\n" + body
     with locked(15):
@@ -326,7 +340,8 @@ def expire_old(now: float) -> None:
             continue
         if now - g.get("created", 0) > EXPIRE:
             drop_group(g["gid"])
-            edit_note(g, "⌛ expired -- answer at the machine")
+            if g.get("kind") != "cmd":          # a /status keyboard just stops working
+                edit_note(g, "⌛ expired -- answer at the machine")
             log("expired %s (%s)" % (g["gid"], g.get("target")))
 
 
@@ -425,6 +440,10 @@ def handle_callback(q: dict) -> None:
         answer_cb(q["id"], "expired or already used")
         log("callback for an unknown id %s" % data[:20])
         return
+    if time.time() - d.get("created", 0) > EXPIRE and d.get("kind") == "cmd":
+        drop_group(d["group"])
+        answer_cb(q["id"], "expired -- send /status again")
+        return
     if time.time() - d.get("created", 0) > EXPIRE:
         g = read_json(groups_dir() / (d["group"] + ".json")) or {"message_id": d.get("message_id")}
         drop_group(d["group"])
@@ -434,6 +453,8 @@ def handle_callback(q: dict) -> None:
         return
     if d.get("kind") == "prompt":
         handle_prompt(q, d)
+    elif d.get("kind") == "cmd":
+        handle_cmd_button(q, d)
     elif d.get("kind") == "fork":
         answer_cb(q["id"], "answering a fork from the phone is not here yet -- use the dashboard")
         log("fork callback for %s: not yet (notify-dash phase 4)" % d.get("target"))
@@ -441,14 +462,17 @@ def handle_callback(q: dict) -> None:
         answer_cb(q["id"], "unknown action")
 
 
-def handle_message(m: dict) -> None:
+def handle_message(m: dict, profile: str = "") -> None:
     chat = (m.get("chat") or {}).get("id")
     frm = (m.get("from") or {}).get("id")
     if not from_the_chat(chat, frm):
         log("dropped a message from chat %s / user %s" % (chat, frm))
         return
     text = (m.get("text") or "").strip()
-    log("message not acted on yet: %s" % text[:40])
+    if text.startswith("/"):
+        handle_command(text, profile)
+        return
+    log("a typed message is not acted on yet (fork replies: notify-dash phase 4): %s" % text[:40])
 
 
 def poll(profile: str = "") -> int:
@@ -458,6 +482,7 @@ def poll(profile: str = "") -> int:
         if not got:
             return 0
         now = time.time()
+        register_commands()
         expire_old(now)
         try:
             offset = int((SHARED / "offset").read_text().strip() or 0)
@@ -481,10 +506,364 @@ def poll(profile: str = "") -> int:
                 if "callback_query" in u:
                     handle_callback(u["callback_query"])
                 elif "message" in u:
-                    handle_message(u["message"])
+                    handle_message(u["message"], profile)
             except Exception as e:               # one bad update must not wedge the queue
                 log("update %d raised %s" % (uid, type(e).__name__))
     return 0
+
+
+# ------------------------------------------------------------------ pull
+# §3b. EVERY SWITCH MAY BE OFF and the phone can still find out and act: a push
+# can be missed, muted or dismissed, and a dismissed message takes its buttons
+# with it. Everything is read from what the watchdogs already publish, for
+# every account on this machine.
+COMMANDS = [
+    ("status", "every account at a glance"),
+    ("pending", "everything that needs you, with fresh buttons"),
+    ("questions", "unanswered question files"),
+    ("blocked", "schedule entries that are not launching, and why"),
+    ("windows", "one line per session"),
+    ("mute", "pushes off for a while, e.g. /mute 2h"),
+    ("unmute", "pushes back on"),
+    ("help", "what this bot answers"),
+]
+HELP = """/status -- per account: sessions by state, budget, schedule, handovers, questions, heartbeat
+/pending -- everything that needs you, RE-ISSUED with fresh buttons (old ones stop working)
+/questions -- unanswered QUESTIONS files
+/blocked -- each entry that is not launching, with the scheduler's why
+/windows -- one line per session; a needs-you row brings its buttons
+/mute 2h -- pushes off for a while (30m, 2h, 1d); asking keeps working
+/unmute -- pushes back on
+Replies come within one watchdog pass (at most ~30 s)."""
+STATUS_COLS = ("sid", "name", "pane", "ver", "ctx", "state", "reset", "action", "resumed",
+               "spent", "cached", "optout", "model", "idle", "job", "cwd", "wound", "moptout", "pid")
+STATE_WORDS = (("working", "working"), ("waiting", "needs you"), ("idle", "idle"),
+               ("limited", "limited"), ("due", "due"), ("stranded", "stranded"))
+
+
+def register_commands(force: bool = False):
+    """setMyCommands, only when the list differs from what was last registered
+    -- so it appears in Telegram's own menu button without a call per pass."""
+    sha = hashlib.sha1(json.dumps(COMMANDS).encode()).hexdigest()
+    stamp = SHARED / "commands.sha"
+    try:
+        if not force and stamp.read_text().strip() == sha:
+            return None
+    except OSError:
+        pass
+    r = api("setMyCommands", commands=[{"command": c, "description": d} for c, d in COMMANDS])
+    if not r.get("ok"):
+        log("setMyCommands failed: %s" % r.get("description"))
+        return False
+    SHARED.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(sha + "\n")
+    log("registered %d commands" % len(COMMANDS))
+    return True
+
+
+def muted_until() -> float:
+    try:
+        return float((SHARED / "mute").read_text().strip() or 0)
+    except (OSError, ValueError):
+        return 0.0
+
+
+def profiles() -> list[str]:
+    """Every account on this machine, as profile.sh's mux_profiles finds them:
+    ~/.claude is the default, ~/.claude-<name> a named one."""
+    home = pathlib.Path.home()
+    out = [""] if (home / ".claude").is_dir() else []
+    for d in sorted(home.glob(".claude-*")):
+        name = d.name[len(".claude-"):]
+        if not d.is_dir() or d.name.endswith((".bak", "~", ".old", ".tmp")):
+            continue
+        if re.fullmatch(r"[A-Za-z0-9_-]+", name):
+            out.append(name)
+    return out
+
+
+def label(profile: str) -> str:
+    return profile or "personal"
+
+
+def wd_dir(profile: str) -> pathlib.Path:
+    return STATE_HOME / ("claude-watchdog" + muxconfig.suffix_of(profile))
+
+
+def tsv(path: pathlib.Path) -> list[list[str]]:
+    try:
+        return [l.split("\t") for l in path.read_text().splitlines() if l.strip()]
+    except OSError:
+        return []
+
+
+def sessions(profile: str) -> list[dict]:
+    out = []
+    for row in tsv(wd_dir(profile) / "status.tsv"):
+        s = dict(zip(STATUS_COLS, row))
+        pid = s.get("pid", "")
+        if pid.isdigit() and not pathlib.Path("/proc", pid).exists():
+            continue                             # the window closed since the pass
+        out.append(s)
+    return out
+
+
+def verdicts(profile: str) -> list[dict]:
+    return [dict(zip(("file", "verdict", "why", "when"), r)) for r in tsv(wd_dir(profile) / "sched-why.tsv")]
+
+
+def long_blocked(profile: str) -> list[dict]:
+    after = knob("MUXTOPUS_NOTIFY_BLOCKED_AFTER", profile)
+    mins = int(after) if after.isdigit() else 120
+    if mins <= 0:
+        return []
+    since = {r[0]: r[1] for r in tsv(wd_dir(profile) / "notify" / "blocked.tsv") if len(r) > 1}
+    now = time.time()
+    return [v for v in verdicts(profile) if v["verdict"] == "blocked"
+            and since.get(v["file"], "").isdigit() and now - int(since[v["file"]]) >= mins * 60]
+
+
+def human_age(sec: float) -> str:
+    sec = max(0, int(sec))
+    if sec < 60:
+        return "%ds" % sec
+    if sec < 3600:
+        return "%dm" % (sec // 60)
+    if sec < 172800:
+        return "%dh" % (sec // 3600)
+    return "%dd" % (sec // 86400)
+
+
+def status_counts(profile: str) -> dict:
+    ss = sessions(profile)
+    vs = verdicts(profile)
+    return {
+        "states": {k: sum(1 for s in ss if s.get("state") == k) for k, _ in STATE_WORDS},
+        "sessions": len(ss),
+        "pending": len(vs),
+        "blocked": sum(1 for v in vs if v["verdict"] == "blocked"),
+        "stalled": sum(1 for v in vs if v["verdict"] == "stalled"),
+        "questions": len(unanswered_files(profile)),
+    }
+
+
+def status_text(profile: str) -> tuple[str, dict]:
+    c = status_counts(profile)
+    st = " · ".join("%d %s" % (c["states"][k], w) for k, w in STATE_WORDS if c["states"][k])
+    lines = ["%s · status" % label(profile),
+             "sessions: %s" % (st or "none")]
+    u = {r[0]: r[1] for r in tsv(wd_dir(profile) / "usage.tsv") if len(r) > 1}
+    if u:
+        reset = u.get("session_reset_at", "")
+        at = time.strftime("%H:%M", time.localtime(int(reset))) if reset.isdigit() else u.get("session_reset", "?")
+        age = human_age(time.time() - int(u["at"])) + " ago" if u.get("at", "").isdigit() else "?"
+        lines.append("budget: session %s%% · week %s%% · resets %s (read %s)"
+                     % (u.get("session_pct", "?"), u.get("week_pct", "?"), at, age))
+    lines.append("schedule: %d pending · %d blocked · %d stalled" % (c["pending"], c["blocked"], c["stalled"]))
+    try:
+        opened = len(list(muxconfig.mux_dir("handovers", profile).glob("STATUS-*.md")))
+    except OSError:
+        opened = 0
+    lines.append("handovers: %d open · questions: %d unanswered" % (opened, c["questions"]))
+    hb = tsv(wd_dir(profile) / "heartbeat")
+    if hb and hb[0][0].isdigit():
+        lines.append("watchdog: scanned %s ago" % human_age(time.time() - int(hb[0][0])))
+    else:
+        lines.append("watchdog: no heartbeat -- not running?")
+    if muted_until() > time.time():
+        lines.append("pushes muted until %s" % time.strftime("%H:%M", time.localtime(muted_until())))
+    return "\n".join(lines), c
+
+
+def cmd_keyboard(profile: str, c: dict) -> tuple[str, list]:
+    return issue("cmd:" + secrets.token_hex(4), "cmd", profile, [
+        ("Needs you (%d)" % c["states"]["waiting"], "needs"),
+        ("Questions (%d)" % c["questions"], "questions"),
+        ("Blocked (%d)" % c["blocked"], "blocked"),
+        ("Refresh", "refresh")], {}, "")
+
+
+def cmd_status(profiles_: list[str], note: str = "") -> None:
+    for p in profiles_:
+        text, c = status_text(p)
+        gid, kb = cmd_keyboard(p, c)
+        mid = send(text + note, kb)
+        note = ""
+        if mid is None:
+            drop_group(gid)
+        else:
+            bind(gid, mid)
+
+
+def reissue_prompt(profile: str, s: dict) -> bool:
+    """A needs-you session's prompt, sent again with NEW ids; the old message
+    is superseded. The only tmux fork a command costs."""
+    pane = s.get("pane", "")
+    r = watchdog(profile, "--prompt", pane)
+    if r.returncode != 0:
+        return False
+    head, box = {}, []
+    for i, line in enumerate(r.stdout.rstrip("\n").split("\n")):
+        k, _, v = line.partition("\t")
+        if i < 3 and k in ("sha", "yes", "question"):
+            head[k] = v
+        else:
+            box.append(line)
+    body = "at a prompt: %s" % head.get("question", "")
+    pane_text = knob("MUXTOPUS_NOTIFY_PANE_TEXT", profile) != "off"
+    if pane_text:
+        body += "\n\n" + "\n".join(box)
+    return send_prompt_message(profile, pane, head.get("sha", ""), head.get("yes") == "1", pane_text,
+                               "%s · needs you: %s" % (label(profile), s.get("name", pane)),
+                               body, push=False) is not None
+
+
+def cmd_pending(profiles_: list[str], note: str = "", only: str = "") -> None:
+    said = 0
+    for p in profiles_:
+        if only in ("", "needs"):
+            for s in sessions(p):
+                if s.get("state") == "waiting" and reissue_prompt(p, s):
+                    said += 1
+        if only:
+            continue
+        files = unanswered_files(p)
+        if files:
+            n = sum(len(f["forks"]) for f in files)
+            send("%s · questions\n%d unanswered fork(s) in %d file(s). Answering a fork from the phone: "
+                 "not yet -- open the dashboard.%s" % (label(p), n, len(files), note))
+            note = ""
+            said += 1
+        items = ["stalled: %s -- %s" % (v["file"], v["why"]) for v in verdicts(p) if v["verdict"] == "stalled"]
+        items += ["blocked: %s -- %s" % (v["file"], v["why"]) for v in long_blocked(p)]
+        items += ["stranded: %s" % s.get("name") for s in sessions(p) if s.get("state") == "stranded"]
+        if items:
+            send("%s · trouble\n%s%s" % (label(p), "\n".join(items), note))
+            note = ""
+            said += 1
+    if not said:
+        send("nothing needs you" + note)
+
+
+def cmd_questions(profiles_: list[str], note: str = "") -> None:
+    lines = []
+    for p in profiles_:
+        for f in unanswered_files(p):
+            lines.append("%s · %s · %d fork(s)%s" % (label(p), f["slug"], len(f["forks"]),
+                                                     " (legacy folder)" if f["legacy"] else ""))
+    if not lines:
+        send("no unanswered questions" + note)
+        return
+    send("unanswered QUESTIONS files:\n%s\n\nChoosing one to answer from the phone: not yet -- "
+         "open the dashboard.%s" % ("\n".join(lines), note))
+
+
+def cmd_blocked(profiles_: list[str], note: str = "") -> None:
+    lines = []
+    for p in profiles_:
+        for v in verdicts(p):
+            if v["verdict"] != "due":
+                lines.append("%s · %s · %s\n  %s" % (label(p), v["file"], v["verdict"], v["why"]))
+    send(("not launching:\n" + "\n".join(lines) if lines else "nothing is held") + note)
+
+
+def cmd_windows(profiles_: list[str], note: str = "") -> None:
+    cw = 0
+    lines, waiting = [], []
+    for p in profiles_:
+        try:
+            cw = int(knob("CLAUDE_CONTEXT_WINDOW", p) or 0)
+        except ValueError:
+            cw = 0
+        for s in sessions(p):
+            idle = s.get("idle", "-1")
+            ctx = int(s["ctx"]) if s.get("ctx", "").isdigit() else 0
+            word = dict(STATE_WORDS).get(s.get("state", ""), s.get("state", ""))
+            lines.append("%s · %s · %s%s · ctx %d%%" % (
+                label(p), s.get("name"), word,
+                (" %s" % human_age(int(idle))) if idle.lstrip("-").isdigit() and int(idle) >= 0 else "",
+                ctx * 100 // cw if cw else 0))
+            if s.get("state") == "waiting":
+                waiting.append((p, s))
+    send(("\n".join(lines) if lines else "no sessions") + note)
+    for p, s in waiting:
+        reissue_prompt(p, s)
+
+
+def parse_duration(arg: str) -> int | None:
+    m = re.fullmatch(r"\s*(\d+)\s*([mhd]?)\s*", arg or "1h")
+    if not m:
+        return None
+    return int(m.group(1)) * {"": 60, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
+
+
+def handle_command(text: str, profile: str) -> None:
+    word, _, arg = text.partition(" ")
+    cmd = word[1:].split("@", 1)[0].lower()
+    now = time.time()
+    # THE FIRST COMMAND OF A BURST says how long replies take, once.
+    note = ""
+    try:
+        last = float((SHARED / "last_command").read_text().strip() or 0)
+    except (OSError, ValueError):
+        last = 0
+    if now - last > 600:
+        note = "\n\n(replies come within one watchdog pass, at most ~30 s)"
+    (SHARED / "last_command").write_text("%d\n" % now)
+    ps = profiles() or [profile]
+    log("command /%s" % cmd)
+    if cmd in ("status", "start"):
+        cmd_status(ps, note)
+    elif cmd == "pending":
+        cmd_pending(ps, note)
+    elif cmd == "questions":
+        cmd_questions(ps, note)
+    elif cmd == "blocked":
+        cmd_blocked(ps, note)
+    elif cmd == "windows":
+        cmd_windows(ps, note)
+    elif cmd == "mute":
+        sec = parse_duration(arg)
+        if sec is None:
+            send("say how long: /mute 30m, /mute 2h, /mute 1d" + note)
+            return
+        until = now + sec
+        (SHARED / "mute").write_text("%d\n" % until)
+        send("pushes muted until %s -- /status, /pending and the rest still answer%s"
+             % (time.strftime("%a %H:%M", time.localtime(until)), note))
+    elif cmd == "unmute":
+        (SHARED / "mute").unlink(missing_ok=True)
+        send("pushes are back on" + note)
+    elif cmd == "help":
+        send(HELP)
+    else:
+        send("unknown command /%s -- /help lists them" % cmd)
+
+
+def handle_cmd_button(q: dict, d: dict) -> None:
+    """The /status keyboard. Not consumed by a press: it is a way to ask."""
+    p, action = d.get("profile", ""), d.get("action")
+    msg = q.get("message") or {}
+    answer_cb(q["id"], "on its way")
+    log("status button %s (%s)" % (action, label(p)))
+    if action == "needs":
+        if not any(s.get("state") == "waiting" for s in sessions(p)):
+            send("%s: nothing is at a prompt" % label(p))
+        else:
+            cmd_pending([p], only="needs")
+    elif action == "questions":
+        cmd_questions([p])
+    elif action == "blocked":
+        cmd_blocked([p])
+    elif action == "refresh":
+        text, c = status_text(p)
+        gid, kb = cmd_keyboard(p, c)
+        r = api("editMessageText", chat_id=read_conf().get("TELEGRAM_CHAT"),
+                message_id=msg.get("message_id"), text=clip(text), reply_markup={"inline_keyboard": kb})
+        drop_group(d["group"])
+        bind(gid, msg.get("message_id"))
+        if not r.get("ok"):
+            log("refresh edit failed: %s" % r.get("description"))
 
 
 # ------------------------------------------------------------ questions
@@ -604,6 +983,10 @@ def main(argv: list[str]) -> int:
             return 1
         print(mid)
         return 0
+    if cmd == "commands":                   # --setup registers the bot's menu
+        if not telegram_ready():
+            return 1
+        return 0 if register_commands(force="--force" in rest) is not False else 1
     if cmd == "retire":
         if len(rest) < 1 or not telegram_ready():
             return 1

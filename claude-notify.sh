@@ -128,21 +128,21 @@ setup_write_conf() {
 }
 
 setup_inbound_key() {
-  # The switch lives in the settings store, not in this file: the conf holds
-  # secrets per machine, the switch is a preference per account.
-  local v="$1" why
+  # The switches live in the settings store, not in this file: the conf holds
+  # secrets per machine, a switch is a preference per account.
+  local k="$1" v="$2" why
   why="$(cd "$(dirname "$(readlink -f "$0")")" && python3 -c '
 import sys, muxsettings
-k = "MUXTOPUS_NOTIFY_INBOUND"
+k = sys.argv[1]
 if k not in muxsettings.DASHBOARD_KEYS:
     print("no-key"); sys.exit(0)
-print(muxsettings.put(k, sys.argv[1]) or "ok")' "$v" 2>&1)"
+print(muxsettings.put(k, sys.argv[2]) or "ok")' "$k" "$v" 2>&1)"
   case "$why" in
-    ok) echo "saved: MUXTOPUS_NOTIFY_INBOUND=$v (Settings ▸ Notifications shows it)" ;;
+    ok) echo "saved: $k=$v (Settings ▸ Notifications shows it)" ;;
     *)  [ "$v" = on ] && return 0     # on is the default: nothing to write
         echo "could not save it for you${why:+ ($why)}; add this line to"
         echo "  ${MUXTOPUS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/muxtopus/config}:"
-        echo "  MUXTOPUS_NOTIFY_INBOUND=off" ;;
+        echo "  $k=off" ;;
   esac
 }
 
@@ -225,14 +225,34 @@ Privacy: a "needs you" message quotes the prompt box on the screen, so that
 text passes through Telegram's servers (Settings ▸ Notifications turns it off).
 EOF
   ask "Let the buttons answer prompts and questions from the phone? [Y/n]"
-  local inbound=on
+  local inbound=on pull=""
   case "$REPLY" in n|N|no|No|NO) inbound=off ;; esac
+  if [ "$inbound" = on ]; then
+    cat <<'EOF'
+
+What should reach the phone?
+  1) tell me     -- prompts, questions, trouble and finished lanes, as they happen
+  2) only when I ask -- no pushes at all; the bot answers /status, /pending and the rest
+EOF
+    ask "[1]:"
+    case "$REPLY" in 2|o*|O*) pull=1 ;; esac
+  fi
 
   printf '# Written by claude-notify.sh --setup, %s. Holds a SECRET: keep it 0600.\nBACKEND=telegram\nTELEGRAM_TOKEN=%s\nTELEGRAM_CHAT=%s\n' \
     "$(date '+%Y-%m-%d %H:%M')" "$tok" "$chat" | setup_write_conf
   echo "wrote $CONF (mode 600)"
-  setup_inbound_key "$inbound"
+  setup_inbound_key MUXTOPUS_NOTIFY_INBOUND "$inbound"
+  if [ -n "$pull" ]; then
+    for k in MUXTOPUS_NOTIFY_WAITING MUXTOPUS_NOTIFY_QUESTIONS MUXTOPUS_NOTIFY_TROUBLE MUXTOPUS_NOTIFY_DONE; do
+      setup_inbound_key "$k" off
+    done
+  fi
   TELEGRAM_TOKEN="$tok"; TELEGRAM_CHAT="$chat"
+  # The bot's menu button: /status, /pending, ... (muxtelegram re-registers
+  # whenever the list changes; this makes it appear before the first poll).
+  if [ "$inbound" = on ] && ( cd "$(dirname "$(readlink -f "$0")")" && python3 muxtelegram.py commands --force ) >/dev/null 2>&1; then
+    echo "the bot's menu now offers /status, /pending, /questions, /blocked, /windows, /mute."
+  fi
 
   local cb mid ok=""
   cb="setup-$(date +%s)-$RANDOM"
@@ -412,6 +432,16 @@ if [ -n "$BUTTONS" ] && [ "$BACKEND" != telegram ]; then
   BODY="$BODY
 
 (answer at the machine)"
+fi
+
+# /mute from the phone (muxtelegram.py): PUSHES wait, asking does not. An edit
+# or a reply is part of a conversation already under way, so it goes through.
+if [ "$TESTING" = 0 ] && [ -z "$EDIT$REPLY_TO" ] && [ -f "$NOTIFY_DIR/mute" ]; then
+  read -r _until < "$NOTIFY_DIR/mute" 2>/dev/null
+  case "${_until:-}" in
+    ''|*[!0-9]*) ;;
+    *) if [ "$_until" -gt "$(date +%s)" ]; then log "MUTED: $TITLE"; exit 0; fi ;;
+  esac
 fi
 
 rc=1; why=""

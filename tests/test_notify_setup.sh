@@ -29,6 +29,7 @@ out="$("$N" --setup 2>&1 <<'EOF'
 999:BAD
 111:GOOD
 y
+1
 EOF
 )"; rc=$?
 wait "$presser"
@@ -45,7 +46,41 @@ check "the press was answered" [ "$(sb_ncalls answerCallbackQuery)" = 1 ]
 check "the test message was edited" grep -q "the phone answered" <<<"$(sb_calls editMessageText)"
 check "offset remembered for the poller" [ -s "$XDG_STATE_HOME/muxtopus-notify/offset" ]
 check "the privacy sentence is said" grep -q "passes through Telegram's servers" <<<"$out"
+check "the bot's menu was registered" [ "$(sb_calls setMyCommands | jq -r '.commands | fromjson | map(.command) | join(" ")')" = "status pending questions blocked windows mute unmute help" ]
+check "tell me: no switch written" bash -c '! grep -q "NOTIFY_WAITING=off" <<<"$1"' _ "$out"
 check "no token in the notify log" bash -c '! grep -q GOOD "$1"' _ "$XDG_STATE_HOME/claude-watchdog/notify.log"
+
+echo "== only when I ask: every push switch off, pull still offered"
+rm -f "$CLAUDE_NOTIFY_CONF"
+( sleep 1; sb_update '{"message":{"message_id":2,"from":{"id":4242},"chat":{"id":4242,"type":"private","first_name":"Alex"},"text":"/start"}}' ) & starter=$!
+out="$(NOTIFY_SETUP_WAIT=3 "$N" --setup 2>&1 <<'EOF'
+1
+111:GOOD
+y
+2
+EOF
+)"
+wait "$starter"
+for k in WAITING QUESTIONS TROUBLE DONE; do
+  check "pull: MUXTOPUS_NOTIFY_$k=off named (the store has no row for it until notify-dash)" grep -q "MUXTOPUS_NOTIFY_$k=off" <<<"$out"
+done
+check "pull: the menu is still registered" grep -q "menu now offers /status" <<<"$out"
+rm -f "$CLAUDE_NOTIFY_CONF".bak-*
+printf 'BACKEND=telegram\nTELEGRAM_TOKEN=111:GOOD\nTELEGRAM_CHAT=4242\n' > "$CLAUDE_NOTIFY_CONF"; chmod 600 "$CLAUDE_NOTIFY_CONF"
+
+echo "== /mute holds a push back, never an edit"
+mkdir -p "$XDG_STATE_HOME/muxtopus-notify"
+echo $(( $(date +%s) + 600 )) > "$XDG_STATE_HOME/muxtopus-notify/mute"
+n="$(sb_ncalls sendMessage)"
+"$N" "Muted" "push" >/dev/null
+check "muted: the push is not sent" [ "$(sb_ncalls sendMessage)" = "$n" ]
+check "muted: logged" grep -q "MUTED: Muted" "$XDG_STATE_HOME/claude-watchdog/notify.log"
+"$N" --edit 1001 "T" "an edit" >/dev/null
+check "muted: an edit still goes" grep -q "an edit" <<<"$(sb_calls editMessageText | jq -r .text)"
+echo 1 > "$XDG_STATE_HOME/muxtopus-notify/mute"
+"$N" "Unmuted" "push" >/dev/null
+check "a mute in the past holds nothing" [ "$(sb_ncalls sendMessage)" = $(( n + 1 )) ]
+rm -f "$XDG_STATE_HOME/muxtopus-notify/mute"
 
 echo "== reconfigure keeps a .bak"
 # The server line is NOT optional here: the default is the real ntfy.sh.
