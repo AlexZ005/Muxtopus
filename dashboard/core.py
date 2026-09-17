@@ -178,6 +178,23 @@ WATCHDOG_HEARTBEAT = WATCHDOG_DIR / "heartbeat"
 WATCHDOG_TREE = WATCHDOG_DIR / "tree.tsv"
 
 
+# HOW A SESSION STATE IS DRAWN: name -> (label, style, show the reset time).
+# Data rather than a chain of elifs in the frame, so a module that teaches the
+# watchdog a new state can teach the table to draw it in one line
+# (App.add_state) instead of editing the main view. A state that is NOT here
+# keeps the fallback it has always had: dim, under its own name -- which is
+# what an unknown state from a newer watchdog has to do.
+STATES: dict[str, tuple[str, str, bool]] = {
+    "due": ("due", RED, True),
+    "limited": ("limited", YELLOW, True),
+    "working": ("working", GREEN, False),
+    # THE "nothing is ever going to touch this" state. idle stays dim because
+    # it is a fact about the last turn and usually means finished; stranded is
+    # a fact about the FUTURE, so it is the one idle state worth a colour.
+    "stranded": ("stranded", RED, False),
+}
+
+
 # --------------------------------------------------------------------------
 # formatting
 # --------------------------------------------------------------------------

@@ -35,7 +35,6 @@ import tty
 from pathlib import Path
 
 from rich import box
-from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markup import escape
@@ -46,9 +45,11 @@ from rich.text import Text
 # THE SETTINGS THE DASHBOARD OWNS AND WRITES (dashboard.conf), and the one
 # settings.json edit it is allowed to make. muxconfig reads; this writes.
 import muxsettings
-# THE MENU DRAWING, at an exact height. Pure: no dashboard state in it, so it
-# could be built and proven on its own (tests/test_menulayout.py).
-from dashboard.menulayout import MENU_MIN, menu_needed, menu_panel, rendered_height
+# THE APP: what every screen shares -- the notice, the console, the submodes,
+# the menu engine -- and the six registries a module puts itself into. The
+# menu DRAWING it uses lives one further down, in dashboard.menulayout, which
+# is pure and proven on its own (tests/test_menulayout.py).
+from dashboard.app import App, View
 
 # THE DASHBOARD PROPER now lives in a package beside this file; what is left
 # here is the shell. The names below are imported rather than re-implemented,
@@ -125,49 +126,26 @@ def usage_rows() -> list[Text]:
 # --------------------------------------------------------------------------
 # frame
 # --------------------------------------------------------------------------
-class Dashboard:
+class Dashboard(App):
+    """Every view, still as methods on one object -- reached through the
+    adapters at the foot of this file.
+
+    Phase 2 of the split lifted what the views SHARE into App: the notice,
+    the console, the submodes, the menu engine and the six registries. What
+    is left here is the views themselves, and phases 3 and 4 carry them out
+    a screen at a time. Each of them then keeps its own state, and this class
+    stops existing.
+    """
+
     def __init__(self, interval: float, console: Console | None = None) -> None:
+        super().__init__(interval, console)
         self.cpu = Cpu()
-        self.interval = interval
-        # The console is what knows the terminal's height, and the height is
-        # what a menu is measured against (place_menu). One object, shared
-        # with Live, so the size it reports is the size being drawn to.
-        self.console = console or Console()
-        self.notice: str | None = None
-        self.notice_at = 0.0
-        self.party_at = 0.0
+        # ------------------------------------------- the main view's state
         self.cursor = ""            # session id under the row cursor
         self.sids: list[str] = []   # last rendered order, for the arrow keys
         self.panes: dict[str, str] = {}   # session id -> tmux pane, for Enter
         self.jobs: dict[str, str] = {}    # session id -> bg job id, for attach
         self.windows: dict[str, str] = {}  # session id -> tmux window name
-        # Space opens a menu rather than toggling one setting, because the
-        # useful actions outgrew the keyboard. ONE STATE FOR EVERY MENU: the
-        # per-window one on space ("session"), the per-entry one on space in
-        # the schedule view ("sched"), the dashboard's own on esc ("mux") and
-        # its Settings submenu ("settings"). They share the mover, the
-        # activator and the drawing; only menu_entries() looks at the kind.
-        self.menu: dict | None = None      # {"kind": ..., "i": int}
-        # Reload and quit have to happen in main(), where Live and the saved
-        # terminal state are; a menu row can only ask for them.
-        self.pending_reload = False
-        self.pending_quit = False
-        # A --check report to show full screen, the way the editor and btop
-        # take the terminal over: main() owns Live and the tty state.
-        self.pending_report: str | None = None
-        # The new-session flow's answers so far (c in the main view); None
-        # when no flow is open. Nothing is written until the last screen.
-        self.ns: dict | None = None
-        self.prompt: dict | None = None    # inline text entry (rename)
-        self.confirm: dict | None = None   # yes/no gate (close)
-        self.picker: dict | None = None    # arrow-driven option list (create flow)
-        # The checkbox table: one more submode, between the template and the
-        # editor. None when closed; see open_options for its shape.
-        self.options: dict | None = None
-        self.pending_edit: str | None = None   # file the main loop opens in an editor
-        self.view = "main"                 # "main" | "sched"
-        self.sched_i = 0
-        self.sched_rows: list[dict] = []
         self.cwds: dict[str, str] = {}     # session id -> working directory
         # THE LANES TABLE IS THIS ACCOUNT'S BY DEFAULT. Two dashboards side by
         # side listing the same servers is the same confusion the session
@@ -183,10 +161,53 @@ class Dashboard:
         self.tree_kids: dict[str, list[str]] = {}
         self.tree_parent: dict[str, str] = {}
         self.lane_acct: dict[int, str | None] = {}   # pid -> account, cached
-        self.version = (SCRIPTS / "VERSION").read_text().strip() if (SCRIPTS / "VERSION").exists() else "?"
+        # What the view's build() worked out and its footer and menu anchor
+        # then need. Stashed rather than recomputed: they are decided halfway
+        # down a frame that costs 12.9 ms, and App asks for them in the order
+        # build() produces them.
+        self._main_foot = None
+        self._main_anchor = 2
+        self._sched_foot = None
+        # ---------------------------------------- the schedule view's state
+        self.sched_i = 0
+        self.sched_rows: list[dict] = []
 
-    def say(self, msg: str) -> None:
-        self.notice, self.notice_at = msg, time.time()
+        # ------------------------------------------------ THE REGISTRATIONS
+        # Space opens a menu rather than toggling one setting, because the
+        # useful actions outgrew the keyboard. Four kinds today, each one a
+        # function that rebuilds its rows every frame; nothing dispatches on
+        # the kind any more.
+        self.add_menu("session", self.session_menu_entries,
+                      title_fn=self._session_menu_title)
+        self.add_menu("sched", self.sched_menu_entries,
+                      title_fn=self._sched_menu_title)
+        self.add_menu("mux", self.mux_menu_entries,
+                      title_fn=lambda: "muxtopus")
+        # The one menu that goes BACK rather than closing, and now it says so
+        # in its registration instead of in the main loop's key chain.
+        self.add_menu("settings", self.settings_menu_entries,
+                      title_fn=self._settings_menu_title,
+                      hint_fn=lambda: "↑↓ pick · enter change · esc back",
+                      esc_to="mux")
+        self.add_view(MainView())
+        self.add_view(SchedView())
+
+    # ----------------------------------------------- the menus' own titles
+    # Names are escaped: a window called [x] would otherwise be read as a
+    # style by Rich's markup.
+    def _session_menu_title(self) -> str:
+        win = self.windows.get(self.cursor, "")
+        if win:
+            return "menu[/] [%s]· %s" % (DIM, escape(win))
+        return "menu"
+
+    def _sched_menu_title(self) -> str:
+        r = self._sched_sel()
+        return "menu[/] [%s]· %s" % (DIM, escape(r["file"].name)) if r else "menu"
+
+    def _settings_menu_title(self) -> str:
+        return "settings[/] [%s]· %s" % (
+            DIM, escape(str(muxsettings.dashboard_conf_path(PROFILE)).replace(str(HOME), "~")))
 
     def move(self, delta: int) -> None:
         if not self.sids:
@@ -226,91 +247,6 @@ class Dashboard:
             return "" if r.returncode == 0 else f"could not open: {r.stderr.strip()}"
         except (OSError, subprocess.TimeoutExpired) as exc:
             return f"could not open: {exc}"
-
-    # ---------------------------------------------------------------- menu
-    def menu_entries(self) -> list[dict]:
-        """The rows of whichever menu is open, rebuilt every frame so the
-        labels state what is true right now."""
-        kind = self.menu["kind"] if self.menu else "session"
-        if kind == "mux":
-            return self.mux_menu_entries()
-        if kind == "settings":
-            return self.settings_menu_entries()
-        if kind == "sched":
-            return self.sched_menu_entries()
-        return self.session_menu_entries()
-
-    def menu_title(self) -> str:
-        """Markup, minus the leading [bold] menu_panel adds. Names are escaped:
-        a window called [x] would otherwise be read as a style."""
-        kind = self.menu["kind"] if self.menu else "session"
-        if kind == "mux":
-            return "muxtopus"
-        if kind == "settings":
-            return "settings[/] [%s]· %s" % (
-                DIM, escape(str(muxsettings.dashboard_conf_path(PROFILE)).replace(str(HOME), "~")))
-        if kind == "sched":
-            r = self._sched_sel()
-            return "menu[/] [%s]· %s" % (DIM, escape(r["file"].name)) if r else "menu"
-        win = self.windows.get(self.cursor, "")
-        if win:
-            return "menu[/] [%s]· %s" % (DIM, escape(win))
-        return "menu"
-
-    def menu_hint(self) -> str:
-        kind = self.menu["kind"] if self.menu else "session"
-        hint = "↑↓ pick · enter change · esc back" if kind == "settings" \
-            else "↑↓ pick · enter choose · esc close"
-        # THE NOTICE HAS TO LIVE HERE while a menu is open: the menu replaces
-        # the footer that normally shows it, and a Settings row that stays
-        # open would otherwise report "not a directory" to nobody -- the same
-        # hole the options table had. It shares the hint line, so the panel's
-        # height is the same with or without it.
-        if self.notice and time.time() - self.notice_at < 8:
-            return "%s   ·   %s" % (self.notice, hint)
-        return hint
-
-    def place_menu(self, sections: list, at: int) -> Group:
-        """The frame with the open menu in it, NEVER clipped.
-
-        `sections` are the frame's panels top to bottom and `at` is the index
-        of the one the cursor is in. Which of them stay depends on the
-        layout setting; the room left under the ones that stay is MEASURED
-        (rendered_height: what Rich will really draw, not a row count), and
-        the menu is given min(room, what it needs) lines and scrolls inside
-        them. That is the whole fix for the reported bug -- the footer menu
-        was the last thing in a Group that Live crops from the bottom.
-
-          table   the cursor's panel stays, the menu goes right under it,
-                  everything below is dropped while it is open
-          modal   the menu alone, centred; the frame comes back on esc
-          bottom  the old position, capped and scrolling
-
-        With less than MENU_MIN lines left -- a 24-row terminal and a tall
-        sessions table -- the frame degrades to modal for this one open,
-        and the title says so; a menu is scrolled, never cut."""
-        layout = knob("DASHBOARD_MENU_LAYOUT", PROFILE) or "table"
-        items = self.menu_entries()
-        cur = self.menu["i"]
-        height = self.console.size.height
-        if layout == "bottom":
-            kept = [p for _n, p in sections]
-        elif layout == "modal":
-            kept = []
-        else:
-            layout = "table"
-            kept = [p for _n, p in sections[:at + 1]]
-        room = height - rendered_height(self.console, Group(*kept)) if kept else height
-        title = self.menu_title()
-        if room < MENU_MIN:
-            layout, kept, room = "modal", [], height
-            title += "[/] [%s](modal: no room below)" % DIM
-        rows = max(MENU_MIN, min(room, menu_needed(items)))
-        panel = menu_panel(items, cur, title, rows, self.menu_hint())
-        if layout == "modal":
-            panel.expand = False
-            return Group(Align.center(panel, vertical="middle", height=height))
-        return Group(*kept, panel)
 
     def mux_menu_entries(self) -> list[dict]:
         """The dashboard's own menu (esc): what is not about one row. The two
@@ -481,50 +417,6 @@ class Dashboard:
                 it["disabled"] = "background session, no window"
         return items
 
-    def open_menu(self, kind: str) -> None:
-        self.menu = {"kind": kind, "i": 0}
-        self.menu_move(0)
-
-    def menu_move(self, delta: int) -> None:
-        if self.menu is None:
-            return
-        items = self.menu_entries()
-        if not items:
-            return
-        i = self.menu["i"]
-        if delta == 0 and 0 <= i < len(items) and not items[i].get("sep") \
-                and not items[i].get("disabled"):
-            return
-        step = delta or 1
-        for _ in range(len(items)):
-            i = (i + step) % len(items)
-            if not items[i].get("sep") and not items[i].get("disabled"):
-                self.menu["i"] = i
-                return
-
-    def menu_activate(self) -> None:
-        if self.menu is None:
-            return
-        items = self.menu_entries()
-        i = self.menu["i"]
-        if not (0 <= i < len(items)):
-            return
-        it = items[i]
-        if it.get("sep") or it.get("disabled"):
-            return
-        if it.get("sub"):
-            self.open_menu(it["sub"])
-            return
-        msg = it["act"]()
-        # A submode owns the screen until it is answered; a plain action is
-        # done, unless the row says it stays (a toggle you may want to flip
-        # back, a setting beside other settings).
-        if self.prompt is None and self.confirm is None and self.picker is None:
-            if not it.get("stay"):
-                self.menu = None
-        if msg:
-            self.say(msg)
-
     def act_watchdog(self) -> str:
         return toggle_watchdog()
 
@@ -649,101 +541,6 @@ class Dashboard:
         """Continue NOW against the weekly budget instead of waiting for the
         session window to refill. Offered by the limit banner itself."""
         return self._send("/low-priority")
-
-    def prompt_key(self, key: str) -> None:
-        pr = self.prompt
-        if pr is None:
-            return
-        if key in ("\r", "\n"):
-            fn = pr["fn"]
-            text = pr["buf"]
-            self.prompt = None
-            if not pr.get("keep_menu"):
-                self.menu = None
-            self.say(fn(text))
-        elif key == "\x1b":
-            self.prompt = None
-            self.ns = None
-            self.say("cancelled")
-        elif key in ("\x7f", "\b"):
-            pr["buf"] = pr["buf"][:-1]
-        elif len(key) == 1 and key.isprintable():
-            pr["buf"] += key
-
-    def confirm_key(self, key: str) -> None:
-        cf = self.confirm
-        if cf is None:
-            return
-        if key in ("y", "Y"):
-            fn = cf["fn"]
-            self.confirm = None
-            self.menu = None
-            self.say(fn())
-        elif key in ("n", "N", "\r", "\n") and cf.get("no_fn"):
-            # "no" is an answer, not an abort, when the confirm sits inside a
-            # flow (the bypass warning: no means "this window only").
-            fn = cf["no_fn"]
-            self.confirm = None
-            self.say(fn())
-        elif key in ("n", "N", "\x1b", "\r", "\n"):
-            self.confirm = None
-            self.ns = None
-            self.say("cancelled")
-
-    def _submode_foot(self):
-        """The footer panel when a text prompt, confirm or picker owns the
-        keyboard -- shared by both views so the create flow works from either."""
-        if self.prompt is not None:
-            return Panel(
-                Text.assemble((self.prompt["title"] + ": ", "bold"),
-                              (self.prompt["buf"], "#c9a0dc"), ("_", "bold #c9a0dc"),
-                              ("      enter save · esc cancel", DIM)),
-                border_style="#c9a0dc", box=box.ROUNDED)
-        if self.confirm is not None:
-            return Panel(
-                Text.assemble((self.confirm["label"], "bold"), "    ",
-                              ("y", "bold " + RED), (" yes    ", DIM),
-                              ("n", "bold"), (" no", DIM)),
-                border_style=RED, box=box.ROUNDED)
-        if self.picker is not None:
-            body = Text()
-            for i, opt in enumerate(self.picker["options"]):
-                cur = (i == self.picker["i"])
-                body.append(" ▸ " if cur else "   ", style="bold #c9a0dc")
-                body.append(opt + "\n", style="bold" if cur else "")
-            # i < 0 is "nothing preselected": no row is marked until an
-            # arrow moves, and enter says so. That is what "always ask" means
-            # for an arrow-driven list.
-            body.append("   ↑↓ pick · enter choose · esc cancel"
-                        if self.picker["i"] >= 0 else
-                        "   nothing preselected — ↑↓ pick one · esc cancel", style=DIM)
-            return Panel(body, title="[bold]" + self.picker["title"],
-                         title_align="left", border_style="#c9a0dc", box=box.ROUNDED)
-        if self.options is not None:
-            return self.options_panel()
-        return None
-
-    def picker_key(self, key: str) -> None:
-        pk = self.picker
-        if pk is None:
-            return
-        n = len(pk["options"])
-        if key == "UP":
-            pk["i"] = n - 1 if pk["i"] < 0 else (pk["i"] - 1) % n
-        elif key == "DOWN":
-            pk["i"] = 0 if pk["i"] < 0 else (pk["i"] + 1) % n
-        elif key in ("\r", "\n"):
-            if pk["i"] < 0:
-                return
-            fn, choice = pk["fn"], pk["options"][pk["i"]]
-            self.picker = None
-            msg = fn(choice)
-            if msg:
-                self.say(msg)
-        elif key == "\x1b":
-            self.picker = None
-            self.ns = None
-            self.say("cancelled")
 
     # ------------------------------------------------------------ schedules
     def sched_move(self, delta: int) -> None:
@@ -908,8 +705,13 @@ class Dashboard:
         written by fn after the table and fn is simply not called; on a
         reopen the file is untouched. "Continue with nothing ticked" is a
         ROW at the bottom now, as are check all, uncheck all and continue."""
-        self.options = {"title": title, "typ": typ, "all": opts, "mode": mode,
-                        "on": dict(on), "i": 0, "fn": fn}
+        # "key" and "panel" are what makes this A VIEW'S OWN MODAL rather
+        # than a fourth submode App knows the shape of: App routes keys to
+        # one and draws the footer with the other, and knows nothing else
+        # about what is in here.
+        self.modal = {"title": title, "typ": typ, "all": opts, "mode": mode,
+                      "on": dict(on), "i": 0, "fn": fn,
+                      "key": self.options_key, "panel": self.options_panel}
         self.options_move(0)
 
     def option_rows(self) -> list[dict]:
@@ -919,7 +721,7 @@ class Dashboard:
         the same rule the schedule view applies to a corrupted entry, for the
         same reason: silently dropping it makes a typo look like a file nobody
         ever wrote."""
-        st = self.options
+        st = self.modal
         if st is None:
             return []
         rows: list[dict] = []
@@ -963,7 +765,7 @@ class Dashboard:
         rows = self.option_rows()
         if not rows:
             return
-        i = self.options["i"]
+        i = self.modal["i"]
         if delta == 0 and 0 <= i < len(rows) and not rows[i].get("head") \
                 and not rows[i].get("disabled"):
             return
@@ -971,12 +773,12 @@ class Dashboard:
         for _ in range(len(rows)):
             i = (i + step) % len(rows)
             if not rows[i].get("head") and not rows[i].get("disabled"):
-                self.options["i"] = i
+                self.modal["i"] = i
                 return
 
     def _option_sel(self) -> dict | None:
         rows = self.option_rows()
-        i = self.options["i"] if self.options else -1
+        i = self.modal["i"] if self.modal else -1
         if 0 <= i < len(rows) and rows[i].get("opt") and not rows[i].get("disabled"):
             return rows[i]["opt"]
         return None
@@ -986,7 +788,7 @@ class Dashboard:
         o = self._option_sel()
         if o is None:
             return ""
-        st = self.options
+        st = self.modal
         if o["key"] in st["on"]:
             del st["on"][o["key"]]
             return ""
@@ -1006,7 +808,7 @@ class Dashboard:
         or a number) is LEFT ALONE rather than ticked with nothing -- the
         sentence would go out with {{VALUE}} in it -- and the notice says
         how many were skipped for that reason."""
-        st = self.options
+        st = self.modal
         skipped = 0
         for r in self.option_rows():
             o = r.get("opt")
@@ -1020,8 +822,8 @@ class Dashboard:
             self.say("%d option(s) need a value — tick those one by one" % skipped)
 
     def _option_chose(self, key: str, choice: str) -> str:
-        if self.options is not None:
-            self.options["on"][key] = choice
+        if self.modal is not None:
+            self.modal["on"][key] = choice
         return ""
 
     def _option_asked(self, key: str, kind: str, text: str) -> str:
@@ -1030,12 +832,12 @@ class Dashboard:
             # LEFT UNTICKED rather than ticked with a value nobody can use: the
             # sentence would go out with {{VALUE}} still in it.
             return "%s: %s — not ticked" % (key, why)
-        if self.options is not None:
-            self.options["on"][key] = value
+        if self.modal is not None:
+            self.modal["on"][key] = value
         return ""
 
     def options_key(self, key: str) -> None:
-        st = self.options
+        st = self.modal
         if st is None:
             return
         if key == "UP":
@@ -1066,12 +868,12 @@ class Dashboard:
             if act == "skip":
                 st["on"] = {}
             fn = st["fn"]
-            self.options = None
+            self.modal = None
             self.say(fn(st))
         elif key == "\x1b":
             # CANCEL, in both modes. The create flow's file is written by fn,
             # after the table, so not calling it means nothing is written.
-            self.options = None
+            self.modal = None
             self.say("unchanged" if st["mode"] == "reopen"
                      else "cancelled — nothing written")
 
@@ -1079,7 +881,7 @@ class Dashboard:
         """One row per option, laid out like the menu. Every cell that can grow
         is no_wrap + ellipsis: a hint is a whole sentence, and a row that wraps
         tears the table in half (see the WOUND column)."""
-        st = self.options
+        st = self.modal
         g = Table.grid(padding=(0, 1), expand=True)
         g.add_column(width=1)                                     # cursor
         g.add_column(width=3)                                     # [x]
@@ -1687,7 +1489,12 @@ class Dashboard:
                      if any(h in p.cmdline for h in EXTRA_HINTS))
         return run_deck_ram("stop" if extras else "start")
 
-    def build_sched(self) -> Group:
+    def build_sched(self) -> list:
+        """The schedule view's SECTIONS, top to bottom, and its footer put
+        where SchedView.footer can find it. Placing an open menu among them
+        is App.build's job now, and it is the same placer the main view gets
+        -- which is the whole reason a view returns sections rather than a
+        finished Group."""
         rows = read_schedules()
         self.sched_rows = rows
         self.sched_i = max(0, min(self.sched_i, len(rows) - 1)) if rows else 0
@@ -1834,13 +1641,10 @@ class Dashboard:
         )
         if self.notice and time.time() - self.notice_at < 8:
             keys = Text.assemble((" " + self.notice, "#c9a0dc"), "\n", keys)
-        sub = self._submode_foot()
-        if self.menu is not None and sub is None:
-            # The same placer as the main view: the entry's menu goes under
-            # the table (the why sentence is in the menu), or centred, or at
-            # the bottom, per the layout setting -- never clipped.
-            return self.place_menu([("sched", parts[0])] + [("more", p) for p in parts[1:]], 0)
-        return Group(*parts, sub or keys)
+        self._sched_foot = keys
+        # The entry's menu goes under the TABLE -- the why sentence belongs
+        # in the menu, not above it -- so the anchor is section 0.
+        return [("sched", parts[0])] + [("more", p) for p in parts[1:]]
 
     def toggle_selected(self) -> str:
         """Opt one session out of being restarted, or back in.
@@ -1868,9 +1672,12 @@ class Dashboard:
         except OSError as exc:
             return f"toggle failed: {exc}"
 
-    def build(self) -> Group:
-        if self.view == "sched":
-            return self.build_sched()
+    def build_main(self) -> list:
+        """The main view's SECTIONS, top to bottom, with its footer and its
+        menu anchor put where MainView can find them. What used to end in a
+        Group ends in a list: App places an open menu among the sections, so
+        every view gets the placer the schedule view once needed its own
+        copy of."""
         mem = meminfo()
         total = mem.get("MemTotal", 0.0)
         avail = mem.get("MemAvailable", 0.0)
@@ -2213,10 +2020,7 @@ class Dashboard:
         elif self.notice and time.time() - self.notice_at < 8:
             keys = Text.assemble((" " + self.notice, "#c9a0dc"), "\n", keys)
 
-        foot = keys
-        sub = self._submode_foot()
-        if sub is not None:
-            foot = sub
+        self._main_foot = keys
 
         # UNCOMMITTED WORK GETS ITS OWN TABLE, not a column on the sessions.
         # The two do not line up: a repo can be dirty with no session and no
@@ -2254,18 +2058,124 @@ class Dashboard:
             ("system", Panel(sysrow, title="[bold]system", title_align="left",
                              border_style=FRAME, box=box.ROUNDED)),
         ]
-        if self.menu is not None and sub is None:
-            # Which panel the cursor is in: a lane row, the extras row on the
-            # system line, or a session. The muxtopus and settings menus
-            # follow the cursor too -- there is no better anchor.
-            if self.cursor.startswith(LANE_PREFIX):
-                at = 1
-            elif self.cursor == EXTRAS_SENTINEL:
-                at = len(sections) - 1
-            else:
-                at = 2
-            return self.place_menu(sections, at)
-        return Group(*[p for _n, p in sections], foot)
+        # WHICH PANEL THE CURSOR IS IN, for an open menu to hang under: a
+        # lane row, the extras row on the system line, or a session. The
+        # muxtopus and settings menus follow the cursor too -- there is no
+        # better anchor. Worked out here, where the sections exist, and read
+        # back by MainView.menu_anchor.
+        if self.cursor.startswith(LANE_PREFIX):
+            self._main_anchor = 1
+        elif self.cursor == EXTRAS_SENTINEL:
+            self._main_anchor = len(sections) - 1
+        else:
+            self._main_anchor = 2
+        return sections
+
+    # ====================================================== the views' keys
+    # Lifted out of main()'s one long chain, each branch under the view it
+    # was always about. The ORDER inside each is the order it had; what is
+    # NOT here is the shell's own (q R ? p u U w m f) and the keys that open
+    # a view, both of which are checked after these, exactly as before.
+    def main_key(self, key: str) -> bool:
+        if key == "UP":
+            self.move(-1)
+        elif key == "DOWN":
+            self.move(1)
+        elif key in ("\r", "\n"):
+            self.say(self.open_selected())
+        elif key == " ":
+            self.open_menu("session")
+        elif key == "\x1b":
+            # The dashboard's own menu: settings, the global switches,
+            # disconnect, reload, quit.
+            self.open_menu("mux")
+        elif key == "c":
+            self.say(self.start_new_session())
+        elif key == "LEFT":
+            self.say(self.tree_collapse())
+        elif key == "RIGHT":
+            self.say(self.tree_expand())
+        elif key == "t":
+            self.say(self.toggle_tree())
+        else:
+            return False
+        return True
+
+    def sched_key(self, key: str) -> bool:
+        """The schedule view owns most keys while it is open.
+
+        Anything it does not claim falls through to the shell, which is why
+        w, m, u, U and f still work from here -- they did before the split,
+        and the split is not the place to decide they should not."""
+        if key == "UP":
+            self.sched_move(-1)
+        elif key == "DOWN":
+            self.sched_move(1)
+        elif key in ("\r", "\n", "e", "E"):
+            m = self.request_edit_selected()
+            if m:
+                self.say(m)
+        elif key == " ":
+            # THE ENTRY'S menu. Without this case space fell through to the
+            # global handler and opened the session menu over a view that
+            # shows no sessions.
+            self.open_menu("sched")
+        elif key == "c":
+            self.start_create()
+        elif key == "o":
+            m = self.reopen_options()
+            if m:
+                self.say(m)
+        elif key == "l":
+            self.say(self.launch_selected_now())
+        elif key == "d":
+            self.confirm_delete_selected()
+        elif key == "r":
+            self.say("schedules re-read")
+        elif key in ("s", "\x1b"):
+            self.switch_to("main")
+        elif key in ("LEFT", "RIGHT", "t"):
+            # The tree keys belong to the sessions table, not here;
+            # swallowed so they cannot fold a row nobody can see.
+            pass
+        else:
+            return False
+        return True
+
+
+# ======================================================== the two adapters
+# Phase 2 gives the App its views without moving a line of them: each of
+# these is a handful of forwards to the methods above. Phases 3 and 4 turn
+# them into modules that hold their own state, and this file keeps only the
+# shell. Reading them is how a new view learns the shape it has to have.
+class MainView(View):
+    name, key, order = "main", None, 10
+
+    def build(self, app):
+        return app.build_main()
+
+    def menu_anchor(self, app):
+        return app._main_anchor
+
+    def footer(self, app):
+        return app._main_foot
+
+    def on_key(self, app, key):
+        return app.main_key(key)
+
+
+class SchedView(View):
+    name, key, order = "sched", "s", 20
+
+    def build(self, app):
+        return app.build_sched()
+
+    def footer(self, app):
+        return app._sched_foot
+
+    def on_key(self, app, key):
+        return app.sched_key(key)
+
 
 
 SOFT = knob("WATCHDOG_SOFT_PCT", PROFILE)
@@ -2735,87 +2645,21 @@ def main() -> int:
 
                 key = read_key(interval)
 
-                # A SUBMODE OWNS THE KEYBOARD while it is open, and it is
-                # checked before every global key -- including q. Typing a
-                # window name that contains a "q" must not quit the dashboard,
-                # and neither must answering a confirm.
-                if key is not None and (dash.prompt is not None
-                                        or dash.confirm is not None
-                                        or dash.picker is not None
-                                        or dash.options is not None
-                                        or dash.menu is not None):
-                    if dash.prompt is not None:
-                        dash.prompt_key(key)
-                    elif dash.confirm is not None:
-                        dash.confirm_key(key)
-                    elif dash.picker is not None:
-                        dash.picker_key(key)
-                    # The table is checked AFTER those three, so a value the
-                    # prompt or the picker is collecting FOR it still owns the
-                    # keys while it is up, and the table comes back when it is
-                    # answered.
-                    elif dash.options is not None:
-                        dash.options_key(key)
-                    elif key == "UP":
-                        dash.menu_move(-1)
-                    elif key == "DOWN":
-                        dash.menu_move(1)
-                    elif key in ("\r", "\n"):
-                        dash.menu_activate()
-                    elif key in ("\x1b", " ", "q", "Q"):
-                        # esc means "back" in a submenu and "close" at the top,
-                        # exactly as it does everywhere else on this screen.
-                        if key == "\x1b" and dash.menu["kind"] == "settings":
-                            dash.open_menu("mux")
-                        else:
-                            dash.menu = None
+                # THE ONE ROUTING RULE, and its first three steps are the
+                # App's: a submode (prompt, confirm, picker, a view's own
+                # modal) owns the keyboard while it is open -- q included,
+                # because typing a window name with a "q" in it must not quit
+                # the dashboard -- then an open menu, then the ACTIVE VIEW.
+                if dash.route_key(key):
                     continue
 
-                # The schedule view owns most keys while open; q, R, ? and p
-                # deliberately stay global.
-                if dash.view == "sched" and key is not None:
-                    if key == "UP":
-                        dash.sched_move(-1)
-                        continue
-                    if key == "DOWN":
-                        dash.sched_move(1)
-                        continue
-                    if key in ("\r", "\n", "e", "E"):
-                        m = dash.request_edit_selected()
-                        if m:
-                            dash.say(m)
-                        continue
-                    if key == " ":
-                        # THE ENTRY'S menu. Without this case space fell
-                        # through to the global handler and opened the
-                        # session menu over a view that shows no sessions.
-                        dash.open_menu("sched")
-                        continue
-                    if key == "c":
-                        dash.start_create()
-                        continue
-                    if key == "o":
-                        m = dash.reopen_options()
-                        if m:
-                            dash.say(m)
-                        continue
-                    if key == "l":
-                        dash.say(dash.launch_selected_now())
-                        continue
-                    if key == "d":
-                        dash.confirm_delete_selected()
-                        continue
-                    if key == "r":
-                        dash.say("schedules re-read")
-                        continue
-                    if key in ("s", "\x1b"):
-                        dash.view = "main"
-                        continue
-                    # The tree keys belong to the sessions table, not here;
-                    # swallowed so they cannot fold a row nobody can see.
-                    if key in ("LEFT", "RIGHT", "t"):
-                        continue
-
+                # THE SHELL'S OWN, reachable from every view. q, R, ? and p
+                # need this function's Live and its saved terminal state, and
+                # u, U, w and m are about the account and the fleet rather
+                # than about one screen. f is here because it was reachable
+                # from the schedule view before the split and the split is
+                # not the place to decide it should not be -- whose key it
+                # really is, is a question for the next view.
                 if key in ("q", "Q"):
                     break
                 if key == "R":
@@ -2837,36 +2681,18 @@ def main() -> int:
                     dash.say(refresh_usage())
                 elif key == "U":
                     dash.say(refresh_usage(force=True))
-                elif key == "UP":
-                    dash.move(-1)
-                elif key == "DOWN":
-                    dash.move(1)
-                elif key in ("\r", "\n"):
-                    dash.say(dash.open_selected())
-                elif key == " ":
-                    dash.open_menu("session")
-                elif key == "\x1b":
-                    # The dashboard's own menu: settings, the global switches,
-                    # disconnect, reload, quit. Unbound here until now.
-                    dash.open_menu("mux")
-                elif key == "c":
-                    dash.say(dash.start_new_session())
                 elif key in ("w", "W"):
                     dash.say(toggle_watchdog())
                 elif key in ("m", "M"):
                     dash.say(dash.act_monitor())
-                elif key == "LEFT":
-                    dash.say(dash.tree_collapse())
-                elif key == "RIGHT":
-                    dash.say(dash.tree_expand())
-                elif key == "t":
-                    dash.say(dash.toggle_tree())
                 elif key == "f":
                     dash.say(dash.toggle_lanes())
-                elif key == "s":
-                    # The schedule view. Stopping/starting desktop extras
-                    # moved onto the cursor: arrow past the sessions, enter.
-                    dash.view = "sched"
+                else:
+                    # LAST: a key that opens a view. The schedule view's own
+                    # s and esc took it back to main above, so this only ever
+                    # opens one. Stopping/starting desktop extras moved onto
+                    # the cursor: arrow past the sessions, enter.
+                    dash.open_view_key(key)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
     return 0

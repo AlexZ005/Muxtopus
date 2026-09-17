@@ -23,6 +23,11 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+# Deliberate renames, so MISSING keeps meaning "dropped on the floor" rather
+# than "called something else now". Each one is in the commit that made it.
+RENAMED = {
+    "Dashboard.build": "Dashboard.build_main",     # it returns sections now
+}
 FILES = ["deck_status.py", "dashboard/core.py", "dashboard/data.py",
          "dashboard/schedules.py", "dashboard/menulayout.py", "dashboard/app.py",
          "dashboard/views/main.py", "dashboard/views/schedules.py",
@@ -64,19 +69,35 @@ def main(argv):
             for k, v in defs(p.read_text(), methods_too=True).items():
                 new.setdefault(k, (v, f))
 
-    missing = sorted(n for n in old if n not in new)
-    changed = sorted(n for n in old if n in new and new[n][0] != old[n])
+    def found(name):
+        """Where a pre-split definition is now: under its own qualified name,
+        under the name it was deliberately renamed to, or -- for a method that
+        moved to another class, which is most of what the split does -- under
+        the same method name on whatever class now has it."""
+        for cand in (name, RENAMED.get(name)):
+            if cand and cand in new:
+                return new[cand]
+        if "." in name:
+            bare = name.split(".", 1)[1]
+            for k, v in new.items():
+                if k.endswith("." + bare):
+                    return v
+        return None
+
+    missing = sorted(n for n in old if found(n) is None)
+    changed = sorted(n for n in old
+                     if found(n) is not None and found(n)[0] != old[n])
     same = len(old) - len(missing) - len(changed)
     print("pre-split definitions: %d   identical: %d   changed: %d   MISSING: %d"
           % (len(old), same, len(changed), len(missing)))
     for n in missing:
         print("  MISSING  %s" % n)
     for n in changed:
-        print("  changed  %-28s -> %s" % (n, new[n][1]))
+        print("  changed  %-28s -> %s" % (n, found(n)[1]))
         if "--diff" in argv:
             for line in difflib.unified_diff(
-                    old[n].split("\n"), new[n][0].split("\n"),
-                    "pre-split", new[n][1], lineterm="", n=1):
+                    old[n].split("\n"), found(n)[0].split("\n"),
+                    "pre-split", found(n)[1], lineterm="", n=1):
                 print("    " + line)
     return 1 if missing else 0
 
