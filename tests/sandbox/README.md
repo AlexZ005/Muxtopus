@@ -54,8 +54,9 @@ to press. Two checks cover what that leaves:
 
 ## The rules it enforces
 
-* `bin/tmux` is `tmux -L mxsplit`, and it is first on PATH. Nothing here can
-  reach the real server, `claude:0`, or any window you are working in.
+* `bin/tmux` is `tmux -L "$SANDBOX_SOCKET"` (`mxsplit`), and it is first on
+  PATH. Nothing here can reach the real server, `claude:0`, or any window
+  you are working in.
 * `bin/claude` is a fake that writes a session file and sleeps.
 * `CLAUDE_CONFIG_DIR` names a sandbox-only account (`mxsplit`), so the
   dashboard's account suffix, its tmux session name and its watchdog state
@@ -79,4 +80,4 @@ the goldens differ on every line that names it: `normalise.py` masks the path
 to `<SB>`, which hides its text and not its width. `SANDBOX_SOCKET` and
 `SANDBOX_SESSION` move the tmux server and session the same way, which is how
 two lanes run this harness at once without `stop.sh` killing each other's
-dashboard.
+dashboard -- `tests/sandbox/notify.sh` runs as `mxnotifydash`.

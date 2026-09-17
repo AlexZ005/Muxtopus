@@ -45,4 +45,10 @@ export MUXTOPUS_QUESTIONS_DIR="${SB:?}/muxhome/questions"
 # set SANDBOX_SOCKET and SANDBOX_SESSION (and SB) per lane and nobody can
 # take down anybody else's dashboard halfway through a capture.
 export SANDBOX_SOCKET="${SANDBOX_SOCKET:-mxsplit}"
+# The notify conf holds a TOKEN and is the one file the dashboard must never
+# read outside a sandbox. HOME is already fake, so the default path is fake
+# too; this says so out loud, and a Settings ▸ Notifications row that shells
+# out to claude-notify.sh --status cannot reach the real one even if HOME
+# were ever to leak.
+export CLAUDE_NOTIFY_CONF="${SB:?}/notify.conf"
 export SANDBOX_SESSION="${SANDBOX_SESSION:-mxsplit}"
