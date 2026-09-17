@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# THE ONLY tmux this sandbox can see: a server of its own. Without this a
+# send-keys typo reaches the window you are reading this in.
+exec /usr/bin/tmux -L mxsplit "$@"

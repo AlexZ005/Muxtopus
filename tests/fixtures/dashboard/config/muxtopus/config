@@ -1,0 +1,7 @@
+# The fake machine's muxtopus config. @SB@ is replaced by setup.sh.
+MUXTOPUS_HOME="@SB@/muxhome"
+MUXTOPUS_DIR="@SCRIPTS@"
+MUXTOPUS_SESSION_PREFIX="mxsplit"
+WATCHDOG_INTERVAL=5
+CLAUDE_CONTEXT_WINDOW=1000000
+CLAUDE_USAGE_MAX_AGE=20

@@ -3,7 +3,11 @@
 *.bak-*
 
 # 27 MB of interpreter and wheels; rebuilt by setup-deck/after-update.
+# The second line is the SYMLINK a lane's git worktree makes to the main
+# checkout's venv (deck-status.sh looks for .venv/bin/python beside
+# itself): a symlink is not a directory, so the trailing slash misses it.
 .venv/
+.venv
 
 # Bytecode: regenerated on every run, so it dirties the tree constantly.
 __pycache__/

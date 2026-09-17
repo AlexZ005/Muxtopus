@@ -1,0 +1,23 @@
+╭─ scheduled windows · <SB>/muxhome/schedules-mxsplit · templates in templates/ ──────────────────────────────────────────────────────────────╮
+│                                                                                                                                                              │
+│        STATUS       TYPE     FOR                  AT                  TITLE                                                        SLUG                      │
+│  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+│        pending      plan     reset (08:50)        <stamp>    a pending plan  ⚠ title is not a slug; it becomes 'a-pend…   a-pending-plan            │
+│        blocked      work     reset (08:50)        <stamp>    blocked behind a lane  ⚠ title is not a slug; it becomes …   blocked-behind-a-lane     │
+│        corrupted    nonse…   whenever             <stamp>    a corrupted entry — type must be plan or work (got 'nonse…   a-corrupted-entry         │
+│  ▸     launched     work     <stamp>     <stamp>    already launched — launched <stamp>                 launched-lane             │
+│        pending      plan     reset (08:50)        <stamp>    a title that is not a slug                                   pinned-one                │
+│        due          work     <stamp>     <stamp>    with options and a model  ⚠ title is not a slug; it becom…   with-options-and-a-mod    │
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ menu · d-launched.md ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  ▸ Edit d-launched.md                                                                                                                                        │
+│      Options  the checkbox table, pre-ticked from the header  (only a pending entry; this one is launched)                                                   │
+│      Launch now  make it due; the watchdog opens it within ~30s  (only a pending entry; this one is launched)                                                │
+│    Duplicate as a new pending entry  and open it in the editor                                                                                               │
+│    Check  resolve it without launching: slug, window, paste, verdict                                                                                         │
+│    Open its window  @0                                                                                                                                       │
+│    ····················································                                                                                                      │
+│    Delete d-launched.md                                                                                                                                      │
+│    ↑↓ pick · enter choose · esc close                                                                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

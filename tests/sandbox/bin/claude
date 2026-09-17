@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# The fake claude: records its argv, publishes a session file the way the real
+# one does, and then sits there being a process the dashboard can see.
+. "$(dirname "$(dirname "$(readlink -f "$0")")")/env.sh"
+printf '%s\n' "$*" >> "${SB:?}/argv.log"
+mkdir -p "${HOME:?}/.claude/sessions"
+cat > "${HOME:?}/.claude/sessions/$$.json" <<JSON
+{"sessionId": "sandbox-$$", "pid": $$, "cwd": "$PWD"}
+JSON
+echo "fake claude: $*"
+exec sleep 100000
