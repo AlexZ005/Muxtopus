@@ -182,6 +182,66 @@ STRANDED_MIN="${WATCHDOG_STRANDED:-120}"
 mkdir -p "$STATE_DIR"
 [ -f "$MSGFILE" ] || printf '%s\n' "$DEFAULT_MSG" > "$MSGFILE"
 
+# ------------------------------------------------------------ the prompt box
+# A PANE THAT IS WAITING FOR A KEYPRESS. MEASURED 2026-09-17: a lane sat 55
+# minutes on Claude Code's "Dangerous rm operation on possibly-empty variable
+# path ... Do you want to proceed?" -- under bypassPermissions, which does not
+# cover that check -- and this file published it as `idle`, the same word as a
+# lane that had finished. A prompt is not idle; it is a question.
+#
+# THE TEST, anchored at line starts so a transcript that merely QUOTES a prompt
+# does not match: the LAST line beginning with ❯ must be a numbered option (an
+# idle pane's last ❯ is its own input line), and one of these questions must
+# sit above it. Border glyphs (│) may lead. Fixtures: tests/fixtures/prompts/.
+PROMPT_QUESTIONS='Do you want to |Do you trust the files in this folder|Is this a project you created or one you trust|Would you like to proceed'
+# The only first options a phone may choose. "Yes, and don't ask again",
+# "Yes, allow all edits", "Yes, and auto-accept edits" change a POLICY, and a
+# phone may approve one action, never a policy -- such a prompt is still told,
+# but offered No and More only.
+PROMPT_YES_LABELS='Yes|Yes, proceed|Yes, I trust this folder'
+
+# prompt_scan TEXT -> 0 when TEXT ends at a prompt, setting
+#   PROMPT_SHA   12 hex of the box from the question down, ❯ blanked (so a
+#                moved cursor is the same prompt, a new prompt is not)
+#   PROMPT_BOX   the last <=25 lines, what a message may quote
+#   PROMPT_Q     the question line
+#   PROMPT_YES   1 when option 1 is a plain yes
+# Zero forks for a pane with no numbered option on it, which is nearly all.
+prompt_scan() {
+  local text="$1" out line
+  PROMPT_SHA=""; PROMPT_BOX=""; PROMPT_Q=""; PROMPT_YES=0
+  case "$text" in *"❯ "[0-9]". "*) ;; *) return 1 ;; esac
+  out="$(printf '%s\n' "$text" | awk -v qre="$PROMPT_QUESTIONS" -v yre="$PROMPT_YES_LABELS" '
+    { sub(/[ \t]+$/, ""); l[NR] = $0 }
+    END {
+      lead = "^([ \t]|│)*"
+      for (i = NR; i >= 1; i--) if (l[i] ~ (lead "❯")) { last = i; break }
+      if (!last || l[last] !~ (lead "❯ [0-9]+\\. ")) exit 1
+      for (i = last; i >= 1 && i > last - 40; i--) if (l[i] ~ (lead "(" qre ")")) { q = i; break }
+      if (!q) exit 1
+      for (i = q; i <= NR; i++) if (l[i] ~ ("^([ \t]|│|❯)*1\\. ")) { lab = l[i]; break }
+      sub("^([ \t]|│|❯)*1\\. ", "", lab); sub("([ \t]|│)+$", "", lab)
+      e = NR
+      while (e > last && l[e] ~ "^([ \t]|│|─|╰|╯)*$") e--
+      print "Y " (lab ~ ("^(" yre ")$") ? 1 : 0)
+      s = l[q]; sub(lead, "", s); sub("([ \t]|│)+$", "", s); print "Q " s
+      for (i = q; i <= e; i++) { s = l[i]; gsub("❯", " ", s); print "S " s }
+      b = e - 24; if (b < 1) b = 1
+      while (b < q && l[b] ~ "^([ \t]|│)*$") b++
+      for (i = b; i <= e; i++) print "B " l[i]
+    }')" || return 1
+  PROMPT_SHA="$(sed -n 's/^S //p' <<<"$out" | sha1sum)"; PROMPT_SHA="${PROMPT_SHA:0:12}"
+  while IFS= read -r line; do
+    case "$line" in
+      "Y "*) PROMPT_YES="${line#Y }" ;;
+      "Q "*) PROMPT_Q="${line#Q }" ;;
+      "B "*) PROMPT_BOX+="${line#B }"$'\n' ;;
+    esac
+  done <<<"$out"
+  PROMPT_BOX="${PROMPT_BOX%$'\n'}"
+  return 0
+}
+
 MODE="--once"; DRY=0
 case "${1:---once}" in
   --once)    MODE=once ;;
@@ -224,6 +284,15 @@ case "${1:---once}" in
              if [ -f "$OPTOUT" ]; then grep -vxF "$2" "$OPTOUT" > "$OPTOUT.tmp" || true
                                        mv "$OPTOUT.tmp" "$OPTOUT"; fi
              echo "watchdog will resume $2"; exit 0 ;;
+  --prompt)  # Is this pane (or a saved capture) at a prompt? The ONE detector:
+             # muxtelegram.py asks here before a phone's answer is typed.
+             #   sha <TAB> 12hex / yes <TAB> 0|1 / question <TAB> ... / the box
+             [ -n "${2:-}" ] || { echo "need a pane id or a file" >&2; exit 2; }
+             if [ -f "$2" ]; then _t="$(cat "$2")"
+             else _t="$(tmux capture-pane -p -t "$2" 2>/dev/null)" || { echo "no such pane: $2" >&2; exit 2; }; fi
+             prompt_scan "$_t" || { echo "no prompt"; exit 1; }
+             printf 'sha\t%s\nyes\t%s\nquestion\t%s\n%s\n' "$PROMPT_SHA" "$PROMPT_YES" "$PROMPT_Q" "$PROMPT_BOX"
+             exit 0 ;;
   --tree)    MODE=tree ;;
   --check)   MODE=check; CHECK_ARG="${2:-}"; CHECK_BODY=""
              case "${2:-}" in --body) CHECK_ARG=""; CHECK_BODY=1 ;; esac
@@ -1628,6 +1697,8 @@ check_schedules() {
   [ -f "$ENABLED" ] || return 0
   [ "$DRY" = 1 ] && return 0
   [ -d "$SCHEDULES" ] || return 0
+  # sched-why.tsv is fresh this pass: the notifications may judge it.
+  SCHED_RAN=1
   local f now st type at cwd rc probe=0 after dep_ok
   now="$(date +%s)"
   : > "$SCHED_WHY.tmp"
@@ -1733,6 +1804,269 @@ heartbeat() {
   return 0
 }
 
+# ----------------------------------------------------------- notifications
+# TELL THE PHONE, ONCE PER CHANGE. docs/plan-notify-telegram.md §1.
+#
+# Four events -- waiting, questions, trouble, done -- each behind its own
+# MUXTOPUS_NOTIFY_* switch, sent through claude-notify.sh. A pass republishes
+# every fact; a message is sent only when a KEY's fingerprint differs from the
+# one in sent.tsv, and a key whose condition ended is dropped, so the next
+# occurrence fires again. A restart re-reads the file and re-sends nothing.
+#
+# A KEY IS ONLY DROPPED BY A FAMILY THAT WAS LOOKED AT. check_schedules skips
+# whole passes (watchdog off), and the questions scan runs only when a file
+# changed; a key nobody re-evaluated is not a condition that ended.
+#
+#   sent.tsv      key <TAB> fingerprint <TAB> sent-at <TAB> message_id
+#   prompts.tsv   pane <TAB> prompt sha <TAB> first seen   (every pass, always)
+#   blocked.tsv   entry <TAB> blocked since                (the "faked clock")
+#   questions.sig what the QUESTIONS files looked like when last scanned
+#   baseline      absent until the first configured pass, which records the
+#                 done/ and QUESTIONS files that already exist instead of
+#                 announcing a history nobody asked about
+NOTIFY_DIR="$STATE_DIR/notify"
+NOTIFY_SENT="$NOTIFY_DIR/sent.tsv"
+NOTIFY_PROMPTS="$NOTIFY_DIR/prompts.tsv"
+NOTIFY_BLOCKED="$NOTIFY_DIR/blocked.tsv"
+NOTIFY_QSIG="$NOTIFY_DIR/questions.sig"
+NOTIFY_BASELINE="$NOTIFY_DIR/baseline"
+NOTIFY_CONF="${CLAUDE_NOTIFY_CONF:-$HOME/.config/claude-notify.conf}"
+declare -A NOTIFY_HAVE=() NOTIFY_ALIVE=() NOTIFY_FAM=() NOTIFY_PROMPT_PREV=()
+NOTIFY_READY=0; NOTIFY_BACKEND=""; NOTIFY_PROMPT_ROWS=""
+
+notify_on() { [ "${1:-on}" = on ]; }
+
+# Once per pass. The prompt ledger is read whatever the phone's configuration:
+# `waiting` is a state this file publishes, not only a message it sends.
+notify_begin() {
+  local line k fp at mid pane sha since
+  NOTIFY_HAVE=(); NOTIFY_ALIVE=(); NOTIFY_FAM=(); NOTIFY_PROMPT_PREV=()
+  NOTIFY_READY=0; NOTIFY_BACKEND=""; NOTIFY_PROMPT_ROWS=""; SCHED_RAN=""
+  mkdir -p "$NOTIFY_DIR"
+  if [ -f "$NOTIFY_PROMPTS" ]; then
+    while IFS=$'\t' read -r pane sha since; do
+      [ -n "$pane" ] && NOTIFY_PROMPT_PREV[$pane]="$sha"$'\t'"$since"
+    done < "$NOTIFY_PROMPTS"
+  fi
+  [ "$DRY" = 1 ] && return 0
+  [ -f "$NOTIFY_CONF" ] || return 0
+  # The backend, read with builtins: this runs every pass and forks nothing.
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      BACKEND=*) line="${line#BACKEND=}"; line="${line%%#*}"
+                 line="${line//\"/}"; line="${line//\'/}"; NOTIFY_BACKEND="${line// /}" ;;
+    esac
+  done < "$NOTIFY_CONF"
+  [ -n "$NOTIFY_BACKEND" ] || return 0
+  NOTIFY_READY=1
+  if [ -f "$NOTIFY_SENT" ]; then
+    while IFS=$'\t' read -r k fp at mid; do
+      [ -n "$k" ] && NOTIFY_HAVE[$k]="$fp"$'\t'"$at"$'\t'"$mid"
+    done < "$NOTIFY_SENT"
+  fi
+  return 0
+}
+
+# Is this key's condition new or changed? Marks it alive either way; 0 means
+# "send". Split from the send so a caller builds a body only when it is needed.
+notify_would() {
+  local key="$1" fp="$2" have
+  NOTIFY_ALIVE[$key]=1
+  [ "$NOTIFY_READY" = 1 ] || return 1
+  have="${NOTIFY_HAVE[$key]-}"
+  [ -n "$have" ] && [ "${have%%$'\t'*}" = "$fp" ] && return 1
+  return 0
+}
+
+# Record without sending: a baseline, a switch that is off for a history-like
+# event, a fork set that only shrank.
+notify_record() {
+  NOTIFY_ALIVE[$1]=1
+  [ "$NOTIFY_READY" = 1 ] || return 0
+  NOTIFY_HAVE[$1]="$2"$'\t'"$(date +%s)"$'\t'"${3:-}"
+}
+
+# One message. Every title leads with the account, so two accounts are told
+# apart on one phone. Prints nothing; logs one line.
+notify_send() {
+  local key="$1" fp="$2" title="$3" body="$4" buttons="${5:-}" mid
+  mid="$("$SCRIPT_DIR/claude-notify.sh" ${buttons:+--buttons "$buttons"} \
+          "$MUX_LABEL · $title" "$body" 2>/dev/null | tail -1)"
+  case "$mid" in *[!0-9]*) mid="" ;; esac
+  [ -n "$key" ] && notify_record "$key" "$fp" "$mid"
+  log "notify: ${key:-(no key)} -- $title"
+  return 0
+}
+
+notify_event() {
+  notify_would "$1" "$2" || return 1
+  notify_send "$@"
+}
+
+# WAITING: a pane at a prompt on two consecutive passes. Called from the
+# session loop with prompt_scan's globals set.
+notify_waiting() {
+  local pane="$1" name="$2" since="$3" body
+  notify_on "$MUXTOPUS_NOTIFY_WAITING" || return 0
+  notify_would "waiting:$pane" "$PROMPT_SHA" || return 0
+  body="at a prompt since $(date -d "@$since" '+%H:%M'): $PROMPT_Q"
+  if notify_on "$MUXTOPUS_NOTIFY_PANE_TEXT"; then
+    body+=$'\n\n'"$PROMPT_BOX"
+  fi
+  notify_send "waiting:$pane" "$PROMPT_SHA" "needs you: $name" "$body"
+}
+
+# TROUBLE from the schedule verdicts: stalled, error, and blocked for longer
+# than MUXTOPUS_NOTIFY_BLOCKED_AFTER minutes. Plain blocked is ordinary waiting.
+notify_schedules() {
+  [ "${SCHED_RAN:-}" = 1 ] || return 0
+  local b verdict why when now since after f st
+  local -A since_of=()
+  now="$(date +%s)"
+  NOTIFY_FAM[stalled]=1; NOTIFY_FAM[blocked]=1; NOTIFY_FAM[error]=1
+  if [ -f "$NOTIFY_BLOCKED" ]; then
+    while IFS=$'\t' read -r b since; do [ -n "$b" ] && since_of[$b]="$since"; done < "$NOTIFY_BLOCKED"
+  fi
+  after="${MUXTOPUS_NOTIFY_BLOCKED_AFTER:-120}"
+  case "$after" in ''|*[!0-9]*) after=120 ;; esac
+  : > "$NOTIFY_BLOCKED.tmp"
+  while IFS=$'\t' read -r b verdict why when; do
+    case "$verdict" in
+      stalled)
+        notify_on "$MUXTOPUS_NOTIFY_TROUBLE" && notify_event "stalled:$b" stalled "stalled: $b" "$why" ;;
+      blocked)
+        since="${since_of[$b]:-$now}"
+        printf '%s\t%s\n' "$b" "$since" >> "$NOTIFY_BLOCKED.tmp"
+        if [ "$after" -gt 0 ] && [ $(( now - since )) -ge $(( after * 60 )) ] \
+           && notify_on "$MUXTOPUS_NOTIFY_TROUBLE"; then
+          notify_event "blocked:$b" blocked "blocked $(dur_hm $(( now - since ))): $b" "$why"
+        fi ;;
+    esac
+  done < "$SCHED_WHY"
+  mv "$NOTIFY_BLOCKED.tmp" "$NOTIFY_BLOCKED"
+  # An entry marked error is a launch that failed; the log carries why.
+  notify_on "$MUXTOPUS_NOTIFY_TROUBLE" || return 0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    st="$(sched_field "$f" status)"
+    [ "$st" = error ] || continue
+    b="${f##*/}"
+    notify_would "error:$b" error || continue
+    why="$(grep -F "schedule $b:" "$LOG" 2>/dev/null | tail -1)"
+    notify_send "error:$b" error "launch failed: $b" "${why:-marked status: error}"
+  done < <(grep -l '^status: error' "$SCHEDULES"/*.md 2>/dev/null)
+  return 0
+}
+
+# DONE: a handover that appeared in done/ -- its gist, and what it released.
+notify_done() {
+  local f b slug gist rel first="" dep g
+  NOTIFY_FAM[done]=1
+  [ -f "$NOTIFY_BASELINE" ] || first=1
+  for f in "$HANDOVERS"/done/STATUS-*.md; do
+    [ -f "$f" ] || continue
+    b="${f##*/}"
+    notify_would "done:$b" done || continue
+    # A history, not a condition: recorded even while the switch is off, so
+    # turning it on does not announce every lane that ever finished.
+    if [ -n "$first" ] || ! notify_on "$MUXTOPUS_NOTIFY_DONE"; then
+      notify_record "done:$b" done; continue
+    fi
+    slug="${b#STATUS-}"; slug="${slug%.md}"
+    slug="$(sed -E 's/-[0-9]{8}-[0-9]{6}$//' <<<"$slug")"
+    # The gist: the first line that is not a heading, a fence, a rule or a
+    # table row -- the rule muxhandovers.summarise uses, in its minimum.
+    gist="$(awk '/^[[:space:]]*$/{next} /^#/{if(!t){t=$0; sub(/^#+[[:space:]]*/,"",t)}; next}
+                 /^(```|---|\*\*\*|\|)/{next} {print; exit}' "$f")"
+    [ -n "$gist" ] || gist="$(awk 'NF{sub(/^#+[[:space:]]*/,""); print; exit}' "$f")"
+    rel=""
+    for g in "$SCHEDULES"/*.md; do
+      [ -f "$g" ] || continue
+      case "$g" in */README.md) continue ;; esac
+      dep="$(sched_field "$g" after)"
+      [ -n "$dep" ] || continue
+      sched_after_deps "$dep" | grep -qxF "$slug" || continue
+      rel+=$'\n'"  ${g##*/}: $(sched_field "$g" status)"
+      rel+="$(awk -F'\t' -v b="${g##*/}" '$1==b{print " -- " $3}' "$SCHED_WHY" 2>/dev/null)"
+    done
+    notify_send "done:$b" done "done: $slug" "${gist:0:500}${rel:+$'\n\n'released:$rel}"
+  done
+  return 0
+}
+
+# QUESTIONS: an unanswered QUESTIONS file, or new forks in one -- both folders.
+# The reading is muxtelegram.py's (muxhandovers' when it lands), and it runs
+# only when some file's name, mtime or size changed.
+notify_questions() {
+  local legacy="${MUXTOPUS_QUESTIONS_DIR:-$HOME/.code/theprototype-app/core/plans}"
+  local sig rows path slug ids have prev new id n shown summary="" first=""
+  sig="$(stat -c '%n %Y %s' "$HANDOVERS"/QUESTIONS-*.md "$legacy"/QUESTIONS-*.md 2>/dev/null)"
+  [ -f "$NOTIFY_BASELINE" ] || first=1
+  if [ -z "$first" ] && [ -f "$NOTIFY_QSIG" ] && [ "$sig" = "$(cat "$NOTIFY_QSIG")" ]; then
+    return 0
+  fi
+  rows="$(python3 "$SCRIPT_DIR/muxtelegram.py" questions ${MUX_PROFILE:+--profile "$MUX_PROFILE"} 2>/dev/null)" \
+    || return 0
+  NOTIFY_FAM[questions]=1
+  while IFS=$'\t' read -r path slug ids; do
+    [ -n "$path" ] || continue
+    ids="${ids:-file}"
+    notify_would "questions:$path" "$ids" || continue
+    have="${NOTIFY_HAVE[questions:$path]-}"; prev=""
+    [ -n "$have" ] && prev=",${have%%$'\t'*},"
+    new=()
+    for id in ${ids//,/ }; do
+      case "$prev" in *",$id,"*) ;; *) new+=("$id") ;; esac
+    done
+    if [ -n "$first" ]; then
+      summary+="${summary:+, }$slug"
+      notify_record "questions:$path" "$ids"; continue
+    fi
+    # Only shrank (a fork was answered), or the switch is off: record quietly.
+    if [ "${#new[@]}" = 0 ] || ! notify_on "$MUXTOPUS_NOTIFY_QUESTIONS"; then
+      notify_record "questions:$path" "$ids"; continue
+    fi
+    n="${#new[@]}"; [ "$ids" = file ] && n=0
+    if [ "$n" = 0 ]; then
+      notify_send "questions:$path" "$ids" "questions: $slug" \
+        "an unanswered QUESTIONS file, no forks could be read -- open it: $path"
+      continue
+    fi
+    notify_send "questions:$path" "$ids" "questions: $slug" \
+      "$n new unanswered fork(s) in $path$([ "$n" -gt 8 ] && printf '\nshowing 8; %d more -- open the dashboard' $(( n - 8 )))"
+    shown=0
+    for id in "${new[@]}"; do
+      shown=$(( shown + 1 )); [ "$shown" -le 8 ] || break
+      notify_send "" "" "$slug · fork $shown/$n" \
+        "$(jq -r --arg p "$path" --arg i "$id" 'select(.path==$p) | .forks[] | select(.id==$i) | .text' <<<"$rows")"
+    done
+  done < <(jq -r '[.path, .slug, (.forks | map(.id) | join(","))] | @tsv' <<<"$rows")
+  if [ -n "$first" ] && [ -n "$summary" ] && notify_on "$MUXTOPUS_NOTIFY_QUESTIONS" && [ "$NOTIFY_READY" = 1 ]; then
+    notify_send "" "" "questions waiting" "unanswered QUESTIONS files: $summary"
+  fi
+  printf '%s' "$sig" > "$NOTIFY_QSIG"
+  return 0
+}
+
+# End of pass: the prompt ledger, the baseline, and sent.tsv minus every key a
+# looked-at family no longer raised.
+notify_end() {
+  local k
+  [ "$DRY" = 1 ] || printf '%s' "$NOTIFY_PROMPT_ROWS" > "$NOTIFY_PROMPTS"
+  [ "$NOTIFY_READY" = 1 ] || return 0
+  : > "$NOTIFY_SENT.tmp"
+  for k in "${!NOTIFY_HAVE[@]}"; do
+    if [ -z "${NOTIFY_ALIVE[$k]-}" ] && [ -n "${NOTIFY_FAM[${k%%:*}]-}" ]; then
+      log "notify: $k ended"
+      continue
+    fi
+    printf '%s\t%s\n' "$k" "${NOTIFY_HAVE[$k]}" >> "$NOTIFY_SENT.tmp"
+  done
+  mv "$NOTIFY_SENT.tmp" "$NOTIFY_SENT"
+  [ -f "$NOTIFY_BASELINE" ] || date +%s > "$NOTIFY_BASELINE"
+  return 0
+}
+
 pass() {
   local enabled=0; [ -f "$ENABLED" ] && enabled=1
   local msg; msg="$(head -1 "$MSGFILE" 2>/dev/null)"; msg="${msg:-$DEFAULT_MSG}"
@@ -1741,9 +2075,10 @@ pass() {
 
   local f pid sid pane paneid ver st kind cwd tr ctx name text reset epoch state acted
   local spent rd resumed model optout idle jobid cwd turn_at wound moptout
-  local prev lane stranded
+  local prev lane stranded pprev since
   # Rebuilt lazily, once per pass at most, by the stranded test below.
   SCHED_NAMED=""
+  notify_begin
   # Read once per pass, not once per session: every session is judged against
   # the same account-wide figures.
   local spct wpct rkey
@@ -1873,6 +2208,26 @@ pass() {
     # opt-in decision that is NOT being built -- an unrequested turn is a turn,
     # and this week showed what four of them cost.
     prev="$(awk -F'\t' -v s="$sid" '$1==s{v=$6} END{print v}' "$STATUS" 2>/dev/null)"
+
+    # WAITING: AN IDLE PANE THAT IS REALLY A QUESTION. The pane text is the
+    # capture taken above, so this costs no tmux fork, and nothing at all for
+    # a pane with no numbered option on screen. Seen on TWO consecutive passes
+    # with the same prompt, so a dialog that flashes past is not news. Decided
+    # before the stranded test: a lane at a prompt is not stranded, it is
+    # asking. Like stranded, a fact shown to a human and never a trigger.
+    if [ "$state" = idle ] && [ -n "$paneid" ] && prompt_scan "$text"; then
+      pprev="${NOTIFY_PROMPT_PREV[$paneid]-}"; since="$now"
+      if [ -n "$pprev" ] && [ "${pprev%%$'\t'*}" = "$PROMPT_SHA" ]; then
+        since="${pprev#*$'\t'}"; state=waiting
+      fi
+      NOTIFY_PROMPT_ROWS+="$paneid"$'\t'"$PROMPT_SHA"$'\t'"$since"$'\n'
+      if [ "$state" = waiting ]; then
+        [ "$prev" = waiting ] || log "waiting: $name (pane $paneid) at a prompt: $PROMPT_Q"
+        notify_waiting "$paneid" "$name" "$since"
+      fi
+    elif [ "$prev" = waiting ]; then
+      log "no longer waiting: $name is now $state"
+    fi
     stranded=""; lane=""
     if [ "$state" = idle ] && [ "${STRANDED_MIN:-0}" -gt 0 ] 2>/dev/null \
        && [ "$idle" -ge $(( ${STRANDED_MIN:-0} * 60 )) ] 2>/dev/null; then
@@ -1889,6 +2244,9 @@ pass() {
       state=stranded
       [ "$prev" = stranded ] || \
         log "stranded: $name idle $(dur_hm "$idle") with an open handover ($HANDOVERS/STATUS-$lane.md) and no pending schedule entry naming it"
+      notify_on "$MUXTOPUS_NOTIFY_TROUBLE" && \
+        notify_event "stranded:$lane" stranded "stranded: $name" \
+          "idle $(dur_hm "$idle") with an open handover ($HANDOVERS/STATUS-$lane.md) and no pending schedule entry naming it"
     elif [ "$prev" = stranded ]; then
       log "no longer stranded: $name is now $state"
     fi
@@ -1910,6 +2268,13 @@ pass() {
   tree_adopt
   tree_reparent
   check_schedules
+  NOTIFY_FAM[waiting]=1; NOTIFY_FAM[stranded]=1
+  if [ "$NOTIFY_READY" = 1 ]; then
+    notify_schedules
+    notify_done
+    notify_questions
+  fi
+  notify_end
   heartbeat "$(grep -c '' "$STATUS" 2>/dev/null)"
   # Keep the limit figures warm on their own hourly clock. --ensure is a no-op
   # when the cache is young, so this costs nothing between the hours, and it is

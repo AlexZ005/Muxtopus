@@ -70,6 +70,16 @@ KEYS = {
     "DASHBOARD_NEW_MODEL": None,
     "DASHBOARD_NEW_EFFORT": None,
     "DASHBOARD_NEW_CWD": None,
+    # WHAT REACHES THE PHONE (claude-notify.sh; docs/plan-notify-telegram.md
+    # §1): the four events, how long a block is ordinary, whether the buttons
+    # may answer, and whether pane text may leave the machine.
+    "MUXTOPUS_NOTIFY_WAITING": "on",
+    "MUXTOPUS_NOTIFY_QUESTIONS": "on",
+    "MUXTOPUS_NOTIFY_TROUBLE": "on",
+    "MUXTOPUS_NOTIFY_BLOCKED_AFTER": "120",
+    "MUXTOPUS_NOTIFY_DONE": "on",
+    "MUXTOPUS_NOTIFY_INBOUND": "on",
+    "MUXTOPUS_NOTIFY_PANE_TEXT": "on",
 }
 KINDS = ("schedules", "backups", "handovers")
 

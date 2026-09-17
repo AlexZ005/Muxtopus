@@ -37,7 +37,7 @@ sb_init() {
   # tmux, pinned. Every call in the sandbox -- the watchdog's, muxtelegram's,
   # this file's -- lands on the private server.
   local real; real="$(command -v tmux)"
-  printf '#!/bin/sh\nexec %s -L mxnotify -f /dev/null "$@"\n' "$real" > "$SB/bin/tmux"
+  printf '#!/bin/sh\nexec %s -u -L mxnotify -f /dev/null "$@"\n' "$real" > "$SB/bin/tmux"
   chmod +x "$SB/bin/tmux"
   # The fake claude: prints a prompt (or a scripted screen), publishes its
   # session file the way the real CLI does, and sits there.

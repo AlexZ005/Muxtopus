@@ -1,0 +1,18 @@
+● Bash(rm -rf "$SB/fake")
+  ⎿  Running…
+
+────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   rm -rf "$SB/fake"
+   Remove the sandbox's fake API folder
+
+ Dangerous rm operation on possibly-empty variable path "$SB/fake". Do you want to
+ continue anyway?
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for rm commands in /home/deck/.code/scripts
+   3. No, and tell Claude what to do differently (esc)
+
+ Esc to cancel · Tab to add additional instructions
