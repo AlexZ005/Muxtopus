@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "lastComputedDate": "2026-09-01",
+  "dailyActivity": [],
+  "hourCounts": {},
+  "modelUsage": {},
+  "totalSessions": 3,
+  "totalMessages": 10,
+  "longestSession": {},
+  "firstSessionDate": "2026-08-30T00:00:00.000Z",
+  "dailyModelTokensVersion": 1,
+  "dailyModelTokens": [
+    {
+      "date": "2026-08-30",
+      "tokensByModel": {
+        "claude-opus-5": 123456
+      }
+    },
+    {
+      "date": "2026-08-31",
+      "tokensByModel": {
+        "claude-opus-5": 1000,
+        "claude-sonnet-5": 2000
+      }
+    },
+    {
+      "date": "2026-09-01",
+      "tokensByModel": {
+        "claude-opus-5": 999999
+      }
+    }
+  ]
+}
