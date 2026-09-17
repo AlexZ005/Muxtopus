@@ -1688,7 +1688,7 @@ class Dashboard:
                 on[o["key"]] = have[o["set"]]
         self.open_options(r["file"].name[:-3], r["type"], opts, on,
                           lambda st, f=r["file"]: self._write_options(f, st),
-                          esc="cancel")
+                          mode="reopen")
         return ""
 
     def _write_options(self, f, st: dict) -> str:
@@ -1789,16 +1789,18 @@ class Dashboard:
     # menu_activate), and it reuses the existing prompt and picker for the
     # two options that need a value. Nothing new in the input layer.
     def open_options(self, title: str, typ: str, opts: list[dict],
-                     on: dict, fn, esc: str = "skip") -> None:
+                     on: dict, fn, mode: str = "create") -> None:
         """opts is SNAPSHOT at open: the ticks are keyed by option key, and a
         list that re-read itself every frame could reorder under the cursor
         while someone is halfway down it.
 
-        esc="skip" continues with nothing ticked (the create flow: the entry
-        is written either way, so esc is a skip). esc="cancel" changes nothing
-        (a reopen: the entry already exists, and a stray key must not untick
-        everything -- see QUESTIONS-sched-options-table §1)."""
-        self.options = {"title": title, "typ": typ, "all": opts, "esc": esc,
+        ESC CANCELS, in both modes (the user's answer to
+        QUESTIONS-sched-options-table §1, superseding the create flow's old
+        "esc skips"): on create nothing is written, because the file is
+        written by fn after the table and fn is simply not called; on a
+        reopen the file is untouched. "Continue with nothing ticked" is a
+        ROW at the bottom now, as are check all, uncheck all and continue."""
+        self.options = {"title": title, "typ": typ, "all": opts, "mode": mode,
                         "on": dict(on), "i": 0, "fn": fn}
         self.options_move(0)
 
@@ -1835,6 +1837,18 @@ class Dashboard:
                                      "gone from options.md — dropped on save",
                                      "set": "", "ask": "", "line": ""},
                              "disabled": "gone"})
+        # THE ACTIONS ARE ROWS, not hidden key meanings: what enter does is
+        # written where the cursor can reach it. `skip` exists only on create
+        # -- on a reopen "save nothing ticked" beside "save" is the trap the
+        # user just removed, and uncheck all + save says it in two steps.
+        rows.append({"head": "ACTIONS"})
+        rows.append({"act": "check_all", "label": "check all"})
+        rows.append({"act": "uncheck_all", "label": "uncheck all"})
+        if st["mode"] == "reopen":
+            rows.append({"act": "continue", "label": "save  what is ticked"})
+        else:
+            rows.append({"act": "continue", "label": "continue  save what is ticked, then the editor"})
+            rows.append({"act": "skip", "label": "skip  continue with nothing ticked"})
         return rows
 
     def options_move(self, delta: int) -> None:
@@ -1879,6 +1893,24 @@ class Dashboard:
         st["on"][o["key"]] = True
         return ""
 
+    def options_check_all(self) -> None:
+        """Tick every plain option shown. One that needs a value (a choice
+        or a number) is LEFT ALONE rather than ticked with nothing -- the
+        sentence would go out with {{VALUE}} in it -- and the notice says
+        how many were skipped for that reason."""
+        st = self.options
+        skipped = 0
+        for r in self.option_rows():
+            o = r.get("opt")
+            if not o or r.get("disabled") or o["key"] in st["on"]:
+                continue
+            if o["set"] or o["ask"]:
+                skipped += 1
+                continue
+            st["on"][o["key"]] = True
+        if skipped:
+            self.say("%d option(s) need a value — tick those one by one" % skipped)
+
     def _option_chose(self, key: str, choice: str) -> str:
         if self.options is not None:
             self.options["on"][key] = choice
@@ -1907,18 +1939,33 @@ class Dashboard:
             if msg:
                 self.say(msg)
         elif key in ("\r", "\n"):
+            rows = self.option_rows()
+            row = rows[st["i"]] if 0 <= st["i"] < len(rows) else {}
+            act = row.get("act")
+            if act is None:
+                # An option row: enter toggles, like space, now that continue
+                # is a row of its own (QUESTIONS-dash-menus-settings 3a).
+                msg = self.options_toggle()
+                if msg:
+                    self.say(msg)
+                return
+            if act == "check_all":
+                self.options_check_all()
+                return
+            if act == "uncheck_all":
+                st["on"] = {}
+                return
+            if act == "skip":
+                st["on"] = {}
             fn = st["fn"]
             self.options = None
             self.say(fn(st))
         elif key == "\x1b":
+            # CANCEL, in both modes. The create flow's file is written by fn,
+            # after the table, so not calling it means nothing is written.
             self.options = None
-            if st["esc"] == "cancel":
-                self.say("unchanged")
-                return
-            # In the create flow esc CONTINUES with nothing ticked -- a skip,
-            # not a cancel: the entry is still wanted, the sentences are not.
-            st["on"] = {}
-            self.say(st["fn"](st))
+            self.say("unchanged" if st["mode"] == "reopen"
+                     else "cancelled — nothing written")
 
     def options_panel(self) -> Panel:
         """One row per option, laid out like the menu. Every cell that can grow
@@ -1935,9 +1982,12 @@ class Dashboard:
             if r.get("head"):
                 g.add_row("", "", Text(r["head"], style="bold " + DIM), "")
                 continue
-            o = r["opt"]
             cur = (i == st["i"])
             mark = Text("▸" if cur else " ", style="bold #c9a0dc")
+            if r.get("act"):
+                g.add_row(mark, "", Text(r["label"], style="bold #c9a0dc" if cur else "#c9a0dc"), "")
+                continue
+            o = r["opt"]
             if o["bad"]:
                 g.add_row(mark, Text("   ", style=FRAME),
                           Text(o["label"], style=FRAME),
@@ -1953,9 +2003,8 @@ class Dashboard:
         if not rows:
             g.add_row("", "", Text("no options", style=DIM),
                       Text(str(options_paths(PROFILE)[0]), style=DIM))
-        keys = Text("   ↑↓ pick · space toggle · enter %s · esc %s"
-                    % (("save" if st["esc"] == "cancel" else "continue"),
-                       ("cancel" if st["esc"] == "cancel" else "skip")), style=DIM)
+        keys = Text("   ↑↓ pick · space/enter toggle · enter on a row below does it · esc cancel",
+                    style=DIM)
         # THE NOTICE HAS TO LIVE HERE. The footer is this panel while the table
         # is open, so a refused value ("a number, please — not ticked") reached
         # self.say and was then drawn nowhere at all.
@@ -3257,10 +3306,13 @@ HELP = f"""
     is shown greyed with the reason rather than dropped, exactly as a
     corrupted schedule entry is.
 
-    ↑↓ picks, space ticks. An option that needs a number or a time opens the
-    text prompt; one with a list of choices opens the picker (that is how
-    model: and effort: are set). enter continues, esc skips -- and on a reopen
-    esc cancels instead, because the entry already exists.
+    ↑↓ picks, space or enter ticks. An option that needs a number or a time
+    opens the text prompt; one with a list of choices opens the picker (that
+    is how model: and effort: are set). THE ACTIONS ARE ROWS at the bottom:
+    check all, uncheck all, continue (save what is ticked, then the editor;
+    "save" on a reopen) and, on create only, skip (continue with nothing
+    ticked). esc CANCELS, on create and on reopen alike: on create no entry
+    file is written at all, on reopen the file is untouched.
 
     A TICK WRITES ONE OF TWO THINGS: a sentence, appended to the body under a
     `## Options` heading at the END of it, or a header field (model:, effort:)
