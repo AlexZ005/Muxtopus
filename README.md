@@ -132,6 +132,8 @@ A profile is the suffix on the Claude config dir. **The default account takes no
 | `↑` `↓` | pick a session, a lane above them, or the extras row below |
 | `enter` | open that session's window (`Ctrl-b 0` comes back) |
 | `space` | menu for the session under the cursor |
+| `esc` | the muxtopus menu: Settings, the watchdog and monitor switches, disconnect, reload, quit |
+| `c` | a new claude session — folder, model, effort, permission mode, where, name, first prompt |
 | `f` | lanes: this account only / every account (enter on a lane row does the same) |
 | `s` | scheduled windows |
 | `w` | arm / disarm the watchdog |
@@ -144,6 +146,14 @@ A profile is the suffix on the Claude config dir. **The default account takes no
 | `q` | quit |
 
 The **menu** (`space`) carries two per-session switches and then everything you can do to that window: open, rename, wind it down now, resume it now, continue it at low priority, schedule a resume at the next reset, or close it.
+
+The **muxtopus menu** (`esc`) is what is not about one row: **Settings**, the watchdog and monitor switches by their full names (`w` and `m` stay the fast path), **Disconnect** (`tmux detach-client`; the dashboard and every window keep running, `muxtopus` attaches again), **Reload** (what `R` does) and **Quit**. Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.dashboard.conf` for a named account), a file the dashboard owns — see [Configuration](#configuration) — and every one is read back from disk before it is reported as saved: the menu layout, the permission mode, model and effort preselected for a new window, whether such a window is watched and monitored, the working folder offered first, and which `settings.json` "make it the default" writes to.
+
+**Menus are never clipped.** The room under the panels is measured from the terminal (what Rich will actually draw, not a row count) and the menu scrolls inside it with `▲ N more` / `▼ N more` markers. The `table` layout (default) keeps the panel the cursor is in and draws the menu right under it, dropping what is below while it is open; `modal` centres the menu alone; `bottom` is the old position, capped. With fewer than six lines left, a frame degrades to modal for that one open and the title says so.
+
+**A new claude session** (`c`) asks seven things through the picker and the prompt — the working folder (it must exist), the model as a CLI *alias* (`opus`, `fable`, `sonnet`…: `--model opus-5`, the MODEL column's spelling, is refused by the CLI and kills the window after it has eaten the paste), the effort, the permission mode (preselected from Settings, or nothing preselected when that says `ask` — a default, never a lock), where it goes (a top-level window, or under a live one as `➥➥name`, inserted after that parent's subtree), the name (the slug), and an optional first prompt — and then **writes a schedule entry** with `at:` already past. It opens no window itself: the watchdog's next pass does the trust dialog, the readiness wait, the bracketed paste, the tree row and the log line, exactly as for any entry. The entry carries `model:`, `effort:`, `permission-mode:`, `cwd:`, `parent:`/`window:`, and `watchdog: off` / `monitor: off` when Settings says a new window is not watched or monitored. An empty prompt writes a `plan` entry: the session receives its identity line and nothing invented.
+
+Choosing `bypassPermissions` also offers *…and make it the default*. A confirm names the exact `settings.json` (the project's `<cwd>/.claude/settings.json` or the account's, per Settings) and what changes — **every future Claude session there skips permission prompts, including ones nothing is watching**. The write merges `permissions.defaultMode` into the existing JSON (nested, where Claude Code reads it), keeps every other key in place, backs the old file up beside itself, and refuses a file that is not valid JSON. It lives in one place, `muxsettings.py`, whoever asks for it.
 
 ### Panels
 
@@ -216,6 +226,10 @@ Accepted values are whatever `claude --permission-mode` takes at the installed v
 
 The dashboard's per-session opt-outs, for a window that should start out exempt. Only `off` (any case) opts out; anything else, or no line, is the default: covered. They are header fields the **launcher** applies, not something the dashboard writes at create time, because the opt-out files are keyed by session id and a session id does not exist before launch. Once the prompt is up the launcher finds the `sessions/*.json` whose `.tmux` names its pane, appends that id exactly as `--optout` / `--monitor-optout` do, and logs it; if none turns up within ~5s the window is left watched and the log says so. `--check` prints both.
 
+### The schedule view's menu
+
+`space` on an entry opens **that entry's** menu, drawn by the same never-clipped engine: the executor's *why* sentence first when the entry is blocked, waiting or stalled; edit; options (the table, pre-ticked from the header); launch now; duplicate as a new pending entry (a `-copy` title, a pinned `slug:` dropped so two entries never share a window name and a handover, then the editor); check (the `--check --body` report, full screen); open its window when it has one; delete. A corrupted entry gets its reason and only delete. Nothing in it acts on a claude session.
+
 ### The options table
 
 Five sentences go into nearly every brief anyone writes — *don't ask questions, nobody is watching*; *one commit per phase*; *don't push*; *`/low-priority` on a limit*; *a change you never ran is not verified*. `c` now offers them as checkboxes between the template and the editor, and `o` reopens the table on a pending entry.
@@ -233,6 +247,8 @@ line: Nobody is watching this window: do not ask questions. …
 ```
 
 A tick writes one of two things: a **sentence**, appended to the body under a `## Options` heading at the end of it, or a **header field** — `set: model` with `choices:` opens the picker and writes `model:`, which the launcher passes as `claude --model`. `ask: number` (or `text`) collects a value on toggle and substitutes it into `{{VALUE}}`.
+
+The actions are **rows** at the bottom of the table: *check all*, *uncheck all*, *continue* (save what is ticked, then the editor; *save* on a reopen) and, on create only, *skip* (continue with nothing ticked). `space` or `enter` ticks an option row; `enter` on an action row does that thing. **`esc` cancels** on create and on reopen alike: on create no entry file is written at all, on reopen the file is untouched.
 
 The header also records `options: questions, phases, lanes=3`, and **that is the source of truth**. `o` reopens the table from it and regenerates the section, so a sentence edited by hand in that section is overwritten on the next save — move it above the heading (everything above is preserved byte for byte) or edit it in `options.md` where it came from.
 
@@ -328,14 +344,16 @@ Two decisions worth stating, because both were bugs first:
 
 ## Configuration
 
-Two layers of plain shell, both optional. `profile.sh` sources them and `muxconfig.py` parses them against the same key list, so the shell half and the Python dashboard cannot disagree about where anything lives or what a knob is set to.
+Four layers of plain shell, all optional — two you write, two the dashboard writes. `profile.sh` sources them and `muxconfig.py` parses them against the same key list, so the shell half and the Python dashboard cannot disagree about where anything lives or what a knob is set to.
 
 ```
-~/.config/muxtopus/config                  every account: paths and defaults
-~/.config/muxtopus/profiles/<name>.conf    one named account's overrides
+~/.config/muxtopus/config                           every account: paths and defaults
+~/.config/muxtopus/dashboard.conf                   every account, written by the dashboard's Settings menu
+~/.config/muxtopus/profiles/<name>.conf             one named account's overrides
+~/.config/muxtopus/profiles/<name>.dashboard.conf   one account, written by that account's dashboard
 ```
 
-The same keys mean the same thing in both files; the per-account file only narrows the scope. Precedence, lowest first: built-in default, environment, `config`, `profiles/<name>.conf`. **There is no registry of profiles** — an account exists because `~/.claude-<name>` does, and its `.conf` describes it rather than creating it; a second list would only ever drift from the first. The default account has no name and no `.conf`: the shared file *is* its configuration, and named accounts layer on top.
+The same keys mean the same thing in all of them; the per-account files only narrow the scope. Precedence, lowest first: built-in default, environment, `config`, `dashboard.conf`, `profiles/<name>.conf`, `profiles/<name>.dashboard.conf`. The dashboard-written file sits **above** the hand-written one at the same scope — the menu is where a value was set most recently and most explicitly, and what it writes must be what is read next — and **below** the account's own hand-written file, the existing rule. It is a separate file because `config` is yours and full of your comments, and a program that rewrote it would eventually eat them; the dashboard rewrites its own file whole, atomically, and only reports a setting as saved once it has read it back from disk. **There is no registry of profiles** — an account exists because `~/.claude-<name>` does, and its `.conf` describes it rather than creating it; a second list would only ever drift from the first. The default account has no name and no `.conf`: the shared file *is* its configuration, and named accounts layer on top.
 
 | key | default | |
 |---|---|---|
@@ -352,6 +370,14 @@ The same keys mean the same thing in both files; the per-account file only narro
 | `CLAUDE_USAGE_MAX_AGE` | `20` | minutes; the dashboard's `u` and `R` refresh only past this age |
 | `CLAUDE_USAGE_MODEL` | from `settings.json` | which model's limit line the probe reads |
 | `CLAUDE_CONTEXT_WINDOW` | `1000000` | what the dashboard draws the context bar against |
+| `DASHBOARD_MENU_LAYOUT` | `table` | how a context menu is drawn: `table` (under the panel the cursor is in), `modal` (centred), `bottom` (the footer, scrolling) |
+| `DASHBOARD_NEW_PERMISSION_MODE` | `ask` | the mode preselected when `c` creates a window; `ask` preselects nothing |
+| `DASHBOARD_PERMANENT_MODE_SCOPE` | `project` | which `settings.json` *make it the default* writes: `project` (`<cwd>/.claude/`) or `account` (`~/.claude/`) |
+| `DASHBOARD_NEW_WATCHDOG` | `on` | `off`: a window `c` creates carries `watchdog: off` and is never restarted after a limit |
+| `DASHBOARD_NEW_MONITOR` | `on` | `off`: it carries `monitor: off` and is never wound down |
+| `DASHBOARD_NEW_MODEL` | | model alias preselected for a new window; empty is the account default |
+| `DASHBOARD_NEW_EFFORT` | | effort preselected for a new window; empty is the account default |
+| `DASHBOARD_NEW_CWD` | | working folder offered first by `c` and used by the schedule create flow when the cursor's session has none |
 
 ```sh
 # ~/.config/muxtopus/config
@@ -363,7 +389,7 @@ MUXTOPUS_HOME="$HOME/.code/work/.muxtopus"   # its own home
 WATCHDOG_SOFT_PCT=60
 ```
 
-`muxtopus -c` prints the effective configuration of an account (`muxtopus -c --profile=work` for another), every value with the layer it came from.
+`muxtopus -c` prints the effective configuration of an account (`muxtopus -c --profile=work` for another), every value with the layer it came from — `dashboard` and `profile-dashboard` for the two dashboard-written files.
 
 Every file this tool writes — the installer's `config`, and the `profiles/<name>.conf` that creating an account seeds — lists **every key, commented out at its default**, with a line on what it does. Uncomment one to set it; leave it and a future default still applies.
 
