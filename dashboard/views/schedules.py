@@ -33,6 +33,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+import muxhandovers
 import muxsettings
 from dashboard.app import View
 from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, HOME, PROFILE,
@@ -848,16 +849,20 @@ class ScheduleView(View):
             parts.append(Panel(line, title="[bold]why", title_align="left",
                                border_style=FRAME, box=box.ROUNDED))
 
-        try:
-            qfiles = sorted(QUESTIONS_DIR.glob("QUESTIONS-*.md"))
-        except OSError:
-            qfiles = []
-        if qfiles:
-            qt = Text()
-            qt.append("awaiting your answers   ", style="bold " + YELLOW)
-            qt.append("   ".join(q.name for q in qfiles), style=YELLOW)
-            qt.append("\n" + str(QUESTIONS_DIR), style=DIM)
-            parts.append(Panel(qt, border_style=FRAME, box=box.ROUNDED))
+        # AWAITING YOUR ANSWERS, in ONE LINE and pointing somewhere.
+        # This used to be a panel listing filenames out of QUESTIONS_DIR
+        # alone -- the legacy folder -- so it showed nothing at all while
+        # three unanswered files sat in the handovers folder, and it offered
+        # no way to answer any of them. The handovers tab is both halves of
+        # that fix; what stays here is the pointer, because this is the
+        # screen the message was already familiar on.
+        asking = muxhandovers.asking(HANDOVERS_DIR, QUESTIONS_DIR)
+        if asking:
+            parts.append(Panel(
+                Text.assemble(
+                    ("awaiting your answers: %d" % len(asking), "bold " + YELLOW),
+                    ("   → to answer", DIM)),
+                border_style=FRAME, box=box.ROUNDED))
 
         keys = Text.assemble(
             (" ↑↓", DIM), " pick  ", ("space", DIM), " menu  ",

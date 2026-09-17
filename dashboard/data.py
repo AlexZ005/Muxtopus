@@ -39,6 +39,10 @@ from dashboard.core import (
     WATCHDOG_HEARTBEAT, WATCHDOG_HOORAY, WATCHDOG_MON_OPTOUT, WATCHDOG_MONITOR,
     WATCHDOG_OPTOUT, WATCHDOG_REPOS, WATCHDOG_SCHED_WHY, WATCHDOG_STATUS,
     WATCHDOG_TREE, WATCHDOG_USAGE, WATCHDOG_USAGE_FAIL, profile_of, read)
+# THE HANDOVER RULES, which are not this module's: what "open" and "done"
+# mean is one definition shared with the watchdog, and handover_state below
+# is a call to it rather than a second copy that drifted once already.
+import muxhandovers
 # THE ONE EDGE TO dashboard.schedules, and it is one function: a live window's
 # lane slug is the executor's slug rule applied to a tmux name, and that rule
 # has exactly one implementation on this side (sanitise_slug). Importing it is
@@ -463,15 +467,17 @@ def live_windows() -> set[str]:
 
 
 def handover_state(slug: str) -> tuple[str, float]:
-    """What the lane's handover says about it: open, done, or nothing yet."""
-    f = HANDOVERS_DIR / ("STATUS-%s.md" % slug)
-    d = HANDOVERS_DIR / "done" / ("STATUS-%s.md" % slug)
-    for path, label in ((f, "open"), (d, "done")):
-        try:
-            return label, time.time() - path.stat().st_mtime
-        except OSError:
-            continue
-    return "none", 0.0
+    """What the lane's handover says about it: open, done, or nothing yet.
+
+    ONE DEFINITION, and it is muxhandovers'. This used to test the OPEN file
+    first while the watchdog's sched_dep_state tested `done/` first, so a lane
+    that ran, was marked done and ran again -- which has both files -- was
+    `open` to the WHY line and `done` to every `after: <slug>`. The
+    disagreement was invisible and the dashboard was the one that was wrong:
+    `after:` is what the executor acts on. muxhandovers.lane_state mirrors
+    that order and tests/test_handovers.py greps it out of the shell.
+    """
+    return muxhandovers.lane_state(HANDOVERS_DIR, slug)
 
 
 def session_mode(procs: list[Proc]) -> str:

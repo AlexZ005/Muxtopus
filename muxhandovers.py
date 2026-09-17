@@ -548,3 +548,50 @@ def mark_answered(text: str, date: str) -> str:
     lines.insert(at, marker)
     lines.insert(at + 1, "")
     return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
+# ------------------------------------------------- the cheap question count
+# WHAT THE MAIN FRAME MAY PAY. The `?` on a session row and the schedules
+# tab's one-line pointer both want the same answer -- which lanes have an
+# unanswered QUESTIONS file -- and the main frame is measured in forks per
+# second (2) and milliseconds per frame (12.9). So: a glob of two folders and
+# a marker test per file, at most once every REFRESH seconds, cached. No
+# fork, and no second implementation of what "unanswered" means.
+REFRESH = 5.0
+_ASKING: dict = {"at": 0.0, "slugs": set(), "paths": []}
+
+
+def asking(hdir, legacy_qdir=None, max_age: float = REFRESH) -> set[str]:
+    """The slugs whose QUESTIONS file has no ANSWERED marker, both folders."""
+    now = time.time()
+    if now - _ASKING["at"] < max_age:
+        return _ASKING["slugs"]
+    dirs = [Path(hdir)]
+    if legacy_qdir is not None:
+        legacy = Path(legacy_qdir)
+        try:
+            if legacy.resolve() != Path(hdir).resolve():
+                dirs.append(legacy)
+        except OSError:
+            dirs.append(legacy)
+    slugs, paths = set(), []
+    for d in dirs:
+        for p in _glob(d, "QUESTIONS-*.md"):
+            kind, slug, _stamp = slug_of(p.name)
+            if not kind:
+                continue
+            try:
+                if ANSWERED_RE.search(p.read_text(errors="replace")):
+                    continue
+            except OSError:
+                continue
+            slugs.add(slug)
+            paths.append(p)
+    _ASKING.update({"at": now, "slugs": slugs, "paths": paths})
+    return slugs
+
+
+def asking_paths(hdir, legacy_qdir=None, max_age: float = REFRESH) -> list:
+    """The same answer as paths, for a panel that names the files."""
+    asking(hdir, legacy_qdir, max_age)
+    return list(_ASKING["paths"])
