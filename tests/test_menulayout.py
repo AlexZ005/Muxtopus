@@ -15,8 +15,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from rich.console import Console  # noqa: E402
 
-import menulayout  # noqa: E402
-from menulayout import (MENU_MIN, menu_needed, menu_panel,  # noqa: E402
+from dashboard import menulayout  # noqa: E402
+from dashboard.menulayout import (MENU_MIN, menu_needed, menu_panel,  # noqa: E402
                         menu_viewport, rendered_height)
 
 # The session menu with both global switches off, shaped as
