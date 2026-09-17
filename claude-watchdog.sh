@@ -1835,6 +1835,9 @@ declare -A NOTIFY_HAVE=() NOTIFY_ALIVE=() NOTIFY_FAM=() NOTIFY_PROMPT_PREV=()
 NOTIFY_READY=0; NOTIFY_BACKEND=""; NOTIFY_PROMPT_ROWS=""
 
 notify_on() { [ "${1:-on}" = on ]; }
+# May the phone answer? Only Telegram has buttons that come back, and the
+# account's own switch says whether they are offered and obeyed at all.
+notify_inbound() { [ "$NOTIFY_BACKEND" = telegram ] && notify_on "$MUXTOPUS_NOTIFY_INBOUND"; }
 
 # Once per pass. The prompt ledger is read whatever the phone's configuration:
 # `waiting` is a state this file publishes, not only a message it sends.
@@ -1912,6 +1915,20 @@ notify_waiting() {
   body="at a prompt since $(date -d "@$since" '+%H:%M'): $PROMPT_Q"
   if notify_on "$MUXTOPUS_NOTIFY_PANE_TEXT"; then
     body+=$'\n\n'"$PROMPT_BOX"
+  fi
+  if notify_inbound; then
+    # WITH BUTTONS: muxtelegram issues the pending ids (retiring any older
+    # message for this pane) and sends. Yes only for a plain yes; More only
+    # when pane text may leave the machine.
+    local mid more=0
+    notify_on "$MUXTOPUS_NOTIFY_PANE_TEXT" && more=1
+    mid="$(python3 "$SCRIPT_DIR/muxtelegram.py" prompt-message ${MUX_PROFILE:+--profile "$MUX_PROFILE"} \
+            --pane "$pane" --sha "$PROMPT_SHA" --yes "$PROMPT_YES" --more "$more" \
+            --title "$MUX_LABEL · needs you: $name" --body "$body" 2>/dev/null)"
+    case "$mid" in ''|*[!0-9]*) mid="" ;; esac
+    notify_record "waiting:$pane" "$PROMPT_SHA" "$mid"
+    log "notify: waiting:$pane -- needs you: $name (buttons${mid:+, message $mid})"
+    return 0
   fi
   notify_send "waiting:$pane" "$PROMPT_SHA" "needs you: $name" "$body"
 }
@@ -2058,12 +2075,24 @@ notify_end() {
   for k in "${!NOTIFY_HAVE[@]}"; do
     if [ -z "${NOTIFY_ALIVE[$k]-}" ] && [ -n "${NOTIFY_FAM[${k%%:*}]-}" ]; then
       log "notify: $k ended"
+      # A prompt that left the screen takes its buttons with it: the message
+      # says so, and a late press finds nothing to type.
+      case "$k" in
+        waiting:*)
+          if notify_inbound && [[ "$NOTIFY_PROMPT_ROWS" != *"${k#waiting:}"$'\t'* ]]; then
+            python3 "$SCRIPT_DIR/muxtelegram.py" retire "prompt:${k#waiting:}" \
+              "✓ answered at the machine ($(date +%H:%M))" >/dev/null 2>&1
+          fi ;;
+      esac
       continue
     fi
     printf '%s\t%s\n' "$k" "${NOTIFY_HAVE[$k]}" >> "$NOTIFY_SENT.tmp"
   done
   mv "$NOTIFY_SENT.tmp" "$NOTIFY_SENT"
   [ -f "$NOTIFY_BASELINE" ] || date +%s > "$NOTIFY_BASELINE"
+  # INBOUND, once a pass: the phone's presses and commands, for BOTH accounts
+  # -- whichever daemon gets the shared lock first reads the bot (§3).
+  notify_inbound && python3 "$SCRIPT_DIR/muxtelegram.py" poll ${MUX_PROFILE:+--profile "$MUX_PROFILE"} >/dev/null 2>&1
   return 0
 }
 
