@@ -1,0 +1,168 @@
+{
+  "breakdown": [
+    {
+      "avg_ctx": 74633.33333333333,
+      "cache_pct": 0.9045643153526971,
+      "key": "~/p/alpha",
+      "sessions": 1,
+      "share": 0.7068965517241379,
+      "tokens": 123000,
+      "unpriced": false,
+      "usd": 0.1714
+    },
+    {
+      "avg_ctx": 9220.0,
+      "cache_pct": 0.8676789587852495,
+      "key": "~/p/beta",
+      "sessions": 2,
+      "share": 0.29310344827586204,
+      "tokens": 51000,
+      "unpriced": true,
+      "usd": 0.17
+    }
+  ],
+  "budget": {
+    "avg_window_peak_pct": 50.0,
+    "hits": 1,
+    "limited_s": 1800,
+    "resumes": 2,
+    "week_pct_at_reset": [
+      [
+        "2026-09-17",
+        77
+      ]
+    ],
+    "winddowns": 2,
+    "windows": 3
+  },
+  "cache": {
+    "read_share": 0.8943577430972389,
+    "saved_usd": 0.6056,
+    "write_1h": 4000,
+    "write_5m": 10000
+  },
+  "collected_days": 17,
+  "context": {
+    "avg_per_request": 58280.0,
+    "avg_session_peak": 483366.6666666667,
+    "avg_session_peak_pct": 0.725,
+    "compactions": 1,
+    "sessions_measured": 2,
+    "sessions_past_80": 1
+  },
+  "cost": {
+    "elapsed_days": 4,
+    "per_day": 0.08535,
+    "projected_month": 2.5605,
+    "unpriced_models": [
+      "mystery-model"
+    ],
+    "unpriced_tokens": 1000,
+    "usd": 0.3414
+  },
+  "filters": {},
+  "group_by": "project",
+  "lanes": {
+    "deepest": 4,
+    "done": 2,
+    "forks_answered": 3,
+    "forks_asked": 5,
+    "launched": 5,
+    "median_launch_to_done_s": 134100.0,
+    "stranded": 2
+  },
+  "needs": {},
+  "now": 1789686000,
+  "period": {
+    "end": "2026-09-20",
+    "label": "this week",
+    "name": "week",
+    "prev_end": "2026-09-10",
+    "prev_start": "2026-09-07",
+    "start": "2026-09-14"
+  },
+  "prices_as_of": "2026-09-17",
+  "prices_errors": [
+    "line 20: window 'lots' is not a token count",
+    "line 22: half-priced has no output, cache_read, cache_write_5m, cache_write_1h -- shown as no price",
+    "line 24: unknown key 'bogus'"
+  ],
+  "rhythm": {
+    "busiest_day": "2026-09-14",
+    "busiest_hour": 10,
+    "by_hour": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      50000,
+      73000,
+      0,
+      0,
+      0,
+      50000,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1000
+    ],
+    "by_weekday": [
+      123000,
+      50000,
+      1000,
+      0,
+      0,
+      0,
+      0
+    ],
+    "longest_streak": 3,
+    "previous_total": 50000,
+    "streak": 3,
+    "vs_previous_pct": 248.0
+  },
+  "sessions": {
+    "count": 3,
+    "longest_active_s": 3600,
+    "median_active_s": 1800,
+    "subagent_share": 0.05747126436781609,
+    "tool_calls": 28,
+    "top_tools": [
+      [
+        "Bash",
+        17
+      ],
+      [
+        "Read",
+        8
+      ],
+      [
+        "Grep",
+        3
+      ]
+    ],
+    "turns_per_session": 2.3333333333333335,
+    "web": 3
+  },
+  "since": "2026-09-01",
+  "thin": false,
+  "tokens": {
+    "cache_read": 149000,
+    "cache_write": 14000,
+    "coarse": 0,
+    "input": 3600,
+    "output": 7400,
+    "per_active_hour": 104400.0,
+    "thinking_share": 0.20270270270270271,
+    "total": 174000
+  }
+}

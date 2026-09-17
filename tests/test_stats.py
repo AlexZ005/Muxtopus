@@ -2,6 +2,7 @@
 """muxstats -- the ledger, against synthetic transcripts with the real shape.
 
 Run it:  python3 tests/test_stats.py     (no pytest, no dependency)
+         python3 tests/test_stats.py --update-golden   rewrite golden/, then READ the diff
 
 Every expected number below is computed BY HAND from
 tests/fixtures/transcripts/make_fixtures.py, not by running the code under
@@ -486,6 +487,177 @@ def test_budget_and_lanes(tmp):
     check((lq["launched"], lq["forks_asked"]) == (1, 3), "the lane filter narrows the LANES row")
 
 
+# ------------------------------------------------------------ phase 3
+GOLDEN = FIX / "golden"
+GOLDEN_NOW = "2026-09-17T23:00:00"
+
+
+def golden_state(tmp) -> pathlib.Path:
+    """The fixture ledger plus budget, weeks and lanes collected from the
+    fixture logs, tree, entries and handovers -- every row of the report."""
+    st = tmp / "golden-state"
+    if st.exists():
+        return st
+    shutil.copytree(FIX / "ledger", st)
+    home = tmp / "golden-home"
+    shutil.copytree(FIX / "muxhome", home)
+    for rel, stamp in [("handovers/done/STATUS-lane-a.md", "2026-09-15T09:00:00"),
+                       ("handovers/done/STATUS-lane-b-20260916-120000.md", "2026-09-16T12:00:00")]:
+        os.utime(home / rel, (utc(stamp), utc(stamp)))
+    e = utc("2026-09-14T12:10:00")
+    muxstats.budget_collect(st, FIX / "watchdog", {("five_hour", str(e)): {
+        "type": "five_hour", "resets_at": str(e), "first_ts": str(e - 1800), "last_ts": str(e)}})
+    muxstats.lanes_collect(st, FIX / "watchdog", home / "schedules", home / "handovers")
+    return st
+
+
+def run_cli(args) -> tuple[int, str, str]:
+    import contextlib
+    import io
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = muxstats.main(args)
+        except SystemExit as e:
+            code = e.code
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_prices():
+    t = muxstats.prices(FIX / "prices.md")
+    check(t is not None and t.as_of == "2026-09-17", "the price file's `as of:` line")
+    check(t.price("claude-opus-5")["cache_write_1h"] == 10 and t.window("claude-opus-5") == 1_000_000,
+          "a block: five prices and a window of 1M")
+    check(t.price(HAIKU) is not None and t.window(HAIKU) is None,
+          "a dated id matches its block; a bad window is dropped, the prices kept")
+    check(t.price("half-priced") is None, "a block missing prices is no price, not a partial one")
+    check(len(t.errors) == 3 and any("lots" in e for e in t.errors) and any("bogus" in e for e in t.errors)
+          and any("half-priced has no output" in e for e in t.errors),
+          "each broken line is named (%r)" % t.errors)
+    check(muxstats.prices(FIX / "no-such-file.md") is None, "no file is None, not an exception")
+
+    seed = muxstats.prices(pathlib.Path(__file__).resolve().parent.parent / "seeds" / "prices.md")
+    check(seed is not None and seed.errors == [] and seed.as_of == "2026-09-17",
+          "seeds/prices.md parses clean, as of 2026-09-17 (%r)" % (seed.errors if seed else None))
+    for m in ("claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-opus-4-8",
+              "claude-sonnet-5", HAIKU):
+        check(seed.price(m) is not None and seed.window(m), "seed prices %s and knows its window" % m)
+    check(seed.price("claude-fable-5-1")["cache_read"] == 0.25 and seed.price("claude-fable-5")["cache_read"] == 1,
+          "Fable 5.1's cache reads are its own rate, not Fable 5's")
+    check(seed.price("claude-opus-4-20250514")["input"] == 15, "a legacy dated id is priced")
+    check(seed.price("claude-fable-5-2") is None and seed.price("claude-opus-5-fast") is None,
+          "an unnamed model is never given a neighbour's price")
+
+
+def test_golden(tmp, update):
+    st = golden_state(tmp)
+    base = ["stats", "--week", "--no-collect", "--state-dir", str(st),
+            "--prices", str(FIX / "prices.md"), "--now", str(utc(GOLDEN_NOW))]
+    for fmt, flag in (("txt", []), ("json", ["--json"]), ("csv", ["--csv"]), ("md", ["--md"])):
+        code, out, err = run_cli(base + flag)
+        path = GOLDEN / ("week." + fmt)
+        if update:
+            GOLDEN.mkdir(exist_ok=True)
+            path.write_text(out)
+        check(code == 0 and err == "" and path.exists() and path.read_text() == out,
+              "golden %s output matches %s" % (fmt, path.name))
+    import csv
+    import json
+    js = json.loads((GOLDEN / "week.json").read_text())
+    check(js["tokens"]["total"] == 174000 and js["budget"]["hits"] == 1 and js["lanes"]["launched"] == 5,
+          "the json parses and carries the figures")
+    rows = list(csv.DictReader((GOLDEN / "week.csv").read_text().splitlines()))
+    check([r["project"] for r in rows] == ["~/p/alpha", "~/p/beta"] and rows[1]["unpriced"] == "1",
+          "the csv parses: the breakdown, one row per group")
+    txt = (GOLDEN / "week.txt").read_text()
+    check("no price: mystery-model (1.0k tokens)" in txt, "text: an unknown model says no price")
+    check("API-equiv (prices as of 2026-09-17)" in txt, "text: every $ is API-equiv with its date")
+    check(txt.count("prices.md: line") == 3, "text: the price file's broken lines are listed")
+
+    code, out, _ = run_cli(base[:5] + ["--prices", str(tmp / "absent.md"), "--now", str(utc(GOLDEN_NOW))])
+    check(code == 0 and "no price file at" in out and "174.0k total" in out and "$" not in out.split("BY PROJECT")[0],
+          "a missing price file: tokens only, exit 0")
+    code, out, _ = run_cli(base[:5] + ["--prices", str(tmp / "absent.md"), "--now", str(utc(GOLDEN_NOW)), "--json"])
+    js = json.loads(out)
+    check(js["cost"]["usd"] is None and js["cost"]["unpriced_models"] == [] and js["prices_as_of"] is None,
+          "...and in json: no $, and no model blamed for it")
+    code, out, _ = run_cli(base + ["--project", "alpha", "--by", "model", "--json"])
+    js = json.loads(out)
+    check(js["filters"]["project"] == ["~/p/alpha"] and js["tokens"]["total"] == 123000,
+          "--project takes a directory's basename")
+    code, _, err = run_cli(["stats", "--before", "2026-09-01"])
+    check(code == 2 and "--forget" in err, "--before without --forget is refused")
+    code, out, _ = run_cli(["stats", "--help"])
+    check(code == 0 and "--forget" in out, "stats --help")
+
+
+def test_forget(tmp):
+    import json
+    st = tmp / "forget-state"
+    shutil.copytree(golden_state(tmp), st)
+    now = utc(GOLDEN_NOW)
+    code, out, _ = run_cli(["stats", "--forget", "--before", "2026-09-14", "--state-dir", str(st),
+                            "--now", str(now)])
+    check(code == 0 and "forgot 3 ledger row(s)" in out, "--forget --before: 3 rows before 09-14 (%s)" % out.strip())
+    rows = muxstats.load_ledger(st)
+    check(min(r["day"] for r in rows) == "2026-09-14" and len(rows) == 4, "only 09-14 onwards is left")
+    meta = muxstats.load_meta(st)
+    check(meta["since"] == "2026-09-14" and meta["forget_before"] == str(utc("2026-09-14T00:00:00")),
+          "since moves up; the cutoff is kept")
+
+    # A collect that meets older records does not bring them back.
+    cfg = tree_copy(tmp, "forget-claude")
+    muxstats.collect(cfg, st, now)
+    check(min(r["day"] for r in muxstats.load_ledger(st)) == "2026-09-14",
+          "a later collect of 09-01 transcripts adds nothing before the cutoff")
+
+    code, out, _ = run_cli(["stats", "--forget", "--state-dir", str(st), "--now", str(now)])
+    check(code == 0 and muxstats.load_ledger(st) == [], "--forget with no date: everything")
+    muxstats.collect(cfg, st, now)
+    code, out, _ = run_cli(["stats", "--all", "--no-collect", "--state-dir", str(st), "--now", str(now), "--json"])
+    js = json.loads(out)
+    check(muxstats.load_ledger(st) == [] and js["tokens"]["total"] == 0 and js["budget"]["windows"] == 0
+          and js["lanes"]["launched"] == 0, "...and it stays forgotten")
+
+
+def test_launcher(tmp):
+    """`muxtopus stats` in a sandbox: own HOME and XDG dirs, a tmux that
+    records being called, the account picked by the launcher's flags."""
+    import json
+    import subprocess
+    root = pathlib.Path(__file__).resolve().parent.parent
+    sbx = tmp / "sbx"
+    (sbx / "bin").mkdir(parents=True)
+    marker = sbx / "tmux-called"
+    (sbx / "bin" / "tmux").write_text("#!/bin/sh\necho \"$@\" >> %s\nexit 1\n" % marker)
+    (sbx / "bin" / "tmux").chmod(0o755)
+    shutil.copytree(golden_state(tmp), sbx / "state" / "muxtopus" / "stats-work")
+    env = {"HOME": str(sbx / "home"), "XDG_CONFIG_HOME": str(sbx / "config"),
+           "XDG_STATE_HOME": str(sbx / "state"), "XDG_DATA_HOME": str(sbx / "data"),
+           "MUXTOPUS_CONFIG": str(sbx / "config" / "muxtopus" / "config"),
+           "CLAUDE_CONFIG_DIR": str(sbx / "home" / ".claude"),
+           "PATH": "%s:%s" % (sbx / "bin", os.environ.get("PATH", "")), "TZ": "UTC"}
+    args = ["--week", "--json", "--no-collect", "--prices", str(FIX / "prices.md"), "--now", str(utc(GOLDEN_NOW))]
+    r = subprocess.run([str(root / "muxtopus"), "-w", "stats"] + args, env=env,
+                       capture_output=True, text=True, timeout=60)
+    check(r.returncode == 0 and r.stdout == (GOLDEN / "week.json").read_text(),
+          "muxtopus -w stats reads the work account's ledger (%s)" % r.stderr.strip()[:200])
+    r = subprocess.run([str(root / "muxtopus"), "stats"] + args, env=env,
+                       capture_output=True, text=True, timeout=60)
+    check(r.returncode == 0 and json.loads(r.stdout)["tokens"]["total"] == 0,
+          "muxtopus stats on an account with no ledger: an empty report, exit 0")
+    # CLAUDE_CONFIG_DIR naming the work account, with no flag: the launcher's
+    # rule is the flag or the name, so this is the default account.
+    env2 = dict(env, CLAUDE_CONFIG_DIR=str(sbx / "home" / ".claude-work"))
+    r = subprocess.run([str(root / "muxtopus"), "stats"] + args, env=env2,
+                       capture_output=True, text=True, timeout=60)
+    check(r.returncode == 0 and json.loads(r.stdout)["tokens"]["total"] == 0,
+          "an inherited CLAUDE_CONFIG_DIR does not switch muxtopus stats' account")
+    check(not marker.exists(), "no tmux call, no session, no watchdog")
+    check(not (sbx / "home" / ".claude").exists() and not (sbx / "data").exists(),
+          "nothing created under the sandbox HOME or data dir")
+
+
 def main() -> int:
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="muxstats-test-"))
     try:
@@ -498,6 +670,10 @@ def main() -> int:
         test_thin_data(tmp)
         test_dst(tmp)
         test_budget_and_lanes(tmp)
+        test_prices()
+        test_golden(tmp, "--update-golden" in sys.argv)
+        test_forget(tmp)
+        test_launcher(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print()

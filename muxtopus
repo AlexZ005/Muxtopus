@@ -12,6 +12,7 @@
 #   muxtopus -d --profile=acme        create it and return (for scripts)
 #   muxtopus -l                       list accounts, sessions and watchdogs
 #   muxtopus -c [--profile=acme]      the effective configuration of an account
+#   muxtopus stats [--week|--all]     what was used, counts only (stats -h)
 #
 # THE NAME IS A FLAG. Symlinked as `muxtopus-acme` this is `muxtopus
 # --profile=acme`: one word per account, which is what an ssh RemoteCommand
@@ -82,7 +83,7 @@ while [ $# -gt 0 ]; do
     -n|--no-watchdog)  NOWD=1; shift ;;
     -l|--list)         LIST=1; shift ;;
     -c|--config)       SHOWCFG=1; shift ;;
-    -h|--help)         sed -n '2,21p' "$0"; exit 0 ;;
+    -h|--help)         sed -n '2,22p' "$0"; exit 0 ;;
     --)                shift; break ;;
     -*)                echo "muxtopus: unknown option: $1" >&2; exit 2 ;;
     *)                 break ;;
@@ -93,6 +94,17 @@ done
 # A profile name becomes a path segment (~/.claude-<name>, profiles/<name>.conf)
 # and a tmux session name, so it is letters, digits, - and _ or nothing.
 case "$PROFILE" in *[!a-zA-Z0-9_-]*) echo "muxtopus: bad profile name: $PROFILE" >&2; exit 2 ;; esac
+
+# ------------------------------------------------------------------ stats
+# The insights report on the command line: muxstats.py reads the account's
+# ledger (collecting what is new first) and prints it. Taken BEFORE anything
+# that touches tmux, a watchdog or a config dir -- a report needs none of
+# them. The word is therefore reserved: a session cannot be named `stats`
+# from here.
+if [ "${1:-}" = "stats" ]; then
+  shift
+  exec python3 "$_dir/muxstats.py" stats --profile "$PROFILE" "$@"
+fi
 
 # ----------------------------------------------------------------- config
 if [ "$SHOWCFG" = 1 ]; then

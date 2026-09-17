@@ -28,6 +28,9 @@ and, for query() (every figure hand-computed in tests/test_stats.py):
   watchdog/         usage.log (hourly readings, a failed read, an am/pm reset,
                     an idle 0% window), log (resumes, wind-downs, stranded),
                     tree.tsv (three launched lanes and one adopted window)
+  prices.md         a price table with two broken blocks
+  golden/           the report in four formats (written by
+                    `python3 tests/test_stats.py --update-golden`, checked by eye)
   muxhome/          schedules/ with `launched:` stamps, handovers/ with done
                     STATUS files and QUESTIONS files (mtimes are set by the test:
                     git does not keep them)
@@ -315,6 +318,34 @@ ANSWERED 2026-09-15
 """
 
 
+PRICES = """\
+# A synthetic price table for the tests -- the shipped one is seeds/prices.md.
+# Two blocks are broken on purpose: a window that is not a number, and a
+# block with an unknown key and most prices missing.
+as of: 2026-09-17
+
+model:          claude-opus-5
+input:          5
+output:         25
+cache_read:     0.50
+cache_write_5m: 6.25
+cache_write_1h: 10
+window:         1M
+
+model:          claude-haiku-4-5
+input:          1
+output:         5
+cache_read:     0.10
+cache_write_5m: 1.25
+cache_write_1h: 2
+window:         lots
+
+model:          half-priced
+input:          1
+bogus:          3
+"""
+
+
 def build_query() -> dict:
     ledger = ["\t".join(LEDGER_COLS)] + ["\t".join(str(v) for v in r) for r in LEDGER_ROWS]
     return {
@@ -331,6 +362,7 @@ def build_query() -> dict:
         "muxhome/handovers/done/STATUS-lane-b-20260916-120000.md": "# lane-b\nsynthetic handover\n",
         "muxhome/handovers/done/QUESTIONS-lane-a.md": QUESTIONS_A,
         "muxhome/handovers/QUESTIONS-lane-b.md": QUESTIONS_B,
+        "prices.md": PRICES,
     }
 
 

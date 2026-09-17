@@ -3,6 +3,9 @@
 transcripts it was read from.
 
     python3 muxstats.py collect [--profile P]    read what is new, update the ledger
+    python3 muxstats.py stats [--week|--month|--all] [--by model] [--json|--csv|--md]
+    muxtopus stats ...                            the same, from the launcher
+    muxtopus stats --forget [--before DATE]       the off switch
 
 COUNTS ONLY. No prompt, no reply, no tool input, no file name other than the
 project directory is ever written by this module. The ledger holds numbers,
@@ -95,10 +98,10 @@ def watchdog_dir(profile: str = "") -> pathlib.Path:
 
 
 def config_dir_of(profile: str = "") -> pathlib.Path:
-    """The account's Claude config dir: the same rule profile.sh applies.
-    CLAUDE_CONFIG_DIR wins only when no profile was named."""
-    if not profile and os.environ.get("CLAUDE_CONFIG_DIR"):
-        return pathlib.Path(os.environ["CLAUDE_CONFIG_DIR"])
+    """The account's Claude config dir, by profile.sh's mux_config_of:
+    ~/.claude or ~/.claude-<profile>. CLAUDE_CONFIG_DIR only ever picks the
+    PROFILE (profile_of) -- used as a path, a work session's environment
+    would feed the work transcripts into the default account's ledger."""
     return pathlib.Path.home() / (".claude" + _suffix(profile))
 
 
@@ -369,6 +372,9 @@ def collect(config_dir, state_dir, now: int | None = None, *, wd_dir=None,
     limits = {(d["type"], d["resets_at"]): d for d in _read_tsv(state / "limits.tsv", LIMIT_COLS)}
     seen = _Seen(state / "seen")
     meta = load_meta(state)
+    # `stats --forget` leaves this behind: nothing older is ever counted
+    # again, so a re-read transcript cannot bring a forgotten day back.
+    cutoff = int(meta.get("forget_before") or 0)
 
     lanes = {}
     for r in rows.values():
@@ -427,7 +433,7 @@ def collect(config_dir, state_dir, now: int | None = None, *, wd_dir=None,
                 rep.files_read += 1
                 rep.bytes_read += cut + 1
                 model = _ingest(data[:cut + 1], _h(rel), fsid, fside, model,
-                                rows, seen, limits, lanes, rep)
+                                rows, seen, limits, lanes, rep, cutoff)
                 off += cut + 1
         offsets[rel] = {"file": rel, "inode": ino, "size": size, "offset": off,
                         "session": fsid, "model": model}
@@ -454,6 +460,8 @@ def collect(config_dir, state_dir, now: int | None = None, *, wd_dir=None,
             day = d.get("date") if isinstance(d, dict) else None
             if not isinstance(day, str) or (oldest and day >= oldest):
                 continue
+            if cutoff and _day_start(day) < cutoff:
+                continue
             for m, n in (d.get("tokensByModel") or {}).items():
                 if not isinstance(n, int) or n <= 0:
                     continue
@@ -473,8 +481,8 @@ def collect(config_dir, state_dir, now: int | None = None, *, wd_dir=None,
         meta["since"] = since
     meta.setdefault("since", local_day(now))
 
-    budget_collect(state, wd_dir, limits)
-    lanes_collect(state, wd_dir, schedules_dir, handovers_dir)
+    budget_collect(state, wd_dir, limits, cutoff)
+    lanes_collect(state, wd_dir, schedules_dir, handovers_dir, cutoff)
     meta["last_collect"] = str(now)
 
     seen.save()
@@ -503,7 +511,7 @@ def _num(d, k) -> int:
 
 def _ingest(data: bytes, fid: str, fsid: str, fside: int, model: str,
             rows: dict, seen: _Seen, limits: dict, lanes: dict,
-            rep: CollectReport) -> str:
+            rep: CollectReport, cutoff: int = 0) -> str:
     """Fold complete lines into the rows. Returns the model last seen, which
     is what a turn record (it names none) is attributed to next time."""
 
@@ -533,7 +541,7 @@ def _ingest(data: bytes, fid: str, fsid: str, fside: int, model: str,
             continue
         typ = rec.get("type")
         ep = _epoch(rec.get("timestamp"))
-        if ep is None or typ not in ("assistant", "system"):
+        if ep is None or typ not in ("assistant", "system") or ep < cutoff:
             continue
         day = local_day(ep)
         sid = _clean(rec.get("sessionId") or fsid)
@@ -734,7 +742,7 @@ def _near(keys, ep: int, tol: int = TOLERANCE_S):
     return best
 
 
-def budget_collect(state, wd_dir, limits: dict) -> None:
+def budget_collect(state, wd_dir, limits: dict, cutoff: int = 0) -> None:
     state = pathlib.Path(state)
     old = {}
     for d in _read_tsv(state / "budget.tsv", BUDGET_COLS):
@@ -816,6 +824,8 @@ def budget_collect(state, wd_dir, limits: dict) -> None:
             ra, first = int(resets_at), int(li["first_ts"])
         except (TypeError, ValueError):
             continue
+        if first < cutoff:
+            continue
         if typ == "five_hour":
             w = window(ra)
             w["hits"] = max(w["hits"], 1)
@@ -824,6 +834,8 @@ def budget_collect(state, wd_dir, limits: dict) -> None:
         elif typ == "seven_day":
             week(ra)["hits"] = 1
 
+    win = {k: w for k, w in win.items() if w["window_start"] >= cutoff}
+    weeks = {k: w for k, w in weeks.items() if k >= cutoff}
     # Merge into what was kept: max() per field, matched within the tolerance.
     for k, w in win.items():
         ok = _near(old, k)
@@ -916,7 +928,7 @@ def fork_counts(text: str) -> tuple[int, int]:
     return forks, answered
 
 
-def lanes_collect(state, wd_dir, schedules_dir, handovers_dir) -> None:
+def lanes_collect(state, wd_dir, schedules_dir, handovers_dir, cutoff: int = 0) -> None:
     import re
     state = pathlib.Path(state)
     old = {d["slug"]: d for d in _read_tsv(state / "lanes.tsv", LANE_COLS) if d["slug"]}
@@ -1004,9 +1016,24 @@ def lanes_collect(state, wd_dir, schedules_dir, handovers_dir) -> None:
             o["questions_asked"], o["questions_answered"] = r["questions_asked"], r["questions_answered"]
         if r["stranded"]:
             o["stranded"] = str(max(int(o["stranded"] or 0), int(r["stranded"])))
+    if cutoff:
+        old = {k: r for k, r in old.items() if not _lane_forgotten(r, cutoff)}
     rows = [old[k] for k in sorted(old)]
     if rows or (state / "lanes.tsv").exists():
         _write_if_changed(state / "lanes.tsv", _tsv(rows, LANE_COLS))
+
+
+def _lane_forgotten(r: dict, cutoff: int) -> bool:
+    """A lane is forgotten when its last date is before the cutoff; one with
+    no date at all (only forks or stranded counts) shows in no figure, and
+    goes with any forget."""
+    stamps = [int(r[c]) for c in ("launched", "done") if (r.get(c) or "").isdigit()]
+    return not stamps or max(stamps) < cutoff
+
+
+def _day_start(day: str) -> int:
+    d = _d(day)
+    return _local_epoch(d.year, d.month, d.day, 0, 0) or 0
 
 
 # ---------------------------------------------------------------- prices
@@ -1219,7 +1246,8 @@ def query(ledger: Ledger, period: str = "week", filters: dict | None = None,
     for r in real:
         c = cost(r, table)
         if c is None:
-            if _tokens(r):
+            # With no table at all, nothing is "unpriced": there are no prices.
+            if _tokens(r) and table is not None:
                 unpriced.add(r["model"])
                 unpriced_tok += _tokens(r)
             continue
@@ -1410,30 +1438,512 @@ def _rhythm(rows_f, inp, start, last, pstart, pend, since, thin, withhold, total
     }
 
 
+# ----------------------------------------------------------- price file
+PRICE_KEYS = PriceTable.FIELDS + ("window",)
+
+
+def _window(v: str) -> int | None:
+    v = v.strip().upper().replace(",", "").replace("_", "")
+    mult = 1
+    if v.endswith("M"):
+        v, mult = v[:-1], 1_000_000
+    elif v.endswith("K"):
+        v, mult = v[:-1], 1_000
+    try:
+        n = float(v) * mult
+    except ValueError:
+        return None
+    return int(n) if n > 0 else None
+
+
+def prices(path) -> PriceTable | None:
+    """The price and model table (seeds/prices.md). None when there is no
+    file -- the report then shows tokens only. A malformed line is skipped
+    and named in `errors`; the rest of the file still counts."""
+    try:
+        text = pathlib.Path(path).read_text(errors="replace")
+    except OSError:
+        return None
+    models, errors, as_of = {}, [], ""
+    cur, cur_line = None, 0
+
+    def close():
+        if cur is None:
+            return
+        name = cur.pop("model", "")
+        if not name:
+            errors.append("line %d: a block with no model:" % cur_line)
+            return
+        missing = [f for f in PriceTable.FIELDS if f not in cur]
+        if missing:
+            errors.append("line %d: %s has no %s -- shown as no price"
+                          % (cur_line, name, ", ".join(missing)))
+        models[name] = cur
+
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if line.startswith("#"):
+            continue
+        if not line:
+            close()
+            cur = None
+            continue
+        k, sep, v = line.partition(":")
+        k, v = k.strip().lower(), v.strip()
+        if not sep:
+            errors.append("line %d: not `key: value`" % n)
+            continue
+        if k == "as of":
+            as_of = as_of or v
+            continue
+        if k == "source":
+            continue
+        if cur is None:
+            cur, cur_line = {}, n
+        if k == "model":
+            if "model" in cur:
+                errors.append("line %d: a second model: in one block" % n)
+                continue
+            cur["model"] = v
+        elif k == "window":
+            w = _window(v)
+            if w is None:
+                errors.append("line %d: window %r is not a token count" % (n, v))
+            else:
+                cur["window"] = w
+        elif k in PriceTable.FIELDS:
+            try:
+                x = float(v.lstrip("$"))
+                if x < 0:
+                    raise ValueError
+                cur[k] = x
+            except ValueError:
+                errors.append("line %d: %s %r is not a price" % (n, k, v))
+        else:
+            errors.append("line %d: unknown key %r" % (n, k))
+    close()
+    errors.sort(key=lambda e: int(e.split()[1].rstrip(":")))
+    return PriceTable(models, as_of, errors)
+
+
+def prices_path() -> pathlib.Path:
+    """Beside the shared config: ~/.config/muxtopus/prices.md (muxconfig's
+    config_path rule, repeated here to keep this module standalone)."""
+    cfg = os.environ.get("MUXTOPUS_CONFIG") or os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or str(pathlib.Path.home() / ".config"),
+        "muxtopus", "config")
+    return pathlib.Path(cfg).parent / "prices.md"
+
+
+# --------------------------------------------------------------- forget
+def forget(state_dir, before: str | None = None, now: int | None = None) -> dict:
+    """`stats --forget [--before DATE]`: drop what the ledger holds from
+    before DATE (a local date), or everything up to now, and record the
+    cutoff so no later collect counts it again. Transcripts are not touched."""
+    state = pathlib.Path(state_dir)
+    now = int(now if now is not None else _dt.datetime.now().timestamp())
+    cutoff = _day_start(before) if before else now
+    meta = load_meta(state)
+    old_cut = int(meta.get("forget_before") or 0)
+    out = {"cutoff": cutoff, "rows": 0, "windows": 0, "weeks": 0, "lanes": 0, "limits": 0, "months": 0}
+
+    rows = load_ledger(state)
+    keep = [r for r in rows if before and r["day"] >= before]
+    out["rows"] = len(rows) - len(keep)
+    b = _read_tsv(state / "budget.tsv", BUDGET_COLS)
+    bk = [r for r in b if int(r["window_start"] or 0) >= cutoff]
+    w = _read_tsv(state / "weeks.tsv", WEEK_COLS)
+    wk = [r for r in w if int(r["reset_at"] or 0) >= cutoff]
+    ln = _read_tsv(state / "lanes.tsv", LANE_COLS)
+    lk = [r for r in ln if not _lane_forgotten(r, cutoff)]
+    li = _read_tsv(state / "limits.tsv", LIMIT_COLS)
+    lik = [r for r in li if int(r["first_ts"] or 0) >= cutoff]
+    out.update(windows=len(b) - len(bk), weeks=len(w) - len(wk), lanes=len(ln) - len(lk),
+               limits=len(li) - len(lik))
+    month = local_day(cutoff)[:7]
+    for f in sorted((state / "seen").glob("*.tsv")) if (state / "seen").is_dir() else []:
+        if f.stem < month:
+            f.unlink()
+            out["months"] += 1
+
+    _write_atomic(state / "ledger.tsv", _tsv(keep, LEDGER_COLS))
+    for name, rs, cols in (("budget.tsv", bk, BUDGET_COLS), ("weeks.tsv", wk, WEEK_COLS),
+                           ("lanes.tsv", lk, LANE_COLS), ("limits.tsv", lik, LIMIT_COLS)):
+        if (state / name).exists():
+            _write_atomic(state / name, _tsv(rs, cols))
+    meta["forget_before"] = str(max(old_cut, cutoff))
+    real = [r["day"] for r in keep if not r["coarse"]]
+    meta["since"] = min(real) if real else local_day(cutoff)
+    _write_atomic(state / "meta", "".join("%s\t%s\n" % (k, meta[k]) for k in sorted(meta)))
+    return out
+
+
+# ------------------------------------------------------------ rendering
+# Plain text, no dependency: the dashboard draws the same Report with Rich.
+SPARK = "▁▂▃▄▅▆▇█"
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def human_tokens(n) -> str:
+    if n is None:
+        return "—"
+    n = float(n)
+    for div, unit in ((1e9, "B"), (1e6, "M"), (1e3, "k")):
+        if abs(n) >= div:
+            return "%.1f%s" % (n / div, unit)
+    return "%d" % n
+
+
+def human_duration(s) -> str:
+    if s is None:
+        return "—"
+    s = int(round(s))
+    if s < 60:
+        return "%ds" % s
+    m = s // 60
+    if m < 60:
+        return "%dm" % m
+    h, m = divmod(m, 60)
+    if h < 24:
+        return "%dh%02dm" % (h, m)
+    d, h = divmod(h, 24)
+    return "%dd%02dh" % (d, h)
+
+
+def _pct(x) -> str:
+    return "—" if x is None else "%d%%" % int(x * 100 + 0.5)
+
+
+def _usd(x) -> str:
+    if x is None:
+        return "—"
+    if 0 < x < 0.01:
+        return "<$0.01"
+    return "${:,.2f}".format(x)
+
+
+def sparkline(vals) -> str:
+    top = max(vals) if vals else 0
+    if not top:
+        return SPARK[0] * len(vals)
+    return "".join(SPARK[min(len(SPARK) - 1, int(v / top * (len(SPARK) - 1) + 0.5))] if v else " "
+                   for v in vals)
+
+
+def _needs(rep, key, value_text):
+    why = rep["needs"].get(key)
+    return ("— needs %s" % why) if why else value_text
+
+
+def title(rep: dict) -> str:
+    p, f = rep["period"], rep["filters"]
+    parts = ["insights", "%s (%s – %s)" % (p["label"], p["start"], p["end"])]
+    parts.append(("project " + ", ".join(f["project"])) if f.get("project") else "all projects")
+    parts.append(("model " + ", ".join(f["model"])) if f.get("model") else "all models")
+    if f.get("lane"):
+        parts.append("lane " + ", ".join(f["lane"]))
+    if f.get("side"):
+        parts.append("side " + ", ".join(f["side"]))
+    if f.get("session"):
+        parts.append("session " + ", ".join(x[:8] for x in f["session"]))
+    since = rep["since"] or "—"
+    return " · ".join(parts) + " — collecting since " + since
+
+
+def figure_lines(rep: dict) -> list[tuple[str, str]]:
+    """(ROW, figures) for the seven rows, as the text, markdown and dashboard
+    faces all say them."""
+    t, c, k, x, s, b, ln, r = (rep[n] for n in ("tokens", "cache", "cost", "context",
+                                                "sessions", "budget", "lanes", "rhythm"))
+    as_of = rep["prices_as_of"]
+    tag = " API-equiv" + ((" (prices as of %s)" % as_of) if as_of else "")
+    tok = ["%s total" % human_tokens(t["total"]),
+           "in %s · out %s · cache read %s · cache write %s" % tuple(
+               human_tokens(t[n]) for n in ("input", "output", "cache_read", "cache_write")),
+           "thinking %s of output" % _pct(t["thinking_share"]),
+           "%s / active hour" % human_tokens(t["per_active_hour"])]
+    if t["coarse"]:
+        tok.insert(1, "%s from coarse days" % human_tokens(t["coarse"]))
+    cache = ["%s of input from cache" % _pct(c["read_share"]),
+             "writes 5m %s / 1h %s" % (human_tokens(c["write_5m"]), human_tokens(c["write_1h"]))]
+    if rep["prices_as_of"] is not None or c["saved_usd"] is not None:
+        cache.append("saved %s%s" % (_usd(c["saved_usd"]), " API-equiv"))
+    if k["usd"] is None:
+        cost = ["— no price" + ("s: no price file, tokens only" if rep["prices_as_of"] is None else "")]
+    else:
+        cost = ["%s%s" % (_usd(k["usd"]), tag), "%s / day" % _usd(k["per_day"]),
+                "month at this pace " + _needs(rep, "cost.projected_month", _usd(k["projected_month"]))]
+    if k["unpriced_models"]:
+        cost.append("no price: %s (%s tokens)" % (", ".join(k["unpriced_models"]),
+                                                  human_tokens(k["unpriced_tokens"])))
+    ctx = ["avg %s / request" % human_tokens(x["avg_per_request"]),
+           "avg session peak %s%s" % (human_tokens(x["avg_session_peak"]),
+                                      (" (%s of window)" % _pct(x["avg_session_peak_pct"]))
+                                      if x["avg_session_peak_pct"] is not None else ""),
+           "%s past 80%%" % ("—" if x["sessions_past_80"] is None else x["sessions_past_80"]),
+           "%d compaction%s" % (x["compactions"], "" if x["compactions"] == 1 else "s")]
+    tools = ", ".join("%s %d" % (n, v) for n, v in s["top_tools"])
+    ses = ["%d" % s["count"],
+           "median active " + _needs(rep, "sessions.median_active_s", human_duration(s["median_active_s"])),
+           "longest " + human_duration(s["longest_active_s"]),
+           "%s turns each" % ("—" if s["turns_per_session"] is None else "%.1f" % s["turns_per_session"]),
+           "subagents %s" % _pct(s["subagent_share"]),
+           "%d tool calls%s" % (s["tool_calls"], (" (%s)" % tools) if tools else ""),
+           "%d web" % s["web"]]
+    wk = ", ".join("%s %d%%" % (d[5:], v) for d, v in b["week_pct_at_reset"])
+    bud = ["%d window%s, avg peak %s" % (b["windows"], "" if b["windows"] == 1 else "s",
+                                         "—" if b["avg_window_peak_pct"] is None
+                                         else "%d%%" % round(b["avg_window_peak_pct"])),
+           "%d limit hit%s, %s limited" % (b["hits"], "" if b["hits"] == 1 else "s",
+                                           human_duration(b["limited_s"])),
+           "%d resume%s" % (b["resumes"], "" if b["resumes"] == 1 else "s"),
+           "%d wind-down%s" % (b["winddowns"], "" if b["winddowns"] == 1 else "s")]
+    if wk:
+        bud.append("week at reset: " + wk)
+    lan = ["%d launched" % ln["launched"],
+           "%d done, median %s" % (ln["done"], _needs(rep, "lanes.median_launch_to_done_s",
+                                                      human_duration(ln["median_launch_to_done_s"]))),
+           "deepest %d" % ln["deepest"],
+           "forks %d/%d answered" % (ln["forks_answered"], ln["forks_asked"]),
+           "%d stranded" % ln["stranded"]]
+    vs = r["vs_previous_pct"]
+    vs_txt = ("—" if vs is None else ("%s %d%%" % ("▲" if vs >= 0 else "▼", round(abs(vs)))))
+    rhy = ["weekday %s" % sparkline(r["by_weekday"]),
+           "hour %s" % sparkline(r["by_hour"]),
+           "busiest %s%s" % (r["busiest_day"] or "—",
+                             (", %02d:00" % r["busiest_hour"]) if r["busiest_hour"] is not None else ""),
+           "streak %d d (longest %d)" % (r["streak"], r["longest_streak"])]
+    if rep["period"]["prev_start"]:
+        rhy.append("vs previous " + _needs(rep, "rhythm.vs_previous_pct", vs_txt))
+    return [("TOKENS", " · ".join(tok)), ("CACHE", " · ".join(cache)), ("COST", " · ".join(cost)),
+            ("CONTEXT", " · ".join(ctx)), ("SESSIONS", " · ".join(ses)), ("BUDGET", " · ".join(bud)),
+            ("LANES", " · ".join(lan)), ("RHYTHM", " · ".join(rhy))]
+
+
+BREAKDOWN_COLS = ("tokens", "share", "sessions", "avg ctx", "cache", "$")
+
+
+def _breakdown_cells(rep: dict) -> list[list[str]]:
+    out = []
+    for b in rep["breakdown"]:
+        key = b["key"] or "—"
+        if rep["group_by"] == "model" and key == "-":
+            key = "(no model)"    # turns a session took before any request
+        if rep["group_by"] == "side":
+            key = {"main": "main", "sub": "subagents"}.get(key, key)
+        usd = _usd(b["usd"]).lstrip("$") if b["usd"] is not None else "—"
+        out.append([key, human_tokens(b["tokens"]), _pct(b["share"]), str(b["sessions"]),
+                    human_tokens(b["avg_ctx"]), _pct(b["cache_pct"]),
+                    usd + ("*" if b["unpriced"] and b["usd"] is not None else "")])
+    return out
+
+
+def render_text(rep: dict) -> str:
+    lines = [title(rep), ""]
+    for row, text in figure_lines(rep):
+        lines.append("%-9s %s" % (row, text))
+    cells = _breakdown_cells(rep)
+    lines.append("")
+    head = ["BY " + rep["group_by"].upper()] + list(BREAKDOWN_COLS)
+    if cells:
+        wid = [max(len(r[i]) for r in cells + [head]) for i in range(len(head))]
+        fmt = lambda r: "  ".join(  # noqa: E731
+            (v.ljust(wid[i]) if i == 0 else v.rjust(wid[i])) for i, v in enumerate(r)).rstrip()
+        lines.append(fmt(head))
+        lines += [fmt(r) for r in cells]
+        if any(b["unpriced"] and b["usd"] is not None for b in rep["breakdown"]):
+            lines.append("* part of that group's tokens has no price")
+    else:
+        lines.append(head[0] + ": nothing in this period")
+    for e in rep.get("prices_errors") or []:
+        lines.append("prices.md: " + e)
+    return "\n".join(lines) + "\n"
+
+
+def to_json(rep: dict) -> str:
+    return json.dumps(rep, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def to_csv(rep: dict) -> str:
+    """The breakdown table, one row per group -- the part a spreadsheet wants.
+    Every figure is in --json."""
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow([rep["group_by"], "tokens", "share", "sessions", "avg_ctx", "cache_pct", "usd", "unpriced"])
+    for b in rep["breakdown"]:
+        w.writerow([b["key"], b["tokens"],
+                    "" if b["share"] is None else "%.4f" % b["share"],
+                    b["sessions"],
+                    "" if b["avg_ctx"] is None else "%.1f" % b["avg_ctx"],
+                    "" if b["cache_pct"] is None else "%.4f" % b["cache_pct"],
+                    "" if b["usd"] is None else "%.6f" % b["usd"],
+                    int(b["unpriced"])])
+    return buf.getvalue()
+
+
+def to_md(rep: dict) -> str:
+    esc = lambda s: s.replace("|", "\\|")  # noqa: E731
+    p = rep["period"]
+    lines = ["# Insights — %s (%s – %s)" % (p["label"], p["start"], p["end"]), "",
+             esc(title(rep)), "", "| row | figures |", "|---|---|"]
+    lines += ["| %s | %s |" % (row, esc(text)) for row, text in figure_lines(rep)]
+    lines += ["", "| %s | %s |" % (rep["group_by"], " | ".join(BREAKDOWN_COLS)),
+              "|---|" + "---:|" * len(BREAKDOWN_COLS)]
+    lines += ["| %s |" % " | ".join(esc(c) for c in r) for r in _breakdown_cells(rep)]
+    lines += ["", "Counts only: no prompt, reply or tool input is recorded. "
+              "$ figures are API-equivalent, not money spent."]
+    return "\n".join(lines) + "\n"
+
+
 # ------------------------------------------------------------------ CLI
 def _paths(a) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
-    prof = a.profile if a.profile is not None else profile_of(os.environ.get("CLAUDE_CONFIG_DIR"))
+    prof = _profile(a)
     cfg = pathlib.Path(a.config_dir) if a.config_dir else config_dir_of(prof)
     st = pathlib.Path(a.state_dir) if a.state_dir else stats_dir(prof)
     wd = pathlib.Path(a.wd_dir) if a.wd_dir else watchdog_dir(prof)
     return cfg, st, wd
 
 
+def _profile(a) -> str:
+    return a.profile if a.profile is not None else profile_of(os.environ.get("CLAUDE_CONFIG_DIR"))
+
+
+def _mux_dirs(profile: str):
+    """schedules/ and handovers/ of the account, by muxconfig's rules; none
+    when it cannot be imported (lanes then come from the tree alone)."""
+    try:
+        import muxconfig
+        return muxconfig.mux_dir("schedules", profile), muxconfig.mux_dir("handovers", profile)
+    except Exception:  # noqa: BLE001 -- a lane source is optional, a report is not
+        return None, None
+
+
+def _collect_cli(a, quiet=False) -> None:
+    cfg, st, wd = _paths(a)
+    sched, hand = (None, None) if a.config_dir or a.state_dir else _mux_dirs(_profile(a))
+    rep = collect(cfg, st, a.now, wd_dir=wd, schedules_dir=sched, handovers_dir=hand)
+    if not quiet:
+        print(rep.line())
+
+
+STATS_HELP = """\
+muxtopus stats -- what was used, from the ledger (counts only)
+
+  --today | --week | --last7 | --month | --last30 | --all     period (default --week)
+  --project P  --model M  --lane L  --side main|sub           filter; repeat to OR
+  --by project|model|lane|day|week|month|session|side          the breakdown (default project)
+  --json | --csv | --md                                        output (default text)
+  --prices FILE      price table (default ~/.config/muxtopus/prices.md)
+  --no-collect       report the ledger as it is, without reading new transcripts
+  --all-accounts     merge every account's ledger
+  --forget [--before YYYY-MM-DD]   drop what is recorded (before that date, else
+                     everything) and never count it again; transcripts are untouched
+"""
+
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="muxstats", description=__doc__.split("\n\n")[0])
-    ap.add_argument("--profile", default=None, help="account name ('' = default)")
-    ap.add_argument("--config-dir", help="Claude config dir (default: the account's)")
-    ap.add_argument("--state-dir", help="stats dir (default: $XDG_STATE_HOME/muxtopus/stats[-P])")
-    ap.add_argument("--wd-dir", help="watchdog state dir, for lanes and budget")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--profile", default=argparse.SUPPRESS, help="account name ('' = default)")
+    common.add_argument("--config-dir", default=argparse.SUPPRESS, help="Claude config dir")
+    common.add_argument("--state-dir", default=argparse.SUPPRESS, help="stats dir")
+    common.add_argument("--wd-dir", default=argparse.SUPPRESS, help="watchdog state dir")
+    common.add_argument("--now", type=int, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    ap = argparse.ArgumentParser(prog="muxstats", parents=[common],
+                                 description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd")
-    sub.add_parser("collect", help="read new transcript bytes into the ledger")
+    sub.add_parser("collect", parents=[common], help="read new transcript bytes into the ledger")
+    sp = sub.add_parser("stats", parents=[common], help="the report", add_help=False)
+    sp.add_argument("-h", "--help", action="store_true")
+    per = sp.add_mutually_exclusive_group()
+    for name in PERIODS:
+        per.add_argument("--" + name, dest="period", action="store_const", const=name)
+    for k in ("project", "model", "lane", "side", "session"):
+        sp.add_argument("--" + k, action="append", default=[])
+    sp.add_argument("--by", default="project", choices=GROUPS)
+    fmt = sp.add_mutually_exclusive_group()
+    for f in ("json", "csv", "md"):
+        fmt.add_argument("--" + f, dest="fmt", action="store_const", const=f)
+    sp.add_argument("--prices")
+    sp.add_argument("--no-collect", action="store_true")
+    sp.add_argument("--all-accounts", action="store_true")
+    sp.add_argument("--forget", action="store_true")
+    sp.add_argument("--before")
     a = ap.parse_args(argv)
+    for k in ("profile", "config_dir", "state_dir", "wd_dir", "now"):
+        if not hasattr(a, k):
+            setattr(a, k, None)
+
     if a.cmd == "collect":
-        cfg, st, wd = _paths(a)
-        print(collect(cfg, st, wd_dir=wd).line())
+        _collect_cli(a)
         return 0
-    ap.print_help()
-    return 2
+    if a.cmd != "stats":
+        ap.print_help()
+        return 2
+    if a.help:
+        sys.stdout.write(STATS_HELP)
+        return 0
+    if a.before and not a.forget:
+        print("muxstats: --before goes with --forget", file=sys.stderr)
+        return 2
+    if a.side and any(s not in ("main", "sub") for s in a.side):
+        print("muxstats: --side is main or sub", file=sys.stderr)
+        return 2
+
+    _, st, _ = _paths(a)
+    if a.forget:
+        if a.all_accounts:
+            print("muxstats: --forget works on one account at a time", file=sys.stderr)
+            return 2
+        if a.before:
+            try:
+                _dt.date.fromisoformat(a.before)
+            except ValueError:
+                print("muxstats: --before wants YYYY-MM-DD, got %r" % a.before, file=sys.stderr)
+                return 2
+        out = forget(st, a.before, a.now)
+        print("forgot %d ledger row(s), %d budget window(s), %d weekly reset(s), %d lane(s), "
+              "%d limit hit(s), %d index month(s) %s; nothing older will be counted again (%s)"
+              % (out["rows"], out["windows"], out["weeks"], out["lanes"], out["limits"],
+                 out["months"], ("before " + a.before) if a.before else "up to now", st))
+        return 0
+
+    if not a.no_collect:
+        try:
+            _collect_cli(a, quiet=True)
+        except Exception as e:  # noqa: BLE001 -- a stale report beats none
+            print("muxstats: collect failed (%s: %s); reporting the ledger as it is"
+                  % (type(e).__name__, e), file=sys.stderr)
+    dirs = sorted(p for p in st.parent.glob("stats*") if p.is_dir()) if a.all_accounts else [st]
+    led = load(dirs)
+
+    filters = {"model": a.model, "lane": a.lane, "side": a.side, "session": a.session}
+    if a.project:
+        known = {r["project"] for r in led.rows}
+        want = []
+        for pr in a.project:
+            hit = [k for k in known if k == pr] or \
+                  [k for k in known if "/" not in pr and k.rstrip("/").rsplit("/", 1)[-1] == pr]
+            want += hit or [pr]
+        filters["project"] = sorted(set(want))
+    ppath = pathlib.Path(a.prices) if a.prices else prices_path()
+    table = prices(ppath)
+    rep = query(led, a.period or "week", filters, a.by, a.now, table)
+    rep["prices_errors"] = table.errors if table else []
+    if a.all_accounts:
+        rep["accounts"] = [d.name for d in dirs]
+    if a.fmt == "json":
+        sys.stdout.write(to_json(rep))
+    elif a.fmt == "csv":
+        sys.stdout.write(to_csv(rep))
+    elif a.fmt == "md":
+        sys.stdout.write(to_md(rep))
+    else:
+        sys.stdout.write(render_text(rep))
+        if table is None:
+            sys.stdout.write("no price file at %s -- tokens only (the seed is seeds/prices.md)\n" % ppath)
+    return 0
 
 
 if __name__ == "__main__":
