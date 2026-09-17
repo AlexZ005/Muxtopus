@@ -1,0 +1,25 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                   ╭─ muxtopus (modal: no room below) ─────────────────────────────────────────────────────╮
+                                   │  ▸ Settings ▸  menu layout, defaults for a new window, where a mode is made permanent │
+                                   │    ····················································                               │
+                                   │    Watchdog: ON  restart a limited window once its limit resets                       │
+                                   │    Monitor: ON  ask a working window to wind down near the limit                      │
+                                   │    ····················································                               │
+                                   │    Disconnect  detach this tmux client; the dashboard and every window keep running   │
+                                   │    Reload the dashboard  re-exec this script, as R does                               │
+                                   │    Quit the dashboard                                                                 │
+                                   │    ↑↓ pick · enter choose · esc close                                                 │
+                                   ╰───────────────────────────────────────────────────────────────────────────────────────╯

@@ -1,0 +1,48 @@
+# The tick a visitor reads first.
+#
+# WHAT RUNS HERE and what does not. The Python tests are pure: a temporary
+# HOME, no terminal, no daemon, so they run anywhere. The dashboard's own
+# proof is a set of GOLDEN SCREENS (tests/goldens/), taken by driving the
+# real program inside a private tmux server against a fake machine
+# (tests/sandbox/). Those stay LOCAL -- they compare a rendered terminal
+# frame, so they are a hostage to the runner's locale, its Rich version and
+# its hostname, and a golden that fails for the runner's reasons teaches
+# nobody anything. `tests/sandbox/goldens.sh` is the command; the split
+# lane's every phase ran it.
+#
+# The notify shell tests (tests/test_notify_*.sh) drive tmux and jq in their
+# own sandbox and are candidates for this file; they are left out until
+# somebody has watched them go green in a container rather than on the deck.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: install rich
+        run: python -m pip install --upgrade pip rich
+      - name: muxconfig options parser
+        run: python3 tests/test_options.py
+      - name: the settings store and the one settings.json write
+        run: python3 tests/test_settings.py
+      - name: what a ticked box does to a schedule entry
+        run: python3 tests/test_entry_options.py
+      - name: the menu layout engine
+        run: python3 tests/test_menulayout.py
+      - name: the App -- routing, registration, ordering, failure
+        run: python3 tests/test_dashboard_app.py
+      - name: every name the dashboard mentions is one it can reach
+        run: python3 tests/test_names.py
+      - name: muxstats
+        run: python3 tests/test_stats.py
+      - name: the dashboard package imports without a terminal
+        run: python3 -c "import deck_status"

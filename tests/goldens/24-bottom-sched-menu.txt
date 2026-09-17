@@ -1,0 +1,17 @@
+
+
+
+
+
+
+                                          ╭─ menu · a-pending.md (modal: no room below) ────────────────────────────╮
+                                          │      at: reset — the session budget reads 46%, not fresh yet  (waiting) │
+                                          │  ▸ Edit a-pending.md                                                    │
+                                          │    Options  the checkbox table, pre-ticked from the header              │
+                                          │    Launch now  make it due; the watchdog opens it within ~30s           │
+                                          │    Duplicate as a new pending entry  and open it in the editor          │
+                                          │    Check  resolve it without launching: slug, window, paste, verdict    │
+                                          │    ····················································                 │
+                                          │    Delete a-pending.md                                                  │
+                                          │    ↑↓ pick · enter choose · esc close                                   │
+                                          ╰─────────────────────────────────────────────────────────────────────────╯

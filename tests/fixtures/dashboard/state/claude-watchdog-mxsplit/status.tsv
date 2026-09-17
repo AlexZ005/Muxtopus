@@ -1,0 +1,6 @@
+aaaa1111	➥root-lane	%11	2.0.1	620000	working	—		0	1450000	220000	0	opus	42		@SB@/work/repo-a	0	0	0
+bbbb2222	➥➥kid-lane	%12	2.0.1	310000	limited	14:30		0	880000	90000	0	fable	930		@SB@/work/repo-b	1735780000	0	0
+cccc3333	➥stranded-lane	%13	2.0.1	180000	stranded			0	410000	40000	0	sonnet	9000		@SB@/work/repo-a	0	0	0
+dddd4444	➥due-lane	%14	2.0.1	90000	due	13:00		1735790000	250000	30000	0	opus[1m]	300		@SB@/work/repo-b	0	0	0
+eeee5555	(background)		2.0.1	45000	idle			0	120000	10000	0	haiku	-1	bg-7	-	0	0	0
+ffff6666	➥opted-out	%16	2.0.1	20000	idle			0	60000	5000	1	fable	120		@SB@/work/repo-a	0	1	0

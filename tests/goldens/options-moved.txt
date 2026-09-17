@@ -1,0 +1,39 @@
+╭─ scheduled windows · <SB>/muxhome/schedules-mxsplit · templates in templates/ ─<pad>╮
+│                                                                                                                                                              │
+│        STATUS       TYPE     FOR                  AT                  TITLE                                                        SLUG                      │
+│  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+│        pending      plan     reset (08:50)        <stamp>    a pending plan  ⚠ title is not a slug; it becomes 'a-pend…   a-pending-plan <pad>│
+│        blocked      work     reset (08:50)        <stamp>    blocked behind a lane  ⚠ title is not a slug; it becomes …   blocked-behind-a-lane <pad>│
+│        corrupted    nonse…   whenever             <stamp>    a corrupted entry — type must be plan or work (got 'nonse…   a-corrupted-entry <pad>│
+│        launched     work     <stamp>     <stamp>    already launched — launched <stamp>                 launched-lane <pad>│
+│        pending      plan     reset (08:50)        <stamp>    a title that is not a slug                                   pinned-one <pad>│
+│  ▸     due          work     <stamp>     <stamp>    with options and a model  ⚠ title is not a slug; it becom…   with-options-and-a-mod <pad>│
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ why ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ at: <stamp> has passed (<age> ago) <pad>│
+│ model fable  ·  effort high  ·  3 option(s)      o reopens the table                                                                                         │
+│ ⚠ title is not a slug; it becomes 'with-options-and-a-mod' — set slug: to pin it                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ awaiting your answers   QUESTIONS-launched-lane.md                                                                                                           │
+│ <SB>/muxhome/questions <pad>│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ options · f-work ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│       CONTRACT                                                                                                                                               │
+│   [x] questions go to a file                 nobody is watching: QUESTIONS-{{SLUG}}.md, recommended answer, proceed                                          │
+│   [x] one commit per phase                   [feat] <phase>: summary, body bullets, attribution trailer                                                      │
+│ ▸ [ ] no push, no PR                         the orchestrator integrates                                                                                     │
+│       WINDOWS                                                                                                                                                │
+│   [x] parallel lanes: 3                      a number; {{VALUE}} in the sentence                                                                             │
+│       MODEL                                                                                                                                                  │
+│   [x] model: fable                           a CLI alias, written as a header field                                                                          │
+│   [x] effort: high                           passed as claude --effort                                                                                       │
+│       PROJECT                                                                                                                                                │
+│       a block nobody can parse               key 'Broken_Key' is not [a-z0-9-]+                                                                              │
+│       ACTIONS                                                                                                                                                │
+│       check all                                                                                                                                              │
+│       uncheck all                                                                                                                                            │
+│       save  what is ticked                                                                                                                                   │
+│    ↑↓ pick · space/enter toggle · enter on a row below does it · esc cancel                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

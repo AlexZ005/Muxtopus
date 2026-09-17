@@ -1,0 +1,26 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+                   ╭─ settings · <SB>/config/muxtopus/profiles/mxsplit.dashboard.conf ─<pad>╮
+                   │  ▸ Menu layout: modal  table: under the panel · modal: centred · bottom: the footer                                   │
+                   │    Default permission mode for a new window: ask  ask: c stops on the mode picker with nothing preselected            │
+                   │    Where "make it permanent" writes: project  project: <cwd>/.claude/settings.json · account: ~/.claude/settings.json │
+                   │    Watch a new window: off  restart it after a limit; off writes watchdog: off in the entry                           │
+                   │    Monitor a new window: off  wind it down near the limit; off writes monitor: off in the entry                       │
+                   │    Default model for a new window: fable  a CLI alias (opus, fable…), or the account default                          │
+                   │    Default effort for a new window: high  passed as claude --effort                                                   │
+                   │    Default working folder: <SB>/work/repo-b  offered first by c and used by the schedule create flow │
+                   │    ····················································                                                               │
+                   │    Back                                                                                                               │
+                   │    ↑↓ pick · enter change · esc back                                                                                  │
+                   ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

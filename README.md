@@ -432,7 +432,9 @@ claude-watchdog.sh      the daemon: limits, wind-downs, scheduled windows
 claude-usage.sh         reads /usage from a throwaway session, per account
 claude-winddown-hook.sh PostToolUse hook: delivers a directive mid-turn
 handover.sh             the handoff folder
-deck_status.py          the dashboard
+deck_status.py          the dashboard's SHELL: the terminal, the main loop
+dashboard/              the dashboard itself, one file per screen or menu;
+                        a view is one new file (docs/dashboard-views.md)
 deck-status.sh          launcher (venv python, with a bash fallback)
 setup-schedules.py      seed an account's schedules + templates
 make-screenshot.py      regenerate the screenshot in this README
