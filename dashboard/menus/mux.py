@@ -130,6 +130,35 @@ class MuxMenu:
             DIM, escape(str(muxsettings.dashboard_conf_path(PROFILE)).replace(str(HOME), "~")))
 
 
+
+# ------------------------------------------------------------------ help
+# This module's slice of `?`. Registered with the ORDER it has always had,
+# so the help screen reads exactly as it did when it was one string in
+# deck_status.py -- the split moved who owns the words, not the words.
+HELP_MUX = f"""
+  [{DIM}]THE MUXTOPUS MENU (esc) AND SETTINGS[/]
+    esc opens the dashboard's own menu -- what is not about one row: Settings,
+    the watchdog and monitor switches by their full names (w and m stay the
+    fast path), Disconnect (detaches this tmux client; every window keeps
+    running, `muxtopus` attaches again), Reload (R) and Quit.
+
+    Settings are written to
+
+        {muxsettings.dashboard_conf_path(PROFILE)}
+
+    a file the DASHBOARD owns, in the same KEY="value" shell as config -- kept
+    apart from config because that one is yours and full of your comments, and
+    a program that rewrites it would eventually eat them. It is read as a
+    layer ABOVE config (and profiles/<name>.dashboard.conf above
+    profiles/<name>.conf), so what the menu writes is what the next frame
+    reads; a value is only reported as saved once it has been read back from
+    disk. `muxtopus -c` shows every setting with the layer it came from.
+    The settings: the menu layout (table, modal, bottom), the permission mode,
+    model and effort preselected when c creates a window, whether such a window
+    is watched and monitored, the working folder offered first, and which
+    settings.json "make it the default" writes to.
+"""
+
 def register(app) -> None:
     menu = MuxMenu(app)
     app.add_menu("mux", menu.mux_menu_entries, title_fn=lambda: "muxtopus")
@@ -137,3 +166,4 @@ def register(app) -> None:
                  title_fn=menu._settings_menu_title,
                  hint_fn=lambda: "↑↓ pick · enter change · esc back",
                  esc_to="mux")
+    app.add_help("THE MUXTOPUS MENU (esc) AND SETTINGS", HELP_MUX, order=30)

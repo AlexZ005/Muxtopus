@@ -5,7 +5,11 @@
 # SCRIPTS is the CHECKOUT this harness lives in, found from this file rather
 # than hard-coded, so the same harness drives a worktree and the main tree.
 SANDBOX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export SCRIPTS="$(cd "${SANDBOX_DIR}/../.." && pwd)"
+# SCRIPTS defaults to the checkout this harness lives in -- so the same
+# harness drives a worktree and the main tree -- and a caller may point it
+# somewhere else, which is how onefile.sh drives a COPY of the checkout with
+# one extra file in it.
+export SCRIPTS="${SCRIPTS:-$(cd "${SANDBOX_DIR}/../.." && pwd)}"
 export SB="${SB:-${TMPDIR:-/tmp}/muxsplit-sandbox}"
 
 export HOME="${SB:?}/home"

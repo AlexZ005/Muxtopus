@@ -80,6 +80,41 @@ DASHBOARD_KEYS: dict[str, dict] = {
         "hint": "offered first by c and used by the schedule create flow"},
 }
 
+def register(specs: dict[str, dict]) -> None:
+    """A dashboard module declares the settings keys it owns.
+
+    DASHBOARD_KEYS above is the CORE EIGHT -- the ones the shell and the main
+    screens need. A module that adds a setting (notify's seven, handover's
+    two) calls this from its register(app) instead of editing that dict, and
+    its rows then appear in the Settings menu in registration order after the
+    core ones.
+
+    A KEY MUST ALREADY BE IN muxconfig.KEYS. That list and profile.sh's
+    MUX_CONFIG_KEYS are the shell half and the python half of the same
+    contract, and tests/test_settings.py compares them name for name and
+    order for order; a key that is only in one of them is a value the
+    dashboard writes and the shell silently never reads. So the two lists
+    stay shared files and a new setting is a three-line change to each --
+    which is a conflict two lanes resolve, not a queue they wait in.
+    """
+    for key, spec in specs.items():
+        if key in DASHBOARD_KEYS:
+            raise ValueError("%s is already a dashboard setting" % key)
+        if key not in KEYS:
+            raise ValueError(
+                "%s is not in muxconfig.KEYS -- add it there and in "
+                "profile.sh's MUX_CONFIG_KEYS first, or the shell half will "
+                "never read what the menu writes" % key)
+        for field in ("label", "kind", "hint"):
+            if field not in spec:
+                raise ValueError("%s needs a %s" % (key, field))
+        if spec["kind"] not in ("choice", "onoff", "text"):
+            raise ValueError("%s: kind must be choice, onoff or text" % key)
+        if spec["kind"] == "choice" and "choices" not in spec:
+            raise ValueError("%s: a choice needs choices" % key)
+        DASHBOARD_KEYS[key] = spec
+
+
 HEADER = ("# Written by the muxtopus dashboard (esc → Settings). Edit config or\n"
           "# profiles/<name>.conf by hand instead; this file is rewritten whole.\n")
 

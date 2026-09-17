@@ -25,7 +25,7 @@ import os
 import time
 
 import muxsettings
-from dashboard.core import (CONFIG_DIR, PROFILE, SCHEDULES_DIR,
+from dashboard.core import (CONFIG_DIR, DIM, PROFILE, SCHEDULES_DIR,
                             model_choices, mux_home)
 from dashboard.data import dirty_repos, lane_slug_of
 from dashboard.schedules import read_schedules, sanitise_slug
@@ -264,5 +264,39 @@ class NewSession:
         return msg
 
 
+
+# ------------------------------------------------------------------ help
+# This module's slice of `?`. Registered with the ORDER it has always had,
+# so the help screen reads exactly as it did when it was one string in
+# deck_status.py -- the split moved who owns the words, not the words.
+HELP_NEWSESSION = f"""
+  [{DIM}]A NEW CLAUDE SESSION (c)[/]
+    Seven screens through the picker and the prompt: the working folder (the
+    cursor's, the setting, every session's, the dirty trees, the checkouts
+    under MUXTOPUS_HOME, or a typed path -- it must exist); the model, as a CLI
+    ALIAS (opus, fable, sonnet…; `--model opus-5` is refused by the CLI and
+    kills the window after it has eaten the paste); the effort; the permission
+    mode (preselected from Settings, or nothing preselected when that says
+    ask -- a default, never a lock); where it goes (a top-level window, or
+    under a live one: ➥➥name, inserted after that parent's subtree, drawn
+    indented); the name, which is the slug (window, handover, handover.sh
+    done); and an optional first prompt.
+    THEN IT WRITES A SCHEDULE ENTRY with at: already past, and nothing else:
+    the watchdog opens the window within one pass and does the trust dialog,
+    the readiness wait, the paste and the tree row -- one launcher, whoever
+    asked. The entry carries model:, effort:, permission-mode:, cwd:,
+    parent:/window:, and watchdog: off / monitor: off when Settings says a
+    new window is not watched or monitored (the launcher opts the session out
+    once it has an id). An empty prompt writes a plan entry: the session gets
+    its identity line and nothing invented.
+    Choosing bypassPermissions also offers "…and make it the default": a
+    confirm names the exact settings.json (project or account, per Settings)
+    and what changes -- EVERY future session there skips permission prompts,
+    including ones nothing is watching. The write merges permissions.defaultMode
+    into the existing JSON (nested, where Claude Code reads it), backs the
+    old file up beside itself, and refuses a file that is not valid JSON.
+"""
+
 def register(app) -> None:
     app.newsession = NewSession(app)
+    app.add_help("A NEW CLAUDE SESSION (c)", HELP_NEWSESSION, order=20)

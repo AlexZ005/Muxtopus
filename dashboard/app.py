@@ -285,6 +285,17 @@ class App:
         return [(t, x) for _o, t, x, _s
                 in sorted(self._help, key=lambda h: (h[0], h[1]))]
 
+    def help_screen(self) -> str:
+        """`?`, assembled from what the LOADED MODULES say about themselves.
+
+        Each section is the whole block, its own dim heading included, and
+        they are simply concatenated -- so registering today's sections at
+        the orders they already had reproduces the old 290-line string
+        exactly, which is what phase 5 of the split did. A module that loads
+        adds its section; a module that does not, does not, and the screen
+        still describes the dashboard the reader is actually looking at."""
+        return "".join(text for _title, text in self.help_sections())
+
     # ============================================================== notice
     def say(self, msg: str) -> None:
         self.notice, self.notice_at = msg, time.time()
@@ -534,11 +545,39 @@ class App:
                 or self.picker is not None or self.modal is not None)
 
     # ========================================================== the frame
+    def tab_strip(self, view) -> str | None:
+        """The strip of tabs for the group this view is in, as markup, or
+        None when it is a screen of its own.
+
+        IT COSTS NO ROWS: it is drawn as the first panel's TITLE, which is a
+        line that exists anyway. That is why a tab is cheap enough to be the
+        answer for the handovers list and for anything else that is a second
+        table of the same kind of thing."""
+        tabs = self.tabs_of(view)
+        if len(tabs) < 2:
+            return None
+        bits = []
+        for tab in tabs:
+            label = tab.tab_label(self)
+            bits.append("[bold]▸%s[/]" % label if tab is view
+                        else "[%s]%s[/]" % (DIM, label))
+        return ("[%s] │ [/]" % DIM).join(bits)
+
     def build(self) -> Group:
         """One frame: the active view's sections, with the open menu placed
         among them or the footer under them."""
         view = self.view_of()
         sections = view.build(self)
+        strip = self.tab_strip(view)
+        if strip and sections:
+            # The panel is built fresh every frame, so this is a decoration
+            # of this frame's copy and not a change to the view's own idea of
+            # its title.
+            panel = sections[0][1]
+            panel.title = strip
+            panel.title_align = "left"
+            panel.subtitle = "[%s]←→ tab" % DIM
+            panel.subtitle_align = "right"
         sub = self._submode_foot()
         if self.menu is not None and sub is None:
             return self.place_menu(sections, view.menu_anchor(self))
@@ -579,6 +618,11 @@ class App:
                     self.menu = None
             return True
         view = self.view_of()
+        # ←→ BELONG TO THE TAB STRIP when there is one, and to the view when
+        # there is not: the main view folds its tree with them, and it is a
+        # screen of its own, so it keeps them.
+        if key in ("LEFT", "RIGHT") and len(self.tabs_of(view)) > 1:
+            return self.cycle_tab(1 if key == "RIGHT" else -1)
         return bool(view and view.on_key(self, key))
 
     def open_view_key(self, key: str | None) -> bool:

@@ -27,6 +27,8 @@ from rich.text import Text
 
 from dashboard.app import View
 from dashboard.core import (CONTEXT_WINDOW, DIM, EXTRAS_SENTINEL, EXTRA_HINTS,
+                            FRAME_INTERVAL, USAGE_MAX_AGE, WATCHDOG_TREE,
+                            WD_INTERVAL, knob,
                             FRAME, GREEN, HANDOVERS_DIR, HOME, LANES_EMPTY,
                             LANE_PREFIX, MULTI_ACCOUNT, PROFILE,
                             PROFILE_LABEL, RED, SCRIPTS, SERVER_HINTS,
@@ -782,6 +784,13 @@ class MainView(View):
                 wtx = Text(s.window)
             if hidden:
                 wtx.append("  +%d" % hidden, style="bold #c9a0dc")
+            # WHAT OTHER MODULES HAVE TO SAY ABOUT THIS SESSION -- the yellow
+            # `?` of an unanswered fork, and whatever comes after it. One
+            # short Text each, no forks (App.add_badge's docstring is the
+            # rule), and none registered means nothing appended.
+            for badge in self.app.badges(s):
+                wtx.append(" ")
+                wtx.append_text(badge)
             ct.add_row(mark, mon_txt, wtx, Text(s.model, style=DIM), bar,
                        Text(human_tokens(s.spent), style=DIM), idle_txt, st_txt,
                        dirty_txt,
@@ -845,6 +854,11 @@ class MainView(View):
             ("←→", DIM), " fold  ", ("t", DIM), " tree  ",
             ("f", DIM), " all lanes  ", ("p", DIM), " btop  ", ("?", DIM), " help",
         )
+        # ...and what other modules want on the key line: `· 3 ?`, and its
+        # like. Appended before the notice and the flourish wrap it, so a
+        # hint sits on the keys rather than above them.
+        for hint in self.app.hints():
+            keys.append_text(hint)
         # The one piece of good news this dashboard can deliver, so it gets to
         # be loud. Latched on first sight rather than read per frame: hooray()
         # consumes the flag, and the flag is written by a background process
@@ -985,8 +999,221 @@ class MainView(View):
         return [w for w in self.windows.values() if w]
 
 
+
+# The two bands the wind-downs use, quoted by the help section below. Named
+# rather than inlined because the sentence explains why they are what they
+# are, and a number in prose that nothing reads is a number that goes stale.
+SOFT = knob("WATCHDOG_SOFT_PCT", PROFILE)
+HARD = knob("WATCHDOG_HARD_PCT", PROFILE)
+
+
+# ------------------------------------------------------------------ help
+# This module's slice of `?`. Registered with the ORDER it has always had,
+# so the help screen reads exactly as it did when it was one string in
+# deck_status.py -- the split moved who owns the words, not the words.
+HELP_TREE = f"""
+  [{DIM}]THE WINDOW TREE[/]
+    tmux has NO window hierarchy: its windows are a flat, indexed list per
+    session, with no parent to set and nothing to collapse. So the tree is DATA
+    the scheduler keeps ({WATCHDOG_TREE}) and this table is the VIEW of it.
+    A window the scheduler opened from another one is drawn under it and
+    indented; ← folds that subtree (the parent then shows +N), → unfolds it, and
+    ← on a leaf steps out to the parent. With nothing parented the order is
+    exactly what it always was -- sessions by context -- so the tree costs
+    nothing until there is one. [bold]t[/] turns the ordering off entirely.
+
+    What tmux CAN be made to honour is done in the flat list too: the depth is
+    carried by the window name (➥lane, ➥➥child) and a child is inserted after
+    the last window of its parent subtree, so a family stays contiguous.
+"""
+
+HELP_LANES = f"""
+  [{DIM}]LANES AND ACCOUNTS[/]
+    A dev server belongs to the account whose session started it -- read off
+    CLAUDE_CONFIG_DIR in its environment, which it keeps even after the window
+    that started it is gone. The table shows this account's by default; f, or
+    enter on a lane row, shows every account's with each one labelled. Arrow
+    up from the first session to reach the lane rows.
+"""
+
+HELP_MENU = f"""
+  [{DIM}]THE MENU (space)[/]
+    Two switches at the top, then everything you can do to the window under
+    the cursor: open, rename, skip it, wind it down, resume it, continue it at
+    low priority, or close it. Arrows pick, enter chooses, esc closes.
+"""
+
+HELP_MONITORING = f"""
+  [{DIM}]SESSION MONITORING[/]
+    Off by default, and a separate switch from the watchdog because they are
+    different powers. The watchdog RESTARTS a window that already stopped,
+    which cannot lose anything. Monitoring speaks to a window that is still
+    WORKING, asking it to commit what it has and write a handoff before the
+    budget runs out -- so that the next window can start from that handoff
+    instead of carrying a quarter-million tokens of context forward.
+
+    It is delivered through a PostToolUse hook, so it reaches a session mid-turn
+    without typing into a pane that is busy composing. Two bands: past {SOFT}% of
+    the session budget it is asked to stop spawning subagents, past {HARD}% to
+    checkpoint and stop. The hard band only fires when it BUYS something -- a
+    context big enough to be worth restarting fresh, or a weekly budget too
+    spent for /low-priority to carry the session through. Otherwise the window
+    is left to run into the limit banner, which costs nothing.
+
+    THE SESSION IS NEVER TOLD WHY. It receives an instruction, not a budget
+    negotiation. The reasoning is logged here instead: the WOUND column says
+    when a window was last asked to wrap up, and the log carries the reading
+    that decided it.
+"""
+
+HELP_UNCOMMITTED = f"""
+  [{DIM}]UNCOMMITTED[/]
+    Its own table rather than a column, because dirty trees and sessions do not
+    line up: a repo can be dirty with no session and no dev server anywhere
+    near it, and that is the copy most likely to be lost. The DIRTY column on a
+    session row is a hint for the tree that window is sitting in.
+"""
+
+HELP_BACKGROUND = f"""
+  [{DIM}]A session shown as (background) was started with `claude --bg`. It has no
+  terminal, so there is no window for enter to open and no pane for the
+  watchdog to type into -- it can be watched but never restarted from here.[/]
+"""
+
+HELP_USAGE = f"""
+  [{DIM}]USAGE LIMITS (top right)[/]
+    The only numbers here that cannot be computed locally. Claude Code has no
+    usage subcommand and no file holding live limit state, so [bold]u[/] runs
+    claude-usage.sh, which starts a throwaway session, sends /usage, reads the
+    pane and kills it -- about four seconds, no turn taken. It is ON DEMAND for
+    that reason, and the third line carries the time it was read so a stale
+    number cannot pass for a current one.
+
+    [bold]u[/] refreshes only if the figures are over {USAGE_MAX_AGE} minutes old, so leaning
+    on the key costs nothing; [bold]U[/] forces a read now. [bold]R[/] reloads this script and
+    nudges the limits the same way u does. The watchdog also refreshes hourly
+    on its own, so the numbers stay warm with nobody watching.
+
+    THE READING BELONGS TO THIS ACCOUNT ([{YELLOW}]{PROFILE_LABEL}[/]) and no other. The probe
+    is a tmux session, and a tmux session does NOT inherit the environment of
+    whatever created it -- so the account has to be handed in explicitly, and
+    for a while it was not: every account's probe read the same budget and
+    filed it under its own name. If two dashboards ever show identical figures
+    again, that is the shape of the bug.
+
+    A FAILED READ SAYS SO. It leaves the last good numbers alone and marks the
+    third line [{YELLOW}]stale[/], rather than writing a row of blanks stamped with the
+    current time -- which showed "?%" and then counted as fresh enough not to
+    retry. A read that cannot get to a prompt names its reason: the account is
+    not logged in, has not trusted the folder, or never finished setup.
+
+    The same values are available to scripts and to prompts:
+      claude-usage.sh --brief | --json | --session-pct | --week-pct
+      claude-usage.sh --ensure 15     refresh only if older than 15 minutes
+    Every reading is appended to usage.log with a timestamp.
+
+    If a limit ever empties BEFORE the time it promised, that is the one good
+    surprise here, so it is announced loudly and sent to your phone. Configure
+    a backend in ~/.config/claude-notify.conf (ntfy, Pushbullet or Telegram --
+    see the header of claude-notify.sh); with none configured it is logged and
+    nothing is sent.
+"""
+
+HELP_CLAUDE = f"""
+  [{DIM}]CLAUDE[/]
+    [bold]CONTEXT[/] is the session's live context against {CONTEXT_WINDOW // 1000}k
+    (set CLAUDE_CONTEXT_WINDOW if yours differs -- a running session cannot be
+    asked what its window is). [bold]SPENT[/] is that session's lifetime input +
+    cache writes + output, the parts billed at or above full rate; cache READS
+    are excluded because they cost about a tenth and would swamp the number.
+    Subagent tokens are NOT included -- they never enter the parent transcript.
+    [bold]IDLE[/] is time since that session last wrote a turn; it goes amber past
+    15 minutes, so a stalled window reads differently from a finished one.
+    [bold]RESUMED[/] is when the watchdog last restarted that session.
+"""
+
+HELP_DIRTY = f"""
+  [{DIM}]UNCOMMITTED WORK[/]
+    [bold]DIRTY[/] on the lanes table is tracked files changed in that working tree.
+    It is not on the claude table because a session's cwd here is /home/deck,
+    which is not a repo -- the question is only answerable per TREE. A dirty
+    repo with no dev server would then be invisible, so the system line names
+    those separately. Untracked files are ignored: a scratch file is noise, a
+    modified tracked file is work you could lose.
+
+    [{YELLOW}]limited[/]  stopped at a usage limit, waiting for the reset
+    [{RED}]due[/]      the reset has passed and it is still sitting there
+    [{RED}]stranded[/] NOTHING IS EVER GOING TO TOUCH THIS. A ➥ lane, idle past
+             WATCHDOG_STRANDED (120m), with an OPEN handover, and no pending
+             schedule entry naming it -- not by slug, not by after:, not a
+             resume- entry. idle stays dim because it is a fact about the last
+             turn and usually means finished; this is a fact about the future.
+             It is a label, never a trigger: the watchdog only ever prompts a
+             [{RED}]due[/] window. Schedule a ➥resume from the menu, or answer its
+             handover.
+
+    [bold]w[/] arms the watchdog: an IDLE window that hit a limit is prompted to
+    continue once its reset time passes, once per limit. It never types into a
+    window that is working. Disarmed, the panel still reports; nothing is sent.
+    Measured twice here: autoContinueAtUsageLimit does NOT resume after the
+    5-hour session limit, and /loop dies on its first refused wakeup.
+
+    [bold]space[/] excludes ONE session (the [{GREEN}]checkmark[/] becomes a dot). The choice
+    lives in the watchdog's own file, so it holds whether or not this dashboard
+    is open, and survives a restart. Everything is included by default, so a
+    session started tomorrow is covered without being opted in.
+"""
+
+HELP_FILES = f"""
+  [{DIM}]All of it is read from files claude-watchdog.sh publishes: no API calls,
+  no tokens, and no tmux captures from this process.[/]
+"""
+
+HELP_CLOSED = f"""
+  [{DIM}]CLOSED WINDOWS LEAVE ON THE NEXT REDRAW[/]
+    That file is rebuilt once every {WD_INTERVAL}s, so a window closed just after a pass
+    used to sit on this table for most of the next one -- measured at 21 and 25
+    seconds, long enough to arrow onto a row that is not there any more. Each
+    row now carries its process id, and this frame has already walked /proc for
+    the memory figures, so a row whose process is gone is dropped here: no
+    fork, no tmux call, gone within {FRAME_INTERVAL:g}s.
+
+    Nothing else got faster. Rows still APPEAR at the watchdog's pace, because
+    deciding what a session IS costs a transcript read, and a 2s frame will not
+    pay for one. The test is only whether the pid is still in /proc -- not
+    whether it still looks like claude, because dropping a live session to
+    catch a recycled pid trades a harmless wait for a hidden window.
+"""
+
+HELP_LANESTATE = f"""
+  [{DIM}]LANE STATE[/]
+    [{GREEN}]fresh[/]    under 6h
+    [{YELLOW}]ageing[/]   6-24h
+    [{RED}]stale[/]    over 24h. A vite server was measured at 2487 MB after three
+             days against 1142 MB fresh, and a long-lived server is also what
+             serves dual module instances.
+"""
+
+HELP_RAM = f"""
+  [{DIM}]RAM is summed per PROCESS GROUP: `npm run dev` and the vite it spawns are
+  separate processes, the port belongs to vite, and npm holds ~70 MB of its own.[/]
+"""
+
 def register(app) -> None:
     view = MainView(app)
     app.add_view(view)
     app.add_menu("session", view.session_menu_entries,
                  title_fn=view._session_menu_title)
+    app.add_help("THE WINDOW TREE", HELP_TREE, order=10)
+    app.add_help("LANES AND ACCOUNTS", HELP_LANES, order=11)
+    app.add_help("THE MENU (space)", HELP_MENU, order=12)
+    app.add_help("SESSION MONITORING", HELP_MONITORING, order=40)
+    app.add_help("UNCOMMITTED", HELP_UNCOMMITTED, order=41)
+    app.add_help("", HELP_BACKGROUND, order=60)
+    app.add_help("USAGE LIMITS (top right)", HELP_USAGE, order=61)
+    app.add_help("CLAUDE", HELP_CLAUDE, order=62)
+    app.add_help("UNCOMMITTED WORK", HELP_DIRTY, order=63)
+    app.add_help("", HELP_FILES, order=64)
+    app.add_help("CLOSED WINDOWS LEAVE ON THE NEXT REDRAW", HELP_CLOSED, order=65)
+    app.add_help("LANE STATE", HELP_LANESTATE, order=66)
+    app.add_help("", HELP_RAM, order=67)

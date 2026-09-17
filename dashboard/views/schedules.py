@@ -51,7 +51,12 @@ class ScheduleView(View):
     """The `s` screen. Its own state is the cursor and the rows under it;
     everything else it touches belongs to the App or to the main view."""
 
-    name, key, order = "sched", "s", 20
+    # `group` is what makes a SECOND table of scheduled things a new file
+    # rather than an edit to this one: a view that declares the same group is
+    # a tab beside this, the shell draws the strip in the panel title and ←→
+    # cycles them. Alone in its group, as it is today, there is no strip and
+    # nothing changes.
+    name, key, group, order = "sched", "s", "s", 20
 
     def __init__(self, app) -> None:
         # The app is held as well as passed: the protocol hands it to
@@ -65,6 +70,12 @@ class ScheduleView(View):
         self._foot = None
 
     # ------------------------------------------------------ the protocol
+    def tab_label(self, app) -> str:
+        """What the strip calls this tab, WITH ITS COUNT -- the count is the
+        reason a strip is worth the line: from the tab beside this one you
+        can still see how many entries are waiting over here."""
+        return "schedules %d" % len(self.rows)
+
     def build(self, app) -> list:
         return self.build_sched()
 
@@ -930,6 +941,79 @@ class ScheduleView(View):
                  "act": self.act_schedule_resume}]
 
 
+
+# ------------------------------------------------------------------ help
+# This module's slice of `?`. Registered with the ORDER it has always had,
+# so the help screen reads exactly as it did when it was one string in
+# deck_status.py -- the split moved who owns the words, not the words.
+HELP_SCHEDULES = f"""
+  [{DIM}]SCHEDULED WINDOWS (s)[/]
+    One .md per window to open later, in {SCHEDULES_DIR} (templates in
+    templates/; the folder README documents the format). The watchdog daemon
+    launches due items: `at: reset` fires when the session limit resets or the
+    budget simply reads fresh; an absolute time fires when it passes. The new
+    window opens right after its `window:` target, named with a leading ➥,
+    and the prompt lands as ONE bracketed paste. A file the view cannot parse
+    shows as corrupted with the reason, and never launches.
+    In the view: enter/e edit · c create (type, template, THE OPTIONS TABLE,
+    then the editor to paste the prompt) · o reopen the options table on a
+    pending entry · l launch now · d delete · r reload · s/esc back.
+    space opens the ENTRY'S menu: the why sentence when it is blocked, waiting
+    or stalled, then edit, options, launch now, duplicate (a pending copy
+    with a different slug, opened in the editor), check (the executor's
+    --check --body report, full screen), open its window when it has one,
+    and delete. A corrupted entry gets its reason and only delete.
+"""
+
+HELP_OPTIONS = f"""
+  [{DIM}]THE OPTIONS TABLE (c, and o on a pending entry)[/]
+    The checkboxes between the template and the editor: the contract sentences
+    you would otherwise retype into every brief, ticked once. They come from
+
+        {options_paths(PROFILE)[0]}
+
+    which is YOURS -- one block per option, blank-line separated, `key: value`
+    like a schedule header, its own comment block at the top being the format
+    spec. Edit it and the table changes; a second account overrides or adds to
+    it in profiles/<name>.options.md. A block the reader cannot make sense of
+    is shown greyed with the reason rather than dropped, exactly as a
+    corrupted schedule entry is.
+
+    ↑↓ picks, space or enter ticks. An option that needs a number or a time
+    opens the text prompt; one with a list of choices opens the picker (that
+    is how model: and effort: are set). THE ACTIONS ARE ROWS at the bottom:
+    check all, uncheck all, continue (save what is ticked, then the editor;
+    "save" on a reopen) and, on create only, skip (continue with nothing
+    ticked). esc CANCELS, on create and on reopen alike: on create no entry
+    file is written at all, on reopen the file is untouched.
+
+    A TICK WRITES ONE OF TWO THINGS: a sentence, appended to the body under a
+    `## Options` heading at the END of it, or a header field (model:, effort:)
+    the launcher passes as a flag. The header also records `options:
+    questions, phases, lanes=3`, and THAT is the source of truth: o reopens
+    the table from it and regenerates the section, so a sentence edited by
+    hand in that section is overwritten on the next save. To keep one, move it
+    ABOVE the heading -- everything above it is preserved byte for byte -- or
+    edit it in options.md where it came from.
+
+    Placeholders in a sentence ({{{{SLUG}}}}, {{{{WINDOW}}}}, {{{{HANDOVER}}}},
+    {{{{QUESTIONS}}}}, {{{{SCHEDULES}}}}, {{{{CWD}}}}, {{{{PARENT}}}}) are written out
+    LITERALLY and resolved by the executor when the prompt is pasted, because
+    the slug does not exist yet while the table is open. {{{{VALUE}}}} is the
+    exception -- it is what the prompt collected, and it is resolved here.
+
+    WHY AN ENTRY HAS NOT FIRED is printed under the table for the row under the
+    cursor, in the executor's own words -- `at: reset` is two gates (the budget
+    reading fresh, or the five-hour window rolling over) and the line says which
+    one it is waiting on. A row marked [{RED}]stalled[/] cannot be judged at all and
+    will not resolve on its own. To resolve an entry in full without launching
+    anything -- slug, window name, handover path, insert target, the exact
+    paste, and the due verdict with its reason:
+
+        claude-watchdog.sh --check <name> [--body] Plan sessions write their forks into core/plans/QUESTIONS-*.md
+    instead of asking; those files are listed in the view until answered.
+"""
+
 def register(app) -> None:
     """Called once, by the shell, with no file naming this module."""
     view = ScheduleView(app)
@@ -939,3 +1023,5 @@ def register(app) -> None:
     # 85 puts it where it has always been: after "Continue at low priority"
     # (the eighth row, so 80) and before the separator above Close (90).
     app.add_rows("session", view.session_rows, order=85)
+    app.add_help("SCHEDULED WINDOWS (s)", HELP_SCHEDULES, order=50)
+    app.add_help("THE OPTIONS TABLE (c, and o on a pending entry)", HELP_OPTIONS, order=51)

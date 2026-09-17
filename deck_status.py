@@ -7,23 +7,16 @@ four full-screen hand-offs (the editor, the pager, btop, the help screen) and
 the reload and quit that need the saved terminal state. Everything that DRAWS
 is in the `dashboard/` package beside it.
 
-    dashboard.app          the App: shared state, the menu engine, and the
-                           six registries a module puts itself into
-    dashboard.core         constants, paths, the account profile, formatters
-    dashboard.data         every reader of the machine and of the watchdog
-    dashboard.schedules    a schedule entry as data
-    dashboard.views.*      one screen each, DISCOVERED rather than listed
-    dashboard.menus.*      one menu kind each, likewise
+NO FILE NAMES THE MODULES. load_modules() walks dashboard.views and
+dashboard.menus, so adding a view is adding a file -- which is the whole
+point of the exercise: three lanes were queued on this one file, and none of
+them has to open it now. A module that fails to import is skipped with a red
+notice and the dashboard runs without it, so one lane's bad commit cannot
+take down the screen the others are tested in.
 
-NO FILE NAMES THE MODULES. load_modules() walks the two packages, so adding a
-view is adding a file -- which is the whole point of the exercise: three
-lanes were queued on this one file, and none of them has to open it now. A
-module that fails to import is skipped with a red notice and the dashboard
-runs without it, so one lane's bad commit cannot take down the screen the
-others are tested in. docs/dashboard-views.md is the protocol.
-
-The frame's cost, and why it is what it is, is in dashboard/data.py: that is
-where the collectors ended up, and the measurement is about them.
+docs/dashboard-views.md is the protocol, the registries and the routing rule;
+dashboard/data.py carries the frame's measured cost, because that is where
+the collectors ended up.
 
 Entry point is deck-status.sh, which falls back to its own bash renderer if
 this interpreter or rich is unavailable. The dashboard must never be the
@@ -50,7 +43,7 @@ import dashboard.views
 from dashboard.app import App
 from dashboard.core import DIM, FRAME_INTERVAL
 from dashboard.data import refresh_usage, toggle_monitor, toggle_watchdog
-from dashboard.help import HELP
+import dashboard.help
 
 # RE-EXPORTS, and the only reason they are here: tests/test_entry_options.py
 # does `import deck_status as d` and calls d.read_options, d.options_line,
@@ -68,15 +61,10 @@ def load_modules(app: App) -> None:
     """Import every module under dashboard.views and dashboard.menus and let
     each one register itself.
 
-    SORTED BY NAME, so the order is the same on every machine and nothing can
-    come to depend on a filesystem's whim. Nothing about the result is allowed
-    to depend on it either -- App.add_rows breaks its ties by label for
-    exactly that reason -- but a stable order still makes a bug reproducible.
-
-    A MODULE THAT FAILS TO IMPORT IS SKIPPED, loudly: the notice names it and
-    the reason, and everything else still loads. One lane's bad commit must
-    not take down the screen the other lanes are tested in, and a dashboard
-    that refuses to start is worse than one missing a tab.
+    SORTED BY NAME, so a bug is reproducible; nothing about the RESULT is
+    allowed to depend on that order, which is why App.add_rows breaks its ties
+    by label. A module that fails is skipped loudly and everything else still
+    loads.
     """
     for pkg in (dashboard.views, dashboard.menus):
         for info in sorted(pkgutil.iter_modules(pkg.__path__),
@@ -180,6 +168,9 @@ def main() -> int:
 
     console = Console()
     dash = App(interval, console)
+    # The shell's own two help sections -- the title and the last line -- and
+    # then everything else, from whatever modules are there to be found.
+    dashboard.help.register(dash)
     load_modules(dash)
 
     if once or not sys.stdout.isatty():
@@ -265,7 +256,7 @@ def main() -> int:
                 if key == "?":
                     live.stop()
                     console.clear()
-                    console.print(HELP)
+                    console.print(dash.help_screen())
                     read_key(60)
                     live.start()
                 elif key in ("p", "P"):
