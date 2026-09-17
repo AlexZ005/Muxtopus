@@ -1235,10 +1235,37 @@ sched_compose() {
 }
 
 # Open the window, get claude to a prompt, paste the body, press Enter.
+# `watchdog: off` / `monitor: off`: the only value that means anything is
+# `off`, in any case. Anything else, or no line at all, is the default: covered.
+sched_off() {
+  local v; v="$(sched_field "$1" "$2")"
+  [ "${v,,}" = off ]
+}
+
+# THE SESSION ID BEHIND A PANE WE JUST OPENED. The opt-out files are keyed by
+# session id, and that id does not exist until claude mints it at startup and
+# publishes it in sessions/<pid>.json, whose .tmux ends in the pane id. So an
+# entry cannot carry one; the launcher looks it up once the prompt is up. It is
+# normally there already by then -- the poll is for a slow first write.
+sched_pane_sid() {
+  local pane="$1" i f t sid
+  for i in $(seq 1 10); do
+    for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
+      [ -f "$f" ] || continue
+      t="$(jq -r '.tmux // empty' "$f" 2>/dev/null)"
+      [ "${t##*.}" = "$pane" ] || continue
+      sid="$(jq -r '.sessionId // empty' "$f" 2>/dev/null)"
+      [ -n "$sid" ] && { printf '%s' "$sid"; return 0; }
+    done
+    sleep 0.5
+  done
+  return 1
+}
+
 launch_schedule() {
   local f="$1" why="${2:-}"
   local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn model effort
-  local parent depth wid
+  local parent depth wid wd_off mon_off sid
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
   # (an enabled user unit) long before anyone has run muxtopus, and an item that
@@ -1277,6 +1304,10 @@ launch_schedule() {
       pmode=""
     fi
   fi
+
+  wd_off=""; mon_off=""
+  sched_off "$f" watchdog && wd_off=1
+  sched_off "$f" monitor && mon_off=1
 
   slug="$(sched_slug "$f")"
   parent="$(sched_parent "$f")"
@@ -1357,6 +1388,26 @@ launch_schedule() {
     rm -f "$bodyf"; return 1
   fi
 
+  # THE OPT-OUTS, BEFORE THE PASTE: the id exists once the prompt is up, and a
+  # session that should be left alone must not be watched through its first
+  # turn. Appended exactly as --optout / --monitor-optout do it. A pane no
+  # session file names in time is left watched -- today's default, logged, and
+  # never an error mark: the window itself is open and fine.
+  if [ -n "$wd_off$mon_off" ]; then
+    if sid="$(sched_pane_sid "$pane")"; then
+      if [ -n "$wd_off" ]; then
+        grep -qxF "$sid" "$OPTOUT" 2>/dev/null || printf '%s\n' "$sid" >> "$OPTOUT"
+        log "schedule $(basename "$f"): session $sid opted out of the watchdog"
+      fi
+      if [ -n "$mon_off" ]; then
+        grep -qxF "$sid" "$MON_OPTOUT" 2>/dev/null || printf '%s\n' "$sid" >> "$MON_OPTOUT"
+        log "schedule $(basename "$f"): session $sid opted out of the monitor"
+      fi
+    else
+      log "schedule $(basename "$f"): could not find the session id for $pane; left watched"
+    fi
+  fi
+
   # PASTE, never send-keys: a multi-line body through send-keys submits at
   # every newline. Bracketed paste (-p) hands the TUI one paste event.
   tmux load-buffer -b schedbody "$bodyf" 2>/dev/null
@@ -1370,7 +1421,7 @@ launch_schedule() {
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
-  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort}${pmode:+ perm=$pmode} -- ${why:-due}"
+  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort}${pmode:+ perm=$pmode}${wd_off:+ watchdog=off}${mon_off:+ monitor=off} -- ${why:-due}"
 }
 
 # ------------------------------------------------------------- --check
@@ -1439,6 +1490,10 @@ sched_check_one() {
   else
     kv permission "$pmode   -- not one of: $SCHED_PERM_MODES; it is DROPPED and no flag is passed"
   fi
+  if sched_off "$f" watchdog; then kv watchdog "opted out at launch"
+  else kv watchdog "covered (default)"; fi
+  if sched_off "$f" monitor; then kv monitor "opted out at launch"
+  else kv monitor "covered (default)"; fi
   if [ -n "$(sched_field "$f" slug)" ]; then kv slug "$slug   (pinned by slug:)"
   elif [ -n "$title" ]; then kv slug "$slug   (derived from title: \"$title\")"
   else kv slug "$slug   (derived from the filename)"; fi

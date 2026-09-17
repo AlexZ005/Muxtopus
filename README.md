@@ -192,6 +192,8 @@ cwd: /home/you/src/checkout
 model: opus                   # optional: claude --model
 effort: high                  # optional: claude --effort
 permission-mode: bypassPermissions   # optional: claude --permission-mode
+watchdog: off                 # optional: never restart this session after a limit
+monitor: off                  # optional: never wind this session down
 options: questions, phases, lanes=3, model=opus[1m]   # written by the options table
 status: pending
 created: 2026-09-06 09:55
@@ -209,6 +211,10 @@ A scheduled window is unattended by definition. Without this field the launcher 
 Nor can it be corrected once the window is open: shift+tab cycles auto → manual → accept edits → plan → auto, and `bypassPermissions` is **not** in that cycle. The launch command is the only way in.
 
 Accepted values are whatever `claude --permission-mode` takes at the installed version — today `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`. Case is folded to the CLI's spelling and the fold is logged; anything else is dropped with a log line and no flag, because `claude` exits 1 on an invalid mode and the window would then never reach a prompt. **Absent means absent** — no flag, the account's own setting — and that stays the default, because an unattended window that skips every permission check is a choice the entry should have to make out loud.
+
+### `watchdog: off` and `monitor: off`
+
+The dashboard's per-session opt-outs, for a window that should start out exempt. Only `off` (any case) opts out; anything else, or no line, is the default: covered. They are header fields the **launcher** applies, not something the dashboard writes at create time, because the opt-out files are keyed by session id and a session id does not exist before launch. Once the prompt is up the launcher finds the `sessions/*.json` whose `.tmux` names its pane, appends that id exactly as `--optout` / `--monitor-optout` do, and logs it; if none turns up within ~5s the window is left watched and the log says so. `--check` prints both.
 
 ### The options table
 

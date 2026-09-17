@@ -137,6 +137,8 @@ Format:
     model: opus                    (optional: fable | opus | sonnet | full id; default from settings.json)
     effort: high                   (optional: low | medium | high | xhigh | max -> claude --effort)
     permission-mode: bypassPermissions   (optional -> claude --permission-mode)
+    watchdog: off                  (optional: opt this session out of the watchdog's restarts)
+    monitor: off                   (optional: opt this session out of wind-downs)
     options: questions, phases     (written by the dashboard's options table; see below)
     status: pending                (the executor rewrites this)
     created: 2026-09-06 09:55
@@ -217,6 +219,21 @@ every permission check is a choice the entry has to make out loud.
 
 `claude-watchdog.sh --check <entry>` reports the resolved mode beside `model`
 and `effort`, and the launch line in the log records it as `perm=<mode>`.
+
+## `watchdog: off` and `monitor: off` -- applied by the launcher
+
+The same two opt-outs as the dashboard's space menu (`--optout`,
+`--monitor-optout`), for a window that should never be restarted or wound
+down. Only `off` means anything (any case); any other value, or no line, is
+the default: covered.
+
+They are header fields rather than something written at create time because
+the opt-out files are keyed by SESSION ID, and a session id does not exist
+before launch -- claude mints it at startup. So the launcher applies them:
+once the prompt is up it finds the session file naming its own pane, appends
+the id, and logs `session <id> opted out of the watchdog|monitor`. If no
+session file names the pane within ~5s it logs that and leaves the window
+watched. `--check` prints both as `covered (default)` or `opted out at launch`.
 
 ## `at: reset` is TWO gates, not one
 
