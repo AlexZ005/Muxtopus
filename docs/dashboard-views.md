@@ -80,7 +80,7 @@ app.add_badge(fn, order=50)                     fn(app, session) -> Text|None
 app.add_hint(fn)                                fn(app) -> Text|None
 app.add_help(title, text, order=50)             one section of `?`
 app.add_state(name, label, style, with_reset=False)
-muxsettings.register({KEY: {label, kind, hint, choices?}})
+muxsettings.register({KEY: {label, kind, hint, choices?}}, menu="")
 ```
 
 **Menus.** `esc_to` names the parent kind esc goes back to, which is how
@@ -106,7 +106,17 @@ badge that RAISES is dropped — not for that row, for good — and said once.
 state. An unregistered state keeps the fallback it has always had: dim, under
 its own name — which is what an unknown state from a newer watchdog must do.
 
-**Settings.** A key must already be in `muxconfig.KEYS`. That list and
+**Settings.** `menu=""` — the default — puts the key in the Settings menu
+itself, which is what a module with one or two settings wants. A module with
+a screenful passes the name of its OWN menu kind (`menu="notify"`): the key
+is a setting in every other way — same `get`, `put`, `validate`, same
+written-and-read-back proof — but the Settings list leaves it to the module,
+which draws its rows from `muxsettings.keys_of("notify")`. Without that, a
+submenu's rows would appear twice: once in the submenu that exists to hold
+them, and once in the list above it, because that list iterates
+`DASHBOARD_KEYS` and must keep doing so without knowing your module exists.
+
+A key must already be in `muxconfig.KEYS`. That list and
 `profile.sh`'s `MUX_CONFIG_KEYS` are the shell half and the python half of
 one contract, and `tests/test_settings.py` compares them name for name; a key
 in only one of them is a value the menu writes and the shell never reads. So
@@ -180,6 +190,7 @@ missing a tab. `tests/sandbox/onefile.sh` fires this too.
 | what | where | runs in CI |
 |---|---|---|
 | the picture, 148 screens | `tests/sandbox/goldens.sh` | no — local |
+| Settings ▸ Notifications, fired | `tests/sandbox/notify.sh` | no — local |
 | the rows that WRITE something | `tests/sandbox/actions.sh` | no — local |
 | a view is one new file | `tests/sandbox/onefile.sh` | no — local |
 | the insights view, every key | `tests/sandbox/insights.sh` | no — local |
@@ -194,7 +205,16 @@ The sandbox ones stay local because they compare a rendered terminal frame
 against a fake machine, and a golden that fails for the runner's locale,
 Rich version or hostname teaches nobody anything. `tests/sandbox/README.md`
 is how to run them; `tests/sandbox/normalise.py` documents, once, every mask
-the goldens apply and why.
+the goldens apply and why. `SANDBOX_TMUX` and `SANDBOX_SESSION` name the tmux
+server and session, so two lanes can drive the harness at the same time —
+`start.sh` opens by calling `stop.sh`, and before those existed the session
+name was the only thing telling two sandboxes apart.
+
+**A menu row is not free to add wherever you like.** `tests/sandbox/route.sh`
+walks some menus by counting Downs, so a row inserted anywhere but the end of
+one sends the route to the wrong screen; `add_rows(order=…)` is how you
+choose, and `tests/sandbox/actions.sh` and `tests/sandbox/notify.sh` navigate
+by LOOKING for the row they want, which is the pattern to copy.
 
 ## Branches, pull requests and the changelog
 

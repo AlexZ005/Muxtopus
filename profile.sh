@@ -205,6 +205,29 @@ mux_key_help() {
                             echo "empty is the account default, no --effort flag." ;;
     DASHBOARD_NEW_CWD)      echo "Working folder offered first when the dashboard creates a window or"
                             echo "a schedule entry; empty falls back to the selected session's cwd." ;;
+    # Phone notifications (claude-notify.sh + muxtelegram.py). These are
+    # PREFERENCES and live here, per account; the backend and its token live
+    # in ~/.config/claude-notify.conf, which is per machine and holds a
+    # secret. The dashboard writes these from esc > Settings > Notifications.
+    MUXTOPUS_NOTIFY_WAITING) echo "on: tell the phone when a window sits at a permission or trust"
+                            echo "prompt (seen on two consecutive passes, so >=30 s, not a flash)."
+                            echo "The message carries Yes / No / More when inbound is on." ;;
+    MUXTOPUS_NOTIFY_QUESTIONS) echo "on: tell the phone when a QUESTIONS file is new or has a new"
+                            echo "unanswered fork. One message per fork, capped at eight." ;;
+    MUXTOPUS_NOTIFY_TROUBLE) echo "on: tell the phone when a verdict becomes stalled or an entry"
+                            echo "error, a lane becomes stranded, a launch fails, or an entry has"
+                            echo "been blocked longer than MUXTOPUS_NOTIFY_BLOCKED_AFTER." ;;
+    MUXTOPUS_NOTIFY_BLOCKED_AFTER) echo "Minutes an entry may be blocked before that counts as trouble."
+                            echo "Plain blocked is ordinary waiting; 0 never says it." ;;
+    MUXTOPUS_NOTIFY_DONE)   echo "on: tell the phone when a handover reaches done/ -- its gist, and"
+                            echo "the entries that were released by it." ;;
+    MUXTOPUS_NOTIFY_INBOUND) echo "on: attach buttons and obey what comes back -- answering a prompt,"
+                            echo "answering a fork, and the bot's own commands (/status, /pending,"
+                            echo "/questions, /blocked, /windows, /stats, /mute). Off, the bot only"
+                            echo "talks. Only the configured chat is ever obeyed." ;;
+    MUXTOPUS_NOTIFY_PANE_TEXT) echo "on: a waiting message quotes the prompt box, and More sends the"
+                            echo "lines above it. That text leaves this machine for the backend's"
+                            echo "servers; off, a message names the window and nothing else." ;;
     *)                      echo "(undocumented)" ;;
   esac
 }

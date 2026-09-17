@@ -499,6 +499,72 @@ Three decisions worth stating, because all three were bugs first:
 
 ---
 
+## Notifications, and answering from the phone
+
+Three lanes once waited fifty-five minutes behind one window sitting on
+`Do you want to proceed?`. The watchdog already captures every idle pane on
+every pass, so noticing costs nothing; the only thing missing was somewhere
+to say it. `claude-notify.sh` sends through **Telegram**, ntfy or Pushbullet,
+and with Telegram the message carries buttons, so the answer can come back.
+
+```bash
+claude-notify.sh --setup      # the guide: backend, token, and your first START
+claude-notify.sh --status     # which backend is configured, and when it last sent
+claude-notify.sh --test
+```
+
+`--setup` is also `esc ▸ Settings ▸ Notifications ▸ Set up…` in the
+dashboard, which opens it in a tmux window of its own because it waits for
+you to press START in Telegram. It writes `~/.config/claude-notify.conf`
+(`0600`; it holds a token, keeps the old file as a `.bak-<stamp>`), and that
+file is per machine. What you are *told* is per account, in the settings
+store, on the seven `MUXTOPUS_NOTIFY_*` keys above — the same menu writes
+those.
+
+**Four things, each its own switch, and each said once per occurrence rather
+than once per pass:** a window waiting at a prompt (`needs you`, drawn yellow
+on the dashboard too), a lane with unanswered questions, trouble (stalled,
+errored, stranded, failed to launch, blocked too long), and a lane finished.
+Every title starts with the account's label, so two accounts on one phone are
+told apart.
+
+**The phone can answer.** A waiting message carries **Yes · No · More**: Yes
+sends `1`, No sends Escape, More sends the lines above the prompt box. The
+pane is re-captured first and the keys are only sent if the *same* prompt is
+still there, so an answer that arrived after you answered at the machine edits
+itself to say so instead. `Yes, and don't ask again` is never offered from a
+phone: approving one action is not the same as changing a policy.
+
+**Or ask it, with every push switched off.** A push can be missed, muted or
+dismissed, and a dismissed message takes its buttons with it — so the bot
+also answers commands, registered in Telegram's own menu button:
+
+| | |
+|---|---|
+| `/status` | per account: sessions by state, budget and reset, pending/blocked/stalled entries, open handovers, unanswered questions, watchdog heartbeat |
+| `/pending` | everything actionable, **re-issued with fresh buttons**. The "I dismissed it" command |
+| `/questions` | the unanswered QUESTIONS files and how many forks each has |
+| `/blocked` | each entry that is not launching, with the scheduler's own why |
+| `/windows` | one line per session; a `needs you` row brings its buttons |
+| `/stats` | the usage ledger's totals; the buttons switch week / month / all |
+| `/mute 2h`, `/unmute` | pushes off for a while; asking keeps working |
+
+Re-issuing retires the old buttons and edits that message to `superseded`, so
+a stale button can never fire twice. Only the configured chat is ever obeyed;
+anything else is logged and dropped. There is **no webhook and no open port** —
+the watchdog polls `getUpdates` once a pass, so an answer lands within about
+30 seconds — and the two accounts' daemons share one lock, so one update is
+handled exactly once.
+
+Two honest limits. Pane text leaves your machine for the backend's servers
+when `MUXTOPUS_NOTIFY_PANE_TEXT` is on, which is what that switch is for; and
+nothing typed on a phone is ever run as a shell — a prompt answer is one of
+two keys and nothing else. Answering a *fork* from the phone is the one piece
+still to land: today a questions message tells you which file is waiting, and
+you answer it in the dashboard.
+
+---
+
 ## Configuration
 
 Four layers of plain shell, all optional — two you write, two the dashboard writes. `profile.sh` sources them and `muxconfig.py` parses them against the same key list, so the shell half and the Python dashboard cannot disagree about where anything lives or what a knob is set to.
@@ -527,6 +593,13 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `CLAUDE_USAGE_MAX_AGE` | `20` | minutes; the dashboard's `u` and `R` refresh only past this age |
 | `CLAUDE_USAGE_MODEL` | from `settings.json` | which model's limit line the probe reads |
 | `CLAUDE_CONTEXT_WINDOW` | `1000000` | what the dashboard draws the context bar against |
+| `MUXTOPUS_NOTIFY_WAITING` | `on` | tell the phone when a window sits at a permission or trust prompt |
+| `MUXTOPUS_NOTIFY_QUESTIONS` | `on` | tell it when a QUESTIONS file is new or has a new unanswered fork |
+| `MUXTOPUS_NOTIFY_TROUBLE` | `on` | tell it about stalled verdicts, errored entries, stranded lanes, failed launches and long-blocked entries |
+| `MUXTOPUS_NOTIFY_BLOCKED_AFTER` | `120` | minutes an entry may be blocked before that counts as trouble; `0` never says it |
+| `MUXTOPUS_NOTIFY_DONE` | `on` | tell it when a handover reaches `done/` |
+| `MUXTOPUS_NOTIFY_INBOUND` | `on` | attach buttons and obey what comes back, and answer the bot's commands |
+| `MUXTOPUS_NOTIFY_PANE_TEXT` | `on` | a waiting message may quote the prompt box — that text leaves the machine |
 | `DASHBOARD_MENU_LAYOUT` | `table` | how a context menu is drawn: `table` (under the panel the cursor is in), `modal` (centred), `bottom` (the footer, scrolling) |
 | `DASHBOARD_NEW_PERMISSION_MODE` | `ask` | the mode preselected when `c` creates a window; `ask` preselects nothing |
 | `DASHBOARD_PERMANENT_MODE_SCOPE` | `project` | which `settings.json` *make it the default* writes: `project` (`<cwd>/.claude/`) or `account` (`~/.claude/`) |
@@ -591,6 +664,9 @@ muxstats.py             the ledger: what was used, counted once, and the
                         report the `i` view and `muxtopus stats` both draw
 claude-winddown-hook.sh PostToolUse hook: delivers a directive mid-turn
 handover.sh             the handoff folder
+claude-notify.sh        one message to a phone: ntfy, Pushbullet, Telegram
+muxtelegram.py          the phone's half: buttons in, commands answered
+muxstats.py             the usage ledger, and every figure it can answer
 deck_status.py          the dashboard's SHELL: the terminal, the main loop
 dashboard/              the dashboard itself, one file per screen or menu;
                         a view is one new file (docs/dashboard-views.md)
