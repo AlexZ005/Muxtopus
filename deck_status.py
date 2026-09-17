@@ -69,7 +69,7 @@ STATE_HOME = Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local" / "state"
 # WHERE THE DATA LIVES comes from muxconfig, which reads the SAME file
 # profile.sh reads -- the shell half and the python half must never disagree
 # about it, and one reader is how that is guaranteed rather than hoped for.
-from muxconfig import (mux_dir, knob, profile_of,
+from muxconfig import (mux_dir, mux_home, knob, profile_of,
                        options as read_options, options_paths)
 # THE SETTINGS THE DASHBOARD OWNS AND WRITES (dashboard.conf), and the one
 # settings.json edit it is allowed to make. muxconfig reads; this writes.
@@ -1047,6 +1047,9 @@ class Dashboard:
         # A --check report to show full screen, the way the editor and btop
         # take the terminal over: main() owns Live and the tty state.
         self.pending_report: str | None = None
+        # The new-session flow's answers so far (c in the main view); None
+        # when no flow is open. Nothing is written until the last screen.
+        self.ns: dict | None = None
         self.prompt: dict | None = None    # inline text entry (rename)
         self.confirm: dict | None = None   # yes/no gate (close)
         self.picker: dict | None = None    # arrow-driven option list (create flow)
@@ -1552,6 +1555,7 @@ class Dashboard:
             self.say(fn(text))
         elif key == "\x1b":
             self.prompt = None
+            self.ns = None
             self.say("cancelled")
         elif key in ("\x7f", "\b"):
             pr["buf"] = pr["buf"][:-1]
@@ -1567,8 +1571,15 @@ class Dashboard:
             self.confirm = None
             self.menu = None
             self.say(fn())
+        elif key in ("n", "N", "\r", "\n") and cf.get("no_fn"):
+            # "no" is an answer, not an abort, when the confirm sits inside a
+            # flow (the bypass warning: no means "this window only").
+            fn = cf["no_fn"]
+            self.confirm = None
+            self.say(fn())
         elif key in ("n", "N", "\x1b", "\r", "\n"):
             self.confirm = None
+            self.ns = None
             self.say("cancelled")
 
     def _submode_foot(self):
@@ -1592,7 +1603,12 @@ class Dashboard:
                 cur = (i == self.picker["i"])
                 body.append(" ▸ " if cur else "   ", style="bold #c9a0dc")
                 body.append(opt + "\n", style="bold" if cur else "")
-            body.append("   ↑↓ pick · enter choose · esc cancel", style=DIM)
+            # i < 0 is "nothing preselected": no row is marked until an
+            # arrow moves, and enter says so. That is what "always ask" means
+            # for an arrow-driven list.
+            body.append("   ↑↓ pick · enter choose · esc cancel"
+                        if self.picker["i"] >= 0 else
+                        "   nothing preselected — ↑↓ pick one · esc cancel", style=DIM)
             return Panel(body, title="[bold]" + self.picker["title"],
                          title_align="left", border_style="#c9a0dc", box=box.ROUNDED)
         if self.options is not None:
@@ -1603,11 +1619,14 @@ class Dashboard:
         pk = self.picker
         if pk is None:
             return
+        n = len(pk["options"])
         if key == "UP":
-            pk["i"] = (pk["i"] - 1) % len(pk["options"])
+            pk["i"] = n - 1 if pk["i"] < 0 else (pk["i"] - 1) % n
         elif key == "DOWN":
-            pk["i"] = (pk["i"] + 1) % len(pk["options"])
+            pk["i"] = 0 if pk["i"] < 0 else (pk["i"] + 1) % n
         elif key in ("\r", "\n"):
+            if pk["i"] < 0:
+                return
             fn, choice = pk["fn"], pk["options"][pk["i"]]
             self.picker = None
             msg = fn(choice)
@@ -1615,6 +1634,7 @@ class Dashboard:
                 self.say(msg)
         elif key == "\x1b":
             self.picker = None
+            self.ns = None
             self.say("cancelled")
 
     # ------------------------------------------------------------ schedules
@@ -1725,7 +1745,9 @@ class Dashboard:
             f = SCHEDULES_DIR / name
             cwd = self.cwds.get(self.cursor, "")
             if not cwd or cwd == "-":
-                cwd = str(HOME / ".code" / "theprototype-app" / "core")
+                # The setting, not a constant: this used to name one project
+                # on one machine.
+                cwd = muxsettings.get("DASHBOARD_NEW_CWD", PROFILE) or str(HOME)
             body = ""
             if tpl:
                 try:
@@ -2025,6 +2047,230 @@ class Dashboard:
             return "scheduled ➥%s at the next reset (%s)" % (slug, f.name)
         except OSError as exc:
             return "schedule failed: %s" % exc
+
+    # ------------------------------------------- c: a new claude session
+    # Seven screens through the existing picker and prompt, then ONE file: a
+    # schedule entry with at: already past. The dashboard opens no window
+    # itself. The watchdog's next pass does the trust dialog, the readiness
+    # wait, the bracketed paste, the tree row, the footer and the log line --
+    # one launcher, whoever asked, and none of it reimplemented here.
+    def start_new_session(self) -> str:
+        self.ns = {}
+        cands = self._ns_folder_candidates()
+        self.picker = {"title": "new session · working folder", "i": 0,
+                       "options": cands + ["other…  type a path"], "fn": self._ns_folder}
+        return ""
+
+    def _ns_folder_candidates(self) -> list[str]:
+        """Where a session might sensibly start, most likely first: the cursor
+        session's folder, the setting, every live session's folder, the dirty
+        trees the watchdog publishes, and the git checkouts one and two levels
+        under MUXTOPUS_HOME -- the same two levels sweep_repos walks."""
+        out: list[str] = []
+
+        def add(p: str) -> None:
+            if p and p != "-" and p not in out and os.path.isdir(p):
+                out.append(p)
+
+        add(self.cwds.get(self.cursor, ""))
+        add(muxsettings.get("DASHBOARD_NEW_CWD", PROFILE))
+        for sid in self.sids:
+            add(self.cwds.get(sid, ""))
+        for path, _name, _n in dirty_repos():
+            add(path)
+        home = mux_home(PROFILE)
+        try:
+            for d in sorted(os.scandir(home), key=lambda e: e.name):
+                if not d.is_dir(follow_symlinks=False) or d.name.startswith("."):
+                    continue
+                if os.path.exists(os.path.join(d.path, ".git")):
+                    add(d.path)
+                    continue
+                try:
+                    for dd in sorted(os.scandir(d.path), key=lambda e: e.name):
+                        if dd.is_dir(follow_symlinks=False) and \
+                                os.path.exists(os.path.join(dd.path, ".git")):
+                            add(dd.path)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        return out
+
+    def _ns_folder(self, choice: str) -> str:
+        if choice.startswith("other…"):
+            self.prompt = {"title": "new session · working folder", "buf": "",
+                           "fn": self._ns_folder_typed}
+            return ""
+        return self._ns_folder_typed(choice)
+
+    def _ns_folder_typed(self, text: str) -> str:
+        p = os.path.expanduser(text.strip())
+        if not p or not os.path.isdir(p):
+            # Said in the prompt's own title: the notice is not drawn while a
+            # prompt owns the footer.
+            self.prompt = {"title": "not a directory: %s — working folder" % (text.strip() or "(empty)"),
+                           "buf": text.strip(), "fn": self._ns_folder_typed}
+            return ""
+        self.ns["cwd"] = os.path.abspath(p)
+        return self._ns_ask_model()
+
+    def _ns_ask_model(self) -> str:
+        choices = [""] + self.model_choices()
+        cur = muxsettings.get("DASHBOARD_NEW_MODEL", PROFILE)
+        self.picker = {"title": "new session · model  (CLI aliases — the MODEL column's names are refused)",
+                       "i": choices.index(cur) if cur in choices else 0,
+                       "options": [c or "(account default)" for c in choices],
+                       "fn": self._ns_model}
+        return ""
+
+    def _ns_model(self, c: str) -> str:
+        self.ns["model"] = "" if c == "(account default)" else c
+        choices = [""] + list(muxsettings.EFFORTS)
+        cur = muxsettings.get("DASHBOARD_NEW_EFFORT", PROFILE)
+        self.picker = {"title": "new session · effort",
+                       "i": choices.index(cur) if cur in choices else 0,
+                       "options": [c or "(account default)" for c in choices],
+                       "fn": self._ns_effort}
+        return ""
+
+    def _ns_effort(self, c: str) -> str:
+        self.ns["effort"] = "" if c == "(account default)" else c
+        modes = list(muxsettings.PERM_MODES)
+        cur = muxsettings.get("DASHBOARD_NEW_PERMISSION_MODE", PROFILE)
+        pk = {"title": "new session · permission mode", "options": modes, "fn": self._ns_mode,
+              "i": modes.index(cur) if cur in modes else -1}
+        if pk["i"] < 0:
+            # "always ask": nothing preselected. A DEFAULT is set in Settings;
+            # it is never a lock, this screen is always shown.
+            pk["title"] += "  (no default set — esc → Settings sets one)"
+        self.picker = pk
+        return ""
+
+    def _ns_mode(self, c: str) -> str:
+        self.ns["mode"] = c
+        if c == "bypassPermissions":
+            self.picker = {"title": "bypassPermissions", "i": 0,
+                           "options": ["this window only",
+                                       "…and make it the default  (writes settings.json)"],
+                           "fn": self._ns_bypass}
+            return ""
+        return self._ns_ask_where()
+
+    def _ns_bypass(self, c: str) -> str:
+        if c.startswith("this window"):
+            return self._ns_ask_where()
+        scope = muxsettings.get("DASHBOARD_PERMANENT_MODE_SCOPE", PROFILE) or "project"
+        path = muxsettings.settings_json_path(scope, self.ns["cwd"], CONFIG_DIR)
+        self.confirm = {
+            "label": ('⚠ writes  "permissions": {"defaultMode": "bypassPermissions"}  to %s\n'
+                      '  EVERY future Claude session there skips permission prompts,\n'
+                      '  including ones nothing is watching.  (%s — Settings changes where)'
+                      % (path, scope)),
+            "fn": lambda p=path: self._ns_bypass_write(p),
+            "no_fn": self._ns_ask_where}
+        return ""
+
+    def _ns_bypass_write(self, path) -> str:
+        # THE ONE WRITE lives in muxsettings; this is an entrance to it.
+        msg, err = muxsettings.set_default_mode(path, "bypassPermissions")
+        self.ns["default_msg"] = err or msg
+        self.ns["default_err"] = bool(err)
+        return self._ns_ask_where()
+
+    def _ns_ask_where(self) -> str:
+        opts = ["a top-level window"]
+        for sid in self.sids:
+            win = self.windows.get(sid, "")
+            if win and self.panes.get(sid):
+                opts.append("under %s" % win)
+        title = "new session · where"
+        if self.ns.get("default_msg"):
+            # The outcome of the settings.json write, where it can be seen:
+            # no notice is drawn while a picker owns the footer.
+            title += "  · settings.json %s: %s" % (
+                "NOT written" if self.ns.get("default_err") else "written",
+                self.ns["default_msg"])
+        self.picker = {"title": title, "i": 0, "options": opts, "fn": self._ns_where}
+        return ""
+
+    def _ns_where(self, c: str) -> str:
+        if c.startswith("under "):
+            win = c[len("under "):]
+            # window: is the tmux name (the launcher strips ➥ to find it);
+            # parent: is the slug, which is what the tree is keyed on.
+            self.ns["window"] = win
+            self.ns["parent"] = lane_slug_of(win)
+        base = sanitise_slug(os.path.basename(self.ns["cwd"].rstrip("/")))
+        self.prompt = {"title": "new session · name  (the slug: window ➥name, STATUS-name.md, handover.sh done name)",
+                       "buf": base, "fn": self._ns_name}
+        return ""
+
+    def _ns_name(self, text: str) -> str:
+        slug = sanitise_slug(text.strip())
+        why = ""
+        if not slug:
+            why = "empty"
+        else:
+            taken = {r["resolved"] for r in read_schedules()
+                     if r["status"] in ("pending", "launched")}
+            live = {lane_slug_of(w) for w in self.windows.values() if w}
+            if slug in taken or slug in live:
+                why = "%s is taken (a window or an entry has it)" % slug
+        if why:
+            self.prompt = {"title": "%s — new session · name" % why, "buf": text.strip(),
+                           "fn": self._ns_name}
+            return ""
+        self.ns["title"] = text.strip()
+        self.ns["slug"] = slug
+        self.prompt = {"title": "new session · first prompt  (may be empty)", "buf": "",
+                       "fn": self._ns_prompt}
+        return ""
+
+    def _ns_prompt(self, text: str) -> str:
+        self.ns["prompt"] = text.strip()
+        return self._ns_write()
+
+    def _ns_write(self) -> str:
+        """The one file. `at:` is now to the minute, so it is already past
+        and the watchdog's next pass launches it; `slug:` is pinned so the
+        window is named what was typed. An empty prompt makes it a `plan`
+        entry with no template -- the executor refuses an empty work body,
+        and a plan may be empty: the session receives its identity line and
+        nothing invented (QUESTIONS 2a)."""
+        ns, self.ns = self.ns, None
+        slug = ns["slug"]
+        now = time.strftime("%Y-%m-%d %H:%M")
+        head = ["type: " + ("work" if ns["prompt"] else "plan"),
+                "at: " + now, "title: " + ns["title"], "slug: " + slug]
+        if ns.get("window"):
+            head += ["window: " + ns["window"], "parent: " + ns["parent"]]
+        head.append("cwd: " + ns["cwd"])
+        for k in ("model", "effort"):
+            if ns.get(k):
+                head.append("%s: %s" % (k, ns[k]))
+        head.append("permission-mode: " + ns["mode"])
+        # The two headers the LAUNCHER applies after readiness, because a
+        # session id does not exist before launch (it maps its pane to
+        # sessions/<pid>.json). Absent means covered, today's default.
+        if muxsettings.get("DASHBOARD_NEW_WATCHDOG", PROFILE) == "off":
+            head.append("watchdog: off")
+        if muxsettings.get("DASHBOARD_NEW_MONITOR", PROFILE) == "off":
+            head.append("monitor: off")
+        head += ["status: pending", "created: " + now, "launched:"]
+        try:
+            SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
+            f = SCHEDULES_DIR / ("new-%s.md" % slug)
+            if f.exists():
+                f = SCHEDULES_DIR / ("new-%s-%s.md" % (slug, time.strftime("%H%M%S")))
+            f.write_text("\n".join(head) + "\n---\n"
+                         + (ns["prompt"] + "\n" if ns["prompt"] else ""))
+        except OSError as exc:
+            return "could not write the entry: %s" % exc
+        msg = "scheduled ➥%s — the watchdog opens it within ~30s (%s)" % (slug, f.name)
+        if ns.get("default_msg"):
+            msg += " · settings.json %s" % ns["default_msg"]
+        return msg
 
     # ------------------------------------------------- the schedule menu
     def sched_menu_entries(self) -> list[dict]:
@@ -2793,7 +3039,7 @@ class Dashboard:
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " schedules  ",
             ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",
-            ("esc", DIM), " muxtopus  ",
+            ("esc", DIM), " muxtopus  ", ("c", DIM), " new session  ",
             ("←→", DIM), " fold  ", ("t", DIM), " tree  ",
             ("f", DIM), " all lanes  ", ("p", DIM), " btop  ", ("?", DIM), " help",
         )
@@ -2875,6 +3121,7 @@ HELP = f"""
   [bold]s[/] scheduled windows      [bold]enter[/] on the extras row stops/starts them
   [bold]w[/] watchdog    [bold]m[/] monitoring      [bold]p[/] btop   [bold]?[/] this screen
   [bold]u[/] read usage limits      [bold]up/down[/] pick   [bold]space[/] menu   [bold]esc[/] muxtopus menu
+  [bold]c[/] a new claude session (folder, model, effort, mode, where, name, first prompt)
   [bold]enter[/] open the selected session's window (Ctrl-b 0 comes back here)
   [bold]f[/] lanes: this account only / every account
   [bold]←/→[/] fold / unfold a subtree      [bold]t[/] tree ordering on / off
@@ -2904,6 +3151,32 @@ HELP = f"""
     Two switches at the top, then everything you can do to the window under
     the cursor: open, rename, skip it, wind it down, resume it, continue it at
     low priority, or close it. Arrows pick, enter chooses, esc closes.
+
+  [{DIM}]A NEW CLAUDE SESSION (c)[/]
+    Seven screens through the picker and the prompt: the working folder (the
+    cursor's, the setting, every session's, the dirty trees, the checkouts
+    under MUXTOPUS_HOME, or a typed path -- it must exist); the model, as a CLI
+    ALIAS (opus, fable, sonnet…; `--model opus-5` is refused by the CLI and
+    kills the window after it has eaten the paste); the effort; the permission
+    mode (preselected from Settings, or nothing preselected when that says
+    ask -- a default, never a lock); where it goes (a top-level window, or
+    under a live one: ➥➥name, inserted after that parent's subtree, drawn
+    indented); the name, which is the slug (window, handover, handover.sh
+    done); and an optional first prompt.
+    THEN IT WRITES A SCHEDULE ENTRY with at: already past, and nothing else:
+    the watchdog opens the window within one pass and does the trust dialog,
+    the readiness wait, the paste and the tree row -- one launcher, whoever
+    asked. The entry carries model:, effort:, permission-mode:, cwd:,
+    parent:/window:, and watchdog: off / monitor: off when Settings says a
+    new window is not watched or monitored (the launcher opts the session out
+    once it has an id). An empty prompt writes a plan entry: the session gets
+    its identity line and nothing invented.
+    Choosing bypassPermissions also offers "…and make it the default": a
+    confirm names the exact settings.json (project or account, per Settings)
+    and what changes -- EVERY future session there skips permission prompts,
+    including ones nothing is watching. The write merges permissions.defaultMode
+    into the existing JSON (nested, where Claude Code reads it), backs the
+    old file up beside itself, and refuses a file that is not valid JSON.
 
   [{DIM}]THE MUXTOPUS MENU (esc) AND SETTINGS[/]
     esc opens the dashboard's own menu -- what is not about one row: Settings,
@@ -3416,6 +3689,8 @@ def main() -> int:
                     # The dashboard's own menu: settings, the global switches,
                     # disconnect, reload, quit. Unbound here until now.
                     dash.open_menu("mux")
+                elif key == "c":
+                    dash.say(dash.start_new_session())
                 elif key in ("w", "W"):
                     dash.say(toggle_watchdog())
                 elif key in ("m", "M"):
