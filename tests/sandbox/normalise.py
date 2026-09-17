@@ -26,6 +26,13 @@ rather than one regex at a time wherever a diff turned up:
        the sandbox root            /tmp/muxsplit-sandbox -> <SB>
      An IDLE column age is NOT masked: it comes from the fixture's own
      integer, so it is fixed, and masking it would hide a real change.
+  4. THE FILL BEFORE A BORDER, on a line a mask touched, and only there. A
+     panel pads its content to a fixed width, so replacing a 3-character age
+     with a 5-character token leaves the padding one space short of where the
+     same line's padding lands when the age is 2 characters -- the border
+     moves and two runs disagree about a line neither of them decided. The
+     run of spaces (or of box-drawing fill) before the closing border becomes
+     `<pad>` on those lines, and on no others.
 
 Everything else is compared byte for byte. If a later phase needs a new mask,
 that is a claim that the refactor made something non-deterministic, and it
@@ -57,6 +64,21 @@ SUBS = (
     # written; the title of the options table carries that name.
     (re.compile(r"(plan|work)-\d{8}-\d{6}"), r"\1-<newname>"),
 )
+
+# Every token a mask can leave behind, and the two shapes of fill that a
+# panel puts between its content and its closing border.
+MASKED = re.compile(r"<age>|<time>|<stamp>|<newname>|<n>|<SB>")
+PAD_SPACE = re.compile(r" {2,}(│\s*)$")
+PAD_FILL = re.compile(r"─{2,}([╮╯]\s*)$")
+
+
+def repad(line: str) -> str:
+    """Neutralise the padding a mask moved. Idempotent, so it is as true of a
+    golden read back off disk as of a capture taken a minute ago."""
+    if not MASKED.search(line):
+        return line
+    line = PAD_SPACE.sub(r" <pad>\1", line)
+    return PAD_FILL.sub(r"─<pad>\1", line)
 
 
 def _title_of(border: str) -> str:
@@ -90,6 +112,7 @@ def normalise(text: str) -> str:
         body = body.replace(SB, "<SB>")
     for pat, rep in SUBS:
         body = pat.sub(rep, body)
+    body = "\n".join(repad(l) for l in body.split("\n"))
     # A capture is compared as lines with no trailing blank run: tmux pads the
     # pane to its full height and the height is the route's business, not the
     # frame's.

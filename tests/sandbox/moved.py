@@ -26,12 +26,18 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # Deliberate renames, so MISSING keeps meaning "dropped on the floor" rather
 # than "called something else now". Each one is in the commit that made it.
 RENAMED = {
-    "Dashboard.build": "Dashboard.build_main",     # it returns sections now
+    "Dashboard.build": "MainView.build_main",      # it returns sections now
+    "Dashboard": "App",                            # phase 4: the class of
+    "Dashboard.__init__": "App.__init__",          # everything became the
+                                                   # class of what is shared
+    "Dashboard.act_monitor": "toggle_monitor",     # -> dashboard.data
+    "Dashboard.model_choices": "model_choices",    # -> dashboard.core
 }
 FILES = ["deck_status.py", "dashboard/core.py", "dashboard/data.py",
-         "dashboard/schedules.py", "dashboard/menulayout.py", "dashboard/app.py",
-         "dashboard/views/main.py", "dashboard/views/schedules.py",
-         "dashboard/views/newsession.py", "dashboard/menus/mux.py"]
+         "dashboard/schedules.py", "dashboard/menulayout.py",
+         "dashboard/app.py", "dashboard/help.py", "dashboard/views/main.py",
+         "dashboard/views/schedules.py", "dashboard/views/newsession.py",
+         "dashboard/menus/mux.py"]
 
 
 def defs(src, methods_too=False):

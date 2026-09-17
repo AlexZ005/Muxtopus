@@ -11,7 +11,7 @@
 
 
 
-                   ╭─ settings · <SB>/config/muxtopus/profiles/mxsplit.dashboard.conf (modal: no room below) ─────────────╮
+                   ╭─ settings · <SB>/config/muxtopus/profiles/mxsplit.dashboard.conf (modal: no room below) ─<pad>╮
                    │  ▸ Menu layout: bottom  table: under the panel · modal: centred · bottom: the footer                                  │
                    │    Default permission mode for a new window: ask  ask: c stops on the mode picker with nothing preselected            │
                    │    Where "make it permanent" writes: project  project: <cwd>/.claude/settings.json · account: ~/.claude/settings.json │

@@ -19,6 +19,23 @@ split into a package draws the same picture: you take the picture first.
     normalise.py    mask what the machine decides; see its docstring
     route.sh        THE ROUTE: every screen, captured and normalised
     goldens.sh      route -> compare against tests/goldens/ (or --bless)
+    actions.sh      the rows that WRITE something, fired and checked
+    moved.py        where every pre-split definition went, and was it changed
+
+## The goldens are pictures; two things they cannot see
+
+`goldens.sh` proves what the dashboard DRAWS along a route somebody thought
+to press. Two checks cover what that leaves:
+
+* `actions.sh` presses enter on the rows that write something -- schedule a
+  resume, wind a window down, opt one out, duplicate, launch now, delete,
+  save the options table -- and looks at the files afterwards. It navigates
+  by LOOKING for the row it wants, never by counting Downs, because the
+  mover skips separators and a later phase may move one.
+* `tests/test_names.py` (a plain python test, also in CI) checks that every
+  global name the code mentions is one it can reach. The split moved two
+  methods into a module whose import list was missing a constant they used,
+  on paths no route walks, and the 148 captures were green through both.
 
 ## The rules it enforces
 

@@ -1,10 +1,10 @@
 ╭──────────────────────────────────────────────────────────────────────────── deck ────────────────────────────────────────────────────────────────────────────╮
 │ <machine: deck>
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────── steamdeck · <n> threads · desktop mode · v<n>.<n> ─╯
-╭─ lanes · <n> server(s) · <n> MB · mxsplit · <n> hidden  (f: all) ──────────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ lanes · <n> server(s) · <n> MB · mxsplit · <n> hidden  (f: all) ─<pad>╮
 │ <machine: lanes>
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ claude [mxsplit] · 6 session(s) · 3.17M spent · watchdog on · scan <age> ago · monitor on ─────────────────────────────────────────────────────────────────────╮
+╭─ claude [mxsplit] · 6 session(s) · 3.17M spent · watchdog on · scan <age> ago · monitor on ─<pad>╮
 │                                                                                                                                                              │
 │        MON    WINDOW               MODEL         CONTEXT                            SPENT     IDLE   STATE              DIRTY   WOUND          RESUMED       │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
@@ -25,5 +25,5 @@
 │    Disconnect  detach this tmux client; the dashboard and every window keep running                                                                          │
 │    Reload the dashboard  re-exec this script, as R does                                                                                                      │
 │    Quit the dashboard                                                                                                                                        │
-│    Default working folder: not a directory: <SB>/work/repo-b/nope   ·   ↑↓ pick · enter choose · esc close                                  │
+│    Default working folder: not a directory: <SB>/work/repo-b/nope   ·   ↑↓ pick · enter choose · esc close <pad>│
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

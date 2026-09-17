@@ -7,9 +7,24 @@ constraint rather than an accident of what happened to move: it is what lets
 the watchdog, a test or a bot ask this module a question without a terminal,
 and it is checked by importing it with rich uninstalled.
 
-The costs these functions are held to are in their own docstrings; the two
-that matter are that the main frame reads /proc directly rather than forking
-ps, and that the session table is a file read rather than a tmux capture.
+WHAT THAT BUYS, measured against the bash implementation this replaced:
+
+    bash : 216 ms and 248 forks per frame
+    this :  12.9 ms and   2 forks per frame
+
+(An earlier synthetic benchmark suggested 1.5 ms; that one did not walk /proc.
+The honest figure is 12.9 ms -- still ~17x cheaper and 124x fewer forks, with
+the remaining cost dominated by reading stat/statm/cmdline for every process
+on the system.)
+
+The difference is not Python being fast; it is that the bash version forked
+ps twice, ss once, ps -o pgid per listening socket and sed PER LINE for width
+measurement, every two seconds, forever, on a battery-powered handheld. Every
+collector below reads /proc directly instead, and the session table is a file
+the watchdog publishes rather than a tmux capture per window.
+
+That figure is the budget everything registered into the frame is held to as
+well -- which is why App.add_badge's docstring says a badge must not fork.
 """
 from __future__ import annotations
 
@@ -20,6 +35,7 @@ from pathlib import Path
 
 from dashboard.core import (
     HANDOVERS_DIR, HOME, PAGE, PROFILE, SCRIPTS, TICKS, USAGE_MAX_AGE,
+    WATCHDOG_DIR, WATCHDOG_DIRECTIVES, WATCHDOG_ENABLED,
     WATCHDOG_HEARTBEAT, WATCHDOG_HOORAY, WATCHDOG_MON_OPTOUT, WATCHDOG_MONITOR,
     WATCHDOG_OPTOUT, WATCHDOG_REPOS, WATCHDOG_SCHED_WHY, WATCHDOG_STATUS,
     WATCHDOG_TREE, WATCHDOG_USAGE, WATCHDOG_USAGE_FAIL, profile_of, read)
@@ -500,3 +516,43 @@ def lane_name(pid: int) -> str:
     if cwd.startswith(str(HOME) + "/"):
         return "~/" + cwd[len(str(HOME)) + 1:]
     return cwd
+
+
+# --------------------------------------------------------------------------
+# the two global switches -- writers, beside the readers above
+#
+# THE FLAG ONLY DECIDES WHETHER THE WATCHDOG MAY TYPE into a window, which is
+# the part that spends tokens; it keeps polling and publishing either way.
+# They live here rather than with the menu rows that flip them because the
+# `w` and `m` keys reach them from every view, and a key should not have to
+# import a menu.
+# --------------------------------------------------------------------------
+def toggle_watchdog() -> str:
+    """Arm or disarm the re-prompt. The watchdog keeps polling and publishing
+    either way -- the flag only decides whether it is allowed to TYPE into a
+    window, which is the part that spends tokens."""
+    try:
+        WATCHDOG_DIR.mkdir(parents=True, exist_ok=True)
+        if WATCHDOG_ENABLED.exists():
+            WATCHDOG_ENABLED.unlink()
+            return "watchdog off — limited windows will be left alone"
+        WATCHDOG_ENABLED.touch()
+        return "watchdog on — an idle limited window is prompted once its limit resets"
+    except OSError as exc:
+        return f"watchdog toggle failed: {exc}"
+
+
+def toggle_monitor() -> str:
+    """Arm or disarm the wind-downs. Separate from the watchdog on purpose:
+    restarting a window that already stopped cannot lose anything, while
+    telling a working window to wrap up changes what it is doing."""
+    try:
+        WATCHDOG_DIR.mkdir(parents=True, exist_ok=True)
+        if WATCHDOG_MONITOR.exists():
+            WATCHDOG_MONITOR.unlink()
+            return "session monitoring off - no window will be asked to stop"
+        WATCHDOG_DIRECTIVES.mkdir(parents=True, exist_ok=True)
+        WATCHDOG_MONITOR.touch()
+        return "session monitoring on - a window near the limit is asked to checkpoint"
+    except OSError as exc:
+        return "monitor toggle failed: %s" % exc

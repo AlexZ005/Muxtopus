@@ -178,6 +178,21 @@ WATCHDOG_HEARTBEAT = WATCHDOG_DIR / "heartbeat"
 WATCHDOG_TREE = WATCHDOG_DIR / "tree.tsv"
 
 
+# WHAT THE CLI ACCEPTS AS --model, read off the account's own options.md.
+# Here rather than in a screen because BOTH the Settings picker and the c
+# flow ask for it, and core is the one door to muxconfig.
+def model_choices() -> list[str]:
+    """The CLI aliases options.md's `model` block offers -- the same list
+    the options table uses, because `--model opus-5` (the MODEL column's
+    spelling) is refused by the CLI and kills the window after it has
+    eaten the paste. The literal list is the fallback for a missing or
+    broken block."""
+    for o in read_options(PROFILE):
+        if o["key"] == "model" and not o["bad"] and o["choices"]:
+            return list(o["choices"])
+    return ["opus", "opus[1m]", "fable", "sonnet", "haiku"]
+
+
 # HOW A SESSION STATE IS DRAWN: name -> (label, style, show the reset time).
 # Data rather than a chain of elifs in the frame, so a module that teaches the
 # watchdog a new state can teach the table to draw it in one line

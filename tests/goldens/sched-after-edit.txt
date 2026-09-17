@@ -1,22 +1,22 @@
-╭─ scheduled windows · <SB>/muxhome/schedules-mxsplit · templates in templates/ ──────────────────────────────────────────────────────────────╮
+╭─ scheduled windows · <SB>/muxhome/schedules-mxsplit · templates in templates/ ─<pad>╮
 │                                                                                                                                                              │
 │        STATUS       TYPE     FOR                  AT                  TITLE                                                        SLUG                      │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
-│  ▸     pending      plan     reset (08:50)        <stamp>    a pending plan  ⚠ title is not a slug; it becomes 'a-pend…   a-pending-plan            │
-│        blocked      work     reset (08:50)        <stamp>    blocked behind a lane  ⚠ title is not a slug; it becomes …   blocked-behind-a-lane     │
-│        corrupted    nonse…   whenever             <stamp>    a corrupted entry — type must be plan or work (got 'nonse…   a-corrupted-entry         │
-│        launched     work     <stamp>     <stamp>    already launched — launched <stamp>                 launched-lane             │
-│        pending      plan     reset (08:50)        <stamp>    a title that is not a slug                                   pinned-one                │
-│        due          work     <stamp>     <stamp>    with options and a model  ⚠ title is not a slug; it becom…   with-options-and-a-mod    │
+│  ▸     pending      plan     reset (08:50)        <stamp>    a pending plan  ⚠ title is not a slug; it becomes 'a-pend…   a-pending-plan <pad>│
+│        blocked      work     reset (08:50)        <stamp>    blocked behind a lane  ⚠ title is not a slug; it becomes …   blocked-behind-a-lane <pad>│
+│        corrupted    nonse…   whenever             <stamp>    a corrupted entry — type must be plan or work (got 'nonse…   a-corrupted-entry <pad>│
+│        launched     work     <stamp>     <stamp>    already launched — launched <stamp>                 launched-lane <pad>│
+│        pending      plan     reset (08:50)        <stamp>    a title that is not a slug                                   pinned-one <pad>│
+│        due          work     <stamp>     <stamp>    with options and a model  ⚠ title is not a slug; it becom…   with-options-and-a-mod <pad>│
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ why ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ at: reset — the session budget reads 46%, not fresh yet (<age> ago)                                                                                           │
+│ at: reset — the session budget reads 46%, not fresh yet (<age> ago) <pad>│
 │ ⚠ title is not a slug; it becomes 'a-pending-plan' — set slug: to pin it                                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ awaiting your answers   QUESTIONS-launched-lane.md                                                                                                           │
-│ <SB>/muxhome/questions                                                                                                                      │
+│ <SB>/muxhome/questions <pad>│
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  cancelled
  ↑↓ pick  space menu  enter/e edit  c create  o options  l launch now  d delete  r reload  s/esc back  q quit

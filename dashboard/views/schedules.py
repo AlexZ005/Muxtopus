@@ -35,9 +35,10 @@ from rich.text import Text
 
 import muxsettings
 from dashboard.app import View
-from dashboard.core import (DIM, FRAME, GREEN, HOME, PROFILE, QUESTIONS_DIR,
-                            RED, SCHEDULES_DIR, SCHED_TEMPLATES, SCRIPTS,
-                            YELLOW, human_age, read_options)
+from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, HOME, PROFILE,
+                            QUESTIONS_DIR, RED, SCHEDULES_DIR, SCHED_TEMPLATES,
+                            SCRIPTS, YELLOW, human_age, options_paths,
+                            read_options)
 from dashboard.data import (handover_state, lane_slug_of, live_windows,
                             read_tree, sched_why, usage_limits)
 from dashboard.schedules import (asked_value, options_fields, options_line,

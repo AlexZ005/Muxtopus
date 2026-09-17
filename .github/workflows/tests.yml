@@ -40,6 +40,8 @@ jobs:
         run: python3 tests/test_menulayout.py
       - name: the App -- routing, registration, ordering, failure
         run: python3 tests/test_dashboard_app.py
+      - name: every name the dashboard mentions is one it can reach
+        run: python3 tests/test_names.py
       - name: muxstats
         run: python3 tests/test_stats.py
       - name: the dashboard package imports without a terminal

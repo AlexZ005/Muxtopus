@@ -153,11 +153,20 @@ class App:
         self._badge_broken: set = set()
         self._hints: list = []
         self._help: list = []
-        self._load_errors: list[str] = []
+        # What did not load. The notice says it once when it happens; this
+        # keeps it for a screen that wants to say it again (phase 5's `?`).
+        self.load_errors: list[str] = []
         # Registration order is never allowed to decide anything, but sorted()
         # must not be asked to compare two functions either; this is the
         # tie-break that keeps it from having to.
         self._seq = 0
+
+    def module_failed(self, name: str, exc: Exception) -> None:
+        """A view or a menu module that would not load. Said out loud and
+        remembered, and the dashboard carries on without it -- one lane's bad
+        commit must not take down the screen the others are tested in."""
+        self.load_errors.append("%s: %s" % (name, exc))
+        self.say("%s failed to load: %s" % (name, exc))
 
     def _next(self) -> int:
         self._seq += 1
