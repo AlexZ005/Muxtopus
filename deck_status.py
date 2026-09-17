@@ -1044,6 +1044,9 @@ class Dashboard:
         # terminal state are; a menu row can only ask for them.
         self.pending_reload = False
         self.pending_quit = False
+        # A --check report to show full screen, the way the editor and btop
+        # take the terminal over: main() owns Live and the tty state.
+        self.pending_report: str | None = None
         self.prompt: dict | None = None    # inline text entry (rename)
         self.confirm: dict | None = None   # yes/no gate (close)
         self.picker: dict | None = None    # arrow-driven option list (create flow)
@@ -1122,6 +1125,8 @@ class Dashboard:
             return self.mux_menu_entries()
         if kind == "settings":
             return self.settings_menu_entries()
+        if kind == "sched":
+            return self.sched_menu_entries()
         return self.session_menu_entries()
 
     def menu_title(self) -> str:
@@ -1133,6 +1138,9 @@ class Dashboard:
         if kind == "settings":
             return "settings[/] [%s]· %s" % (
                 DIM, escape(str(muxsettings.dashboard_conf_path(PROFILE)).replace(str(HOME), "~")))
+        if kind == "sched":
+            r = self._sched_sel()
+            return "menu[/] [%s]· %s" % (DIM, escape(r["file"].name)) if r else "menu"
         win = self.windows.get(self.cursor, "")
         if win:
             return "menu[/] [%s]· %s" % (DIM, escape(win))
@@ -2018,6 +2026,144 @@ class Dashboard:
         except OSError as exc:
             return "schedule failed: %s" % exc
 
+    # ------------------------------------------------- the schedule menu
+    def sched_menu_entries(self) -> list[dict]:
+        """Space in the schedule view: a menu for the SELECTED ENTRY.
+
+        Built from _sched_sel() and nothing else -- it never reads
+        self.cursor, so nothing in it can act on a claude session. (Before
+        this, space fell through to the global handler and opened the
+        session menu over a view that shows no sessions.) The why sentence
+        leads when there is one, because that is the question in front of
+        the row; a corrupted entry gets its reason and only Delete."""
+        r = self._sched_sel()
+        if r is None:
+            return [{"label": "nothing scheduled", "disabled": "c creates an entry"}]
+        name = r["file"].name
+        if r["bad"]:
+            return [{"label": "will never launch: " + r["bad"], "disabled": "corrupted"},
+                    {"sep": True},
+                    {"label": "Delete %s" % name, "act": self.confirm_delete_selected,
+                     "danger": True}]
+        items: list[dict] = []
+        verdict, reason, _at = r.get("why", ("", "", 0))
+        if verdict in ("blocked", "waiting", "stalled") and reason:
+            items.append({"label": reason, "disabled": verdict})
+        pending = r["status"] == "pending"
+        only = "" if pending else "only a pending entry; this one is %s" % (r["status"] or "?")
+        items += [
+            {"label": "Edit %s" % name, "act": self.request_edit_selected},
+            {"label": "Options  the checkbox table, pre-ticked from the header",
+             "act": self.reopen_options, "disabled": only},
+            {"label": "Launch now  make it due; the watchdog opens it within ~30s",
+             "act": self.launch_selected_now, "disabled": only},
+            {"label": "Duplicate as a new pending entry  and open it in the editor",
+             "act": self.duplicate_selected},
+            {"label": "Check  resolve it without launching: slug, window, paste, verdict",
+             "act": self.check_selected},
+        ]
+        if r["status"] == "launched":
+            node = read_tree().get(r["resolved"])
+            if node and node["wid"] in live_windows():
+                items.append({"label": "Open its window  %s" % node["wid"],
+                              "act": lambda w=node["wid"]: self.goto_window(w)})
+        items += [{"sep": True},
+                  {"label": "Delete %s" % name, "act": self.confirm_delete_selected,
+                   "danger": True}]
+        return items
+
+    def goto_window(self, target: str) -> str:
+        """Move the tmux client to a window id; the dashboard keeps running."""
+        try:
+            r = subprocess.run(["tmux", "select-window", "-t", target],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                return ""
+            r = subprocess.run(["tmux", "switch-client", "-t", target],
+                               capture_output=True, text=True, timeout=5)
+            return "" if r.returncode == 0 else "could not open: %s" % r.stderr.strip()
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return "could not open: %s" % exc
+
+    def duplicate_selected(self) -> str:
+        """A copy, pending, with the bookkeeping reset -- and a DIFFERENT
+        slug. Two entries resolving to one slug are one window name and one
+        handover file, so a pinned `slug:` is dropped and the title gains
+        '-copy' (a suffix that sanitises to itself, so no slug warning); the
+        editor opens on the copy so the title can be fixed at
+        once. Everything else, the body included, is byte for byte."""
+        r = self._sched_sel()
+        if r is None:
+            return "nothing selected"
+        src = r["file"]
+        dst = None
+        for n in range(1, 100):
+            cand = src.with_name("%s-copy%s.md" % (src.stem, "" if n == 1 else n))
+            if not cand.exists():
+                dst = cand
+                break
+        if dst is None:
+            return "too many copies of %s already" % src.name
+        try:
+            text = src.read_text()
+        except OSError as exc:
+            return "cannot read: %s" % exc
+        head, sep, body = text.partition("\n---\n")
+        out: list[str] = []
+        dropped = False
+        titled = False
+        for raw in head.split("\n"):
+            k, has, v = raw.partition(":")
+            k = k.strip()
+            if not has:
+                out.append(raw)
+                continue
+            if k == "slug":
+                dropped = True
+                continue
+            if k == "title":
+                out.append("title: %s-copy" % (v.strip() or src.stem))
+                titled = True
+                continue
+            if k == "status":
+                out.append("status: pending")
+                continue
+            if k == "launched":
+                out.append("launched:")
+                continue
+            if k == "created":
+                out.append("created: " + time.strftime("%Y-%m-%d %H:%M"))
+                continue
+            out.append(raw)
+        if not titled:
+            out.insert(1, "title: %s-copy" % src.stem)
+        try:
+            dst.write_text("\n".join(out) + sep + body)
+        except OSError as exc:
+            return "cannot write %s: %s" % (dst.name, exc)
+        self.pending_edit = str(dst)
+        return "duplicated as %s%s" % (
+            dst.name, " — the pinned slug: was dropped; the title says -copy" if dropped else "")
+
+    def check_selected(self) -> str:
+        """The executor's own --check report, full screen: what THIS entry
+        resolves to and why it has or has not fired, from the functions that
+        will launch it -- the one thing this view cannot compute itself."""
+        r = self._sched_sel()
+        if r is None:
+            return "nothing selected"
+        script = SCRIPTS / "claude-watchdog.sh"
+        if not script.exists():
+            return "claude-watchdog.sh not found"
+        acct = ["--profile", PROFILE] if PROFILE else []
+        try:
+            out = subprocess.run([str(script), *acct, "--check", str(r["file"]), "--body"],
+                                 capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return "check failed: %s" % exc
+        self.pending_report = (out.stdout + out.stderr) or "(--check printed nothing)"
+        return ""
+
     # ---------------------------------------------------------- the tree
     def tree_layout(self, ordered: list) -> list[tuple]:
         """Sessions as (session, depth, hidden_count), parents before children.
@@ -2276,7 +2422,8 @@ class Dashboard:
             parts.append(Panel(qt, border_style=FRAME, box=box.ROUNDED))
 
         keys = Text.assemble(
-            (" ↑↓", DIM), " pick  ", ("enter", DIM), "/", ("e", DIM), " edit  ",
+            (" ↑↓", DIM), " pick  ", ("space", DIM), " menu  ",
+            ("enter", DIM), "/", ("e", DIM), " edit  ",
             ("c", DIM), " create  ", ("o", DIM), " options  ",
             ("l", DIM), " launch now  ",
             ("d", DIM), " delete  ", ("r", DIM), " reload  ",
@@ -2284,8 +2431,13 @@ class Dashboard:
         )
         if self.notice and time.time() - self.notice_at < 8:
             keys = Text.assemble((" " + self.notice, "#c9a0dc"), "\n", keys)
-        foot = self._submode_foot() or keys
-        return Group(*parts, foot)
+        sub = self._submode_foot()
+        if self.menu is not None and sub is None:
+            # The same placer as the main view: the entry's menu goes under
+            # the table (the why sentence is in the menu), or centred, or at
+            # the bottom, per the layout setting -- never clipped.
+            return self.place_menu([("sched", parts[0])] + [("more", p) for p in parts[1:]], 0)
+        return Group(*parts, sub or keys)
 
     def toggle_selected(self) -> str:
         """Opt one session out of being restarted, or back in.
@@ -2813,6 +2965,11 @@ HELP = f"""
     In the view: enter/e edit · c create (type, template, THE OPTIONS TABLE,
     then the editor to paste the prompt) · o reopen the options table on a
     pending entry · l launch now · d delete · r reload · s/esc back.
+    space opens the ENTRY'S menu: the why sentence when it is blocked, waiting
+    or stalled, then edit, options, launch now, duplicate (a pending copy
+    with a different slug, opened in the editor), check (the executor's
+    --check --body report, full screen), open its window when it has one,
+    and delete. A corrupted entry gets its reason and only delete.
 
   [{DIM}]THE OPTIONS TABLE (c, and o on a pending entry)[/]
     The checkboxes between the template and the editor: the contract sentences
@@ -3123,6 +3280,26 @@ def main() -> int:
                     termios.tcsetattr(fd, termios.TCSADRAIN, saved)
                     os.execv(sys.executable, [sys.executable, __file__] + args)
 
+                # A --check report takes the terminal over the way the
+                # editor does: through less when there is one (the report is
+                # longer than a screen, and the top is the useful half),
+                # printed plainly otherwise.
+                if dash.pending_report is not None:
+                    text, dash.pending_report = dash.pending_report, None
+                    live.stop()
+                    termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+                    if os.path.exists("/usr/bin/less"):
+                        subprocess.run(["/usr/bin/less", "-R"], input=text, text=True)
+                    else:
+                        console.clear()
+                        console.print(Text(text))
+                        console.print(Text("press any key", style=DIM))
+                        tty.setcbreak(fd)
+                        read_key(120)
+                    tty.setcbreak(fd)
+                    live.start()
+                    continue
+
                 key = read_key(interval)
 
                 # A SUBMODE OWNS THE KEYBOARD while it is open, and it is
@@ -3174,6 +3351,12 @@ def main() -> int:
                         m = dash.request_edit_selected()
                         if m:
                             dash.say(m)
+                        continue
+                    if key == " ":
+                        # THE ENTRY'S menu. Without this case space fell
+                        # through to the global handler and opened the
+                        # session menu over a view that shows no sessions.
+                        dash.open_menu("sched")
                         continue
                     if key == "c":
                         dash.start_create()
