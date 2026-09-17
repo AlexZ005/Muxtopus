@@ -46,7 +46,11 @@ check "the press was answered" [ "$(sb_ncalls answerCallbackQuery)" = 1 ]
 check "the test message was edited" grep -q "the phone answered" <<<"$(sb_calls editMessageText)"
 check "offset remembered for the poller" [ -s "$XDG_STATE_HOME/muxtopus-notify/offset" ]
 check "the privacy sentence is said" grep -q "passes through Telegram's servers" <<<"$out"
-check "the bot's menu was registered" [ "$(sb_calls setMyCommands | jq -r '.commands | fromjson | map(.command) | join(" ")')" = "status pending questions blocked windows mute unmute help" ]
+# The list itself lives in muxtelegram.COMMANDS; asking that module what it
+# is keeps this a test of "--setup registers the menu" rather than one more
+# copy of the list to update whenever a command is added.
+WANT_CMDS="$(python3 -c 'import sys; sys.path.insert(0, "'"$REPO"'"); import muxtelegram; print(" ".join(c for c, _ in muxtelegram.COMMANDS))')"
+check "the bot's menu was registered" [ "$(sb_calls setMyCommands | jq -r '.commands | fromjson | map(.command) | join(" ")')" = "$WANT_CMDS" ]
 check "tell me: no switch written" bash -c '! grep -q "NOTIFY_WAITING=off" <<<"$1"' _ "$out"
 check "no token in the notify log" bash -c '! grep -q GOOD "$1"' _ "$XDG_STATE_HOME/claude-watchdog/notify.log"
 
