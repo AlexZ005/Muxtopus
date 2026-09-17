@@ -19,11 +19,13 @@ Read before this: `deck_status.py` (`build_sched`, the `view == "sched"` branch 
 2. **Unanswered questions are not just unsurfaced, the one panel that tries is
    looking in the wrong folder.** `build_sched` globs `QUESTIONS_DIR`
    (`MUXTOPUS_QUESTIONS_DIR`, default `~/.code/theprototype-app/core/plans`).
-   That folder holds ZERO `QUESTIONS-*.md` today. The three real ones are in
+   That folder held ZERO `QUESTIONS-*.md` at 08:50 and ONE a few minutes later
+   (`QUESTIONS-25-late.md`, a lane still on the old contract) -- so the legacy
+   folder is LIVE, not dead, and must keep being read. The three others are in
    `~/.code/handovers/`, which is where `{{QUESTIONS}}` has pointed since the
    placeholders landed. Meanwhile `setup-schedules.py`'s `QUESTIONS_CONTRACT`
    still tells plan sessions `core/plans/QUESTIONS-<topic>.md`. Two conventions,
-   the dashboard reads the dead one.
+   the dashboard reads one of them.
 3. **The dashboard and the watchdog disagree on a re-run lane.**
    `sched_dep_state` tests `done/STATUS-<slug>.md` FIRST (done wins, `after:`
    is satisfied); the stranded check needs open AND NOT done;
@@ -189,10 +191,10 @@ matching `^\s*(\d+\.|##\s)`. Tolerant by design: a miscount is cosmetic.
 
 ### Keys on this tab
 
-    ↑↓ pick · ←→ tab · enter open · E edit · space menu · f done · a asks · r reload · s/esc back
+    ↑↓ pick · ←→ tab · enter open/answer · e edit · E force-edit · space menu · f done · a asks · r reload · s/esc back
 
-* **enter**: a QUESTIONS row opens in `$EDITOR`/nano through `pending_edit` --
-  answering IS editing. A STATUS row opens READ-ONLY in `$PAGER`/`less`
+* **enter**: a QUESTIONS row opens the answer screen (§3b); `e` opens it in
+  `$EDITOR`/nano through `pending_edit`. A STATUS row opens READ-ONLY in `$PAGER`/`less`
   through the same suspend path: a live lane rewrites its handover whenever
   it likes, and nano saving over that is how a handover is lost.
 * **E** (capital, and `Edit anyway…` in the space menu) is the user's force
@@ -206,7 +208,7 @@ matching `^\s*(\d+\.|##\s)`. Tolerant by design: a miscount is cosmetic.
       STATUS, open     View · Edit anyway… · Open its window ➥slug (when live) ·
                        Mark done… (confirm NAMES the entries it releases)
       STATUS, done     View · Reopen (unstamped names only, as handover.sh allows)
-      QUESTIONS        Answer in editor · Mark answered / Mark unanswered ·
+      QUESTIONS        Answer… (§3b) · Edit the file · Mark answered / Mark unanswered ·
                        Tell ➥slug its answers are in (when its pane is live) ·
                        Show its handover (moves the cursor to the STATUS row)
 
@@ -216,9 +218,59 @@ matching `^\s*(\d+\.|##\s)`. Tolerant by design: a miscount is cosmetic.
   `Your questions are answered in <path> -- read it and continue.`, behind a
   confirm, reusing `_send`'s mechanics. It is the only thing here that touches
   a live window and it is never automatic.
-* `c o l d e` do nothing on this tab and say so (`d: schedules tab only`)
+* `c o l d` do nothing on this tab and say so (`d: schedules tab only`)
   rather than acting on a schedule row the person cannot see -- the same bug
   class the sibling's §4a fixes for space.
+
+## 3b. Answering from the dashboard (added 2026-09-17, the user's request)
+
+Seeing "awaiting your answers" with no way to answer is half a feature. On a
+QUESTIONS row **enter opens the answer screen** (the editor moves to `e`, and
+stays one key away on every screen of the flow -- the file is always the
+escape hatch, because no parser will understand every lane's prose).
+
+Pure, in `muxhandovers.py`:
+
+    parse_forks(text) -> [Fork]      # id, title, span, options[{key, text, rec}], answer
+    write_answer(text, fork_id, answer, date) -> text
+    all_answered(forks) -> bool
+
+A fork starts at a `## ` heading or a top-level `N.` item and ends at the
+next. Options are `(a)` `(b)` ... wherever they occur in the fork -- as bullets
+(`- **(a) RECOMMENDED: ...`) or inline (`Options: (a) ...; (b) ...`), both
+shapes exist in real files. `rec` is the option whose text carries RECOMMENDED,
+or the letter named by a `Recommendation...: (a)` line. A fork is answered when
+it contains a line starting `**Answer`.
+
+The screen is the existing picker, one fork at a time, title = the fork's
+heading, the fork's full text in the detail panel above it:
+
+    ▸ (a) the HOST's wall clock, transitively          ← recommended, preselected
+      (b) a mesh median / consensus
+      (c) true UTC via a time server
+      type an answer…                                  the prompt submode
+      skip this fork
+      open the file in the editor  (e)
+
+A fork with no parseable options offers `accept as written / as recommended`,
+`type an answer…`, skip, editor. A chosen option may take a note: the prompt
+opens prefilled empty, enter with nothing typed means no note. Each answer is
+written AT ONCE as one line at the end of its fork:
+
+    **Answer (user, 2026-09-17):** (a) — <note or the typed text>
+
+atomically (`.tmp` + `os.replace`), and only if the file's `(mtime, size)` is
+still what was parsed; if the lane wrote meanwhile, re-read, re-parse, re-apply
+to the same fork id, and say so. When the last fork is answered the flow
+offers `Mark answered` (the §2.2 marker, through `handover.sh answered`) and,
+when the lane's pane is live, `Tell ➥slug its answers are in`. esc leaves at
+any point; what was answered stays answered. Legacy-folder files answer the
+same way (the marker is written by `muxhandovers` directly there, since
+`handover.sh` does not own that folder).
+
+On the SCHEDULES tab the old panel shrinks to one line --
+`awaiting your answers: 2 · → to answer` -- so the message the user already
+knows keeps pointing somewhere.
 
 ## 4. The filters, and where they live
 
@@ -303,6 +355,7 @@ session, `claude:0`, the real `~/.config/muxtopus`, the real
 | 3 | `[feat] schedule view: a handovers tab on the arrows` | `deck_status.py` | sandbox captures at 24 and 40 rows: strip with counts on both tabs; ←→ switches; order; WINDOW `●` for a live fake window and `exited` after kill; HOLDS=1 for a fixture `after:`; shadowed row's `⚠`; viewport markers with 30 done fixtures and the bottom border present; `c`/`d` refuse on this tab; `handover_state` callers unchanged in output |
 | 4 | `[feat] handovers tab: done and asks filters, persisted in dashboard.conf` | `deck_status.py`, `muxsettings.py`, `muxconfig.py`, `profile.sh` | the sibling's round-trip test extended to the two keys; key-list mirror test still green; in the sandbox: `f`, capture, `R`, capture -- filter survived; the file shows the line; Settings menu lists both rows |
 | 5 | `[feat] handovers tab: enter opens, space acts` | `deck_status.py` | sandbox with `EDITOR`/`PAGER` set to recording stubs: QUESTIONS -> editor argv, STATUS -> pager argv, `E` -> the warning then editor argv (no warning when the window is dead); menu per row kind; Mark done: confirm names the fixture dependant, file lands in sandbox `done/`, sandbox daemon's next pass launches the dependant (`--check` says finished); Mark answered flips row and strip count; Tell: the fake `claude` pane receives the line |
+| 5b | `[feat] handovers tab: answer a fork without leaving the dashboard` | `muxhandovers.py`, `deck_status.py`, `tests/test_handovers.py` | unit: `parse_forks` on trimmed copies of the four real QUESTIONS shapes (bulleted options, inline options, numbered, no options); `write_answer` idempotent per fork and byte-preserving elsewhere; the changed-underneath re-apply. Sandbox: answer two forks by send-keys, file shows both lines; a typed answer; skip; `e` reaches the editor stub from inside the flow; last fork offers Mark answered and the strip count drops |
 | 6 | `[feat] main view: a ? on a lane with unanswered questions` | `deck_status.py` | capture shows `?` on the fixture lane's row and `s schedules · 1 ?`; gone after `answered`; `--once` timing before/after recorded in the handover |
 | 7 | `[docs] handovers tab: README, help, the questions contract` | `README.md`, `deck_status.py` (HELP), `setup-schedules.py` | `QUESTIONS_CONTRACT` names `{{QUESTIONS}}` and the ANSWERED rule; generated README regenerated INTO THE SANDBOX and diffed; `--check` on every real entry still returns 0 (read only) |
 
