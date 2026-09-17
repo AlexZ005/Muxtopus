@@ -189,16 +189,21 @@ matching `^\s*(\d+\.|##\s)`. Tolerant by design: a miscount is cosmetic.
 
 ### Keys on this tab
 
-    ↑↓ pick · ←→ tab · enter open · space menu · f done · a asks · r reload · s/esc back
+    ↑↓ pick · ←→ tab · enter open · E edit · space menu · f done · a asks · r reload · s/esc back
 
 * **enter**: a QUESTIONS row opens in `$EDITOR`/nano through `pending_edit` --
   answering IS editing. A STATUS row opens READ-ONLY in `$PAGER`/`less`
-  through the same suspend path (fork Q5): a live lane rewrites its handover
-  whenever it likes, and nano saving over that is how a handover is lost.
+  through the same suspend path: a live lane rewrites its handover whenever
+  it likes, and nano saving over that is how a handover is lost.
+* **E** (capital, and `Edit anyway…` in the space menu) is the user's force
+  edit of a STATUS row (Q5 as answered): a confirm first --
+  `⚠ ➥<slug> may rewrite this file while you edit; whichever saves last wins.
+  y edit  n view` -- worded for a live window; for a lane with no live window
+  the confirm is skipped and the editor opens, because nothing can race it.
 * **space** opens `self.menu = {"kind": "handover", "i": 0}` -- a fifth kind
   in the sibling's dict, built from the selected row and nothing else:
 
-      STATUS, open     View · Open its window ➥slug (when live) ·
+      STATUS, open     View · Edit anyway… · Open its window ➥slug (when live) ·
                        Mark done… (confirm NAMES the entries it releases)
       STATUS, done     View · Reopen (unstamped names only, as handover.sh allows)
       QUESTIONS        Answer in editor · Mark answered / Mark unanswered ·
@@ -297,26 +302,26 @@ session, `claude:0`, the real `~/.config/muxtopus`, the real
 | 2 | `[feat] handover.sh: answered / unanswer, and done takes answered questions along` | `handover.sh`, `tests/test_handover_sh.sh` | in a sandbox HOME: marker added once, idempotent, removed; `done` moves an answered QUESTIONS and leaves an unanswered one; never-clobber stamp on the second; `../` slug refused; `--profile` folder |
 | 3 | `[feat] schedule view: a handovers tab on the arrows` | `deck_status.py` | sandbox captures at 24 and 40 rows: strip with counts on both tabs; ←→ switches; order; WINDOW `●` for a live fake window and `exited` after kill; HOLDS=1 for a fixture `after:`; shadowed row's `⚠`; viewport markers with 30 done fixtures and the bottom border present; `c`/`d` refuse on this tab; `handover_state` callers unchanged in output |
 | 4 | `[feat] handovers tab: done and asks filters, persisted in dashboard.conf` | `deck_status.py`, `muxsettings.py`, `muxconfig.py`, `profile.sh` | the sibling's round-trip test extended to the two keys; key-list mirror test still green; in the sandbox: `f`, capture, `R`, capture -- filter survived; the file shows the line; Settings menu lists both rows |
-| 5 | `[feat] handovers tab: enter opens, space acts` | `deck_status.py` | sandbox with `EDITOR`/`PAGER` set to recording stubs: QUESTIONS -> editor argv, STATUS -> pager argv; menu per row kind; Mark done: confirm names the fixture dependant, file lands in sandbox `done/`, sandbox daemon's next pass launches the dependant (`--check` says finished); Mark answered flips row and strip count; Tell: the fake `claude` pane receives the line |
+| 5 | `[feat] handovers tab: enter opens, space acts` | `deck_status.py` | sandbox with `EDITOR`/`PAGER` set to recording stubs: QUESTIONS -> editor argv, STATUS -> pager argv, `E` -> the warning then editor argv (no warning when the window is dead); menu per row kind; Mark done: confirm names the fixture dependant, file lands in sandbox `done/`, sandbox daemon's next pass launches the dependant (`--check` says finished); Mark answered flips row and strip count; Tell: the fake `claude` pane receives the line |
 | 6 | `[feat] main view: a ? on a lane with unanswered questions` | `deck_status.py` | capture shows `?` on the fixture lane's row and `s schedules · 1 ?`; gone after `answered`; `--once` timing before/after recorded in the handover |
 | 7 | `[docs] handovers tab: README, help, the questions contract` | `README.md`, `deck_status.py` (HELP), `setup-schedules.py` | `QUESTIONS_CONTRACT` names `{{QUESTIONS}}` and the ANSWERED rule; generated README regenerated INTO THE SANDBOX and diffed; `--check` on every real entry still returns 0 (read only) |
 
 `docs/dashboard.svg` is not regenerated, for the sibling's reason (it captures
 the real `claude:0`). Owed to the user after their `R`, said in the handover.
 
-## 9. Forks (put to the user; answers recorded in QUESTIONS-handover-visibility.md)
+## 9. Forks -- ANSWERED by the user, 2026-09-17
 
-* **Q1 -- shape.** (a) RECOMMENDED tabs in `s`; (b) own key; (c) toggle. §1.
-* **Q2 -- filter persistence.** (a) RECOMMENDED write-through to
-  `dashboard.conf` as two `DASHBOARD_HANDOVERS_*` keys; (b) keys hold the
-  startup default only, `f`/`a` are session toggles; (c) session-only, no keys.
-* **Q3 -- what "answered" is.** (a) RECOMMENDED an `ANSWERED` marker line, file
-  stays put until its lane is done; (b) moving the file to `done/` is the
-  answer; (c) no state: a QUESTIONS file is open exactly while its lane is.
-* **Q4 -- when the implementation starts.** (a) RECOMMENDED one entry held by
-  `after: dash-menus-settings`; (b) start now, phases 1-2 only, stop and leave
-  a resume entry for the rest.
-* **Q5 -- enter on a STATUS row.** (a) RECOMMENDED read-only pager; (b) the
-  editor, as the schedules tab does.
-* **Q6 -- the main-view `?`.** (a) RECOMMENDED yes, phase 6; (b) no, the tab
-  strip is enough.
+* **Q1 -- shape.** (a) tabs in `s`. *Answered: (a).* (b) own key; (c) toggle. §1.
+* **Q2 -- filter persistence.** *Answered: (a)* write-through to `dashboard.conf`
+  as the two `DASHBOARD_HANDOVERS_*` keys. Lost: (b) startup default only;
+  (c) session-only.
+* **Q3 -- what "answered" is.** *Answered: (a)* an `ANSWERED` marker line, the
+  file stays put until its lane is done. Lost: (b) move to `done/`; (c) no state.
+* **Q4 -- when the implementation starts.** *Answered: (a)* one entry, `model:
+  opus`, held by `after:`. The user believed the sibling was done; checked at
+  08:51 -- it is not (phases 1-2 of 6 committed, phase 3 uncommitted in
+  `deck_status.py`), so the hold is real. The entry also waits on
+  `dash-menus-wd-headers`, which owns `setup-schedules.py` (phase 7).
+* **Q5 -- enter on a STATUS row.** *Answered: pager, PLUS a force edit behind a
+  warning* -- `E` and a menu row, §3.
+* **Q6 -- the main-view `?`.** *Answered: (a)* yes, phase 6.
