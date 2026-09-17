@@ -19,6 +19,9 @@ record. This is that record, one per account:
       offsets.tsv   per transcript: inode, size, byte offset, session, model
       seen/YYYY-MM.tsv   hash of each counted message key -> the file that owns it
       limits.tsv    one row per usage limit hit: type, resets_at, first, last
+      budget.tsv    one row per 5h window: peak %, week %, limited s, hits, resumes
+      weeks.tsv     one row per weekly reset: the last week % before it
+      lanes.tsv     one row per lane: parent, launched, done, forks, stranded
       meta          schema, collecting-since, last collect, backfill
 
 MEASURED, and the reason for the dedupe index (plan-insights §0.2): one API
@@ -54,17 +57,18 @@ SCHEMA = 1
 # The ledger's columns, in file order. `ctx` of a request is input +
 # cache_read + cache_creation: what the model actually saw. `active_s` is the
 # sum of turn_duration, so a window left open for three days is not a
-# three-day session. `tool_mix` is "Name=count;..." sorted by name -- tool
-# NAMES only, never their input. A `coarse` row is a day backfilled from
+# three-day session. `hours` is tokens by LOCAL hour of day, "9=1234;10=56"
+# (the rhythm row has no finer grain to draw from). `tool_mix` is
+# "Name=count;..." sorted by name -- tool NAMES only, never their input. A `coarse` row is a day backfilled from
 # Claude Code's own stats-cache.json: its single total is in `in`, everything
 # else is 0, and it counts toward totals only.
 LEDGER_COLS = (
     "day", "session", "project", "lane", "model", "side",
     "requests", "in", "out", "cache_read", "cache_w5m", "cache_w1h", "thinking",
     "ctx_peak", "ctx_sum", "ctx_n", "tools", "web", "turns", "active_s",
-    "compactions", "first_ts", "last_ts", "tool_mix", "coarse",
+    "compactions", "first_ts", "last_ts", "hours", "tool_mix", "coarse",
 )
-TEXT_COLS = ("day", "session", "project", "lane", "model", "tool_mix")
+TEXT_COLS = ("day", "session", "project", "lane", "model", "hours", "tool_mix")
 INT_COLS = tuple(c for c in LEDGER_COLS if c not in TEXT_COLS)
 ROW_KEY = ("day", "session", "model", "side")
 
@@ -176,7 +180,7 @@ def _home_abbrev(p: str) -> str:
 def new_row(day: str, session: str, model: str, side: int) -> dict:
     r = {c: 0 for c in INT_COLS}
     r.update(day=day, session=session, project="", lane="", model=model,
-             side=side, tool_mix="")
+             side=side, hours="", tool_mix="")
     return r
 
 
@@ -199,8 +203,9 @@ def _mix_parse(s: str) -> dict:
     return out
 
 
-def _mix_str(d: dict) -> str:
-    return ";".join("%s=%d" % (k, d[k]) for k in sorted(d))
+def _mix_str(d: dict, numeric: bool = False) -> str:
+    keys = sorted(d, key=int) if numeric else sorted(d)
+    return ";".join("%s=%d" % (k, d[k]) for k in keys)
 
 
 def load_ledger(state_dir) -> list[dict]:
@@ -350,7 +355,7 @@ def _file_session(rel: pathlib.Path) -> tuple[str, int]:
 
 
 def collect(config_dir, state_dir, now: int | None = None, *, wd_dir=None,
-            stats_cache=None) -> CollectReport:
+            stats_cache=None, schedules_dir=None, handovers_dir=None) -> CollectReport:
     """Read every transcript's new bytes into the ledger. See the module
     docstring for what is kept and why it is counted the way it is."""
     config_dir = pathlib.Path(config_dir)
@@ -459,11 +464,17 @@ def collect(config_dir, state_dir, now: int | None = None, *, wd_dir=None,
 
     ledger = sorted(rows.values(), key=lambda r: (r["day"], r["session"], r["model"], r["side"]))
     rep.rows = len(ledger)
-    since = min((r["day"] for r in ledger), default="")
+    # "Collecting since" is the first day with REAL rows: a coarse day is a
+    # total, not a day this ledger watched, and the thin-data rule counts
+    # watched days.
+    since = min((r["day"] for r in ledger if not r["coarse"]), default="")
     meta["schema"] = str(SCHEMA)
     if since and (not meta.get("since") or since < meta["since"]):
         meta["since"] = since
     meta.setdefault("since", local_day(now))
+
+    budget_collect(state, wd_dir, limits)
+    lanes_collect(state, wd_dir, schedules_dir, handovers_dir)
     meta["last_collect"] = str(now)
 
     seen.save()
@@ -586,6 +597,10 @@ def _ingest(data: bytes, fid: str, fsid: str, fside: int, model: str,
             r["ctx_sum"] += ctx
             r["ctx_n"] += 1
             r["web"] += _num(stu, "web_search_requests") + _num(stu, "web_fetch_requests")
+            hrs = _mix_parse(r["hours"])
+            hr = str(_dt.datetime.fromtimestamp(ep).hour)
+            hrs[hr] = hrs.get(hr, 0) + inp + rd + cw + _num(u, "output_tokens")
+            r["hours"] = _mix_str(hrs, numeric=True)
         else:
             sub = rec.get("subtype")
             if sub not in ("turn_duration", "compact_boundary"):
@@ -606,6 +621,793 @@ def _ingest(data: bytes, fid: str, fsid: str, fside: int, model: str,
             else:
                 r["compactions"] += 1
     return model
+
+
+# ------------------------------------------------------------- budget
+# budget.tsv: one row per 5-hour window, keyed by its reset instant. The
+# sources are the usage cache's log (claude-usage.sh: a reading an hour), the
+# watchdog's log (resumes, wind-downs) and limits.tsv (the refusals the
+# transcripts recorded). Every one of them can be rotated or cleaned away, so a
+# row is MERGED field by field with max() into what was kept before: a count
+# never shrinks because its source did, and re-reading the same source changes
+# nothing.
+BUDGET_COLS = ("reset_at", "day", "window_start", "session_peak_pct", "week_pct",
+               "limited_s", "hits", "resumes", "winddowns")
+WEEK_COLS = ("reset_at", "day", "week_pct", "sampled_at", "hits")
+WINDOW_S = 5 * 3600
+# Readings name a reset to the minute and the API to the second, and a probe
+# can print 22:39 for a window the API says ends at 22:40.
+TOLERANCE_S = 900
+
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
+
+
+def _local_epoch(y, mo, d, h, mi) -> int | None:
+    """A local wall-clock time to an instant, DST-aware (mktime decides)."""
+    import time
+    try:
+        return int(time.mktime((y, mo, d, h, mi, 0, 0, 0, -1)))
+    except (OverflowError, ValueError):
+        return None
+
+
+def _parse_hhmm(s: str) -> tuple[int, int] | None:
+    import re
+    m = re.match(r"^\s*(\d{1,2})(?::(\d{2}))?\s*([ap]m)?\s*$", s or "", re.I)
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2) or 0)
+    ap = (m.group(3) or "").lower()
+    if ap == "pm" and h < 12:
+        h += 12
+    elif ap == "am" and h == 12:
+        h = 0
+    if h > 23 or mi > 59 or (not m.group(2) and not ap):
+        return None
+    return h, mi
+
+
+def _wall_after(ts: int, hm: tuple[int, int], slack: int = 600) -> int | None:
+    """The first occurrence of a wall-clock time at or after `ts - slack`."""
+    d = _dt.datetime.fromtimestamp(ts)
+    for add in (0, 1, 2):
+        dd = d.date() + _dt.timedelta(days=add)
+        e = _local_epoch(dd.year, dd.month, dd.day, hm[0], hm[1])
+        if e is not None and e >= ts - slack:
+            return e
+    return None
+
+
+def _wall_before(ts: int, hm: tuple[int, int], slack: int = 600) -> int | None:
+    """The last occurrence of a wall-clock time at or before `ts + slack`."""
+    d = _dt.datetime.fromtimestamp(ts)
+    for sub in (0, 1, 2):
+        dd = d.date() - _dt.timedelta(days=sub)
+        e = _local_epoch(dd.year, dd.month, dd.day, hm[0], hm[1])
+        if e is not None and e <= ts + slack:
+            return e
+    return None
+
+
+def _week_reset(ts: int, s: str) -> int | None:
+    """"Sep 19, 17:00" read at `ts` -> an instant; the year is the reading's,
+    or the next one when that puts the reset half a year in the past."""
+    import re
+    m = re.match(r"^\s*([A-Za-z]{3})[a-z]*\s+(\d{1,2}),?\s+(.+)$", s or "")
+    if not m or m.group(1).lower() not in _MONTHS:
+        return None
+    hm = _parse_hhmm(m.group(3))
+    if not hm:
+        return None
+    y = _dt.datetime.fromtimestamp(ts).year
+    e = _local_epoch(y, _MONTHS[m.group(1).lower()], int(m.group(2)), hm[0], hm[1])
+    if e is not None and e < ts - 180 * 86400:
+        e = _local_epoch(y + 1, _MONTHS[m.group(1).lower()], int(m.group(2)), hm[0], hm[1])
+    return e
+
+
+def _log_lines(path: pathlib.Path):
+    """(epoch, rest) for every `YYYY-mm-dd HH:MM:SS<sep>rest` line."""
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return
+    for line in text.splitlines():
+        if len(line) < 20 or line[4] != "-" or line[13] != ":":
+            continue
+        try:
+            t = _dt.datetime.strptime(line[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        e = _local_epoch(t.year, t.month, t.day, t.hour, t.minute)
+        if e is None:
+            continue
+        yield e + t.second, line[19:].lstrip("\t ")
+
+
+def _near(keys, ep: int, tol: int = TOLERANCE_S):
+    best = None
+    for k in keys:
+        if abs(k - ep) <= tol and (best is None or abs(k - ep) < abs(best - ep)):
+            best = k
+    return best
+
+
+def budget_collect(state, wd_dir, limits: dict) -> None:
+    state = pathlib.Path(state)
+    old = {}
+    for d in _read_tsv(state / "budget.tsv", BUDGET_COLS):
+        try:
+            old[int(d["reset_at"])] = {c: int(d[c] or 0) for c in BUDGET_COLS if c not in ("day",)}
+        except ValueError:
+            continue
+    oldw = {}
+    for d in _read_tsv(state / "weeks.tsv", WEEK_COLS):
+        try:
+            oldw[int(d["reset_at"])] = {c: int(d[c] or 0) for c in WEEK_COLS if c != "day"}
+        except ValueError:
+            continue
+
+    win, weeks = {}, {}
+
+    def window(reset_at: int) -> dict:
+        k = _near(win, reset_at)
+        if k is None:
+            k = reset_at
+            win[k] = {"reset_at": k, "window_start": k - WINDOW_S, "session_peak_pct": 0,
+                      "week_pct": 0, "limited_s": 0, "hits": 0, "resumes": 0, "winddowns": 0}
+        return win[k]
+
+    def week(reset_at: int) -> dict:
+        k = _near(weeks, reset_at, 3600)
+        if k is None:
+            k = reset_at
+            weeks[k] = {"reset_at": k, "week_pct": 0, "sampled_at": 0, "hits": 0}
+        return weeks[k]
+
+    wd = pathlib.Path(wd_dir) if wd_dir else None
+    if wd:
+        for ts, rest in _log_lines(wd / "usage.log"):
+            if rest.startswith("READ FAILED"):
+                continue
+            cur, spct, wpct, sres, wres = None, None, None, None, None
+            for kv in rest.split("\t"):
+                k, _, v = kv.partition("=")
+                pct = v.rstrip("%")
+                if k == "session":
+                    cur, spct = "s", int(pct) if pct.isdigit() else None
+                elif k == "week":
+                    cur, wpct = "w", int(pct) if pct.isdigit() else None
+                elif k == "resets" and cur == "s":
+                    sres = v
+                elif k == "resets" and cur == "w":
+                    wres = v
+            hm = _parse_hhmm(sres) if sres else None
+            reset = _wall_after(ts, hm) if hm else None
+            # A reading names the reset of the window it is IN; anything
+            # further out than one window is a stale panel, not a window.
+            if reset is not None and spct is not None and reset - ts <= WINDOW_S + 600:
+                w = window(reset)
+                w["session_peak_pct"] = max(w["session_peak_pct"], spct)
+                if wpct is not None:
+                    w["week_pct"] = max(w["week_pct"], wpct)
+            wr = _week_reset(ts, wres) if wres else None
+            if wr is not None and wpct is not None and ts <= wr:
+                wk = week(wr)
+                if ts >= wk["sampled_at"]:
+                    wk["sampled_at"], wk["week_pct"] = ts, wpct
+
+        import re
+        for ts, rest in _log_lines(wd / "log"):
+            m = re.match(r"^prompted \S+ in .* after reset (\S+)\s*$", rest)
+            if m:
+                hm = _parse_hhmm(m.group(1))
+                reset = _wall_before(ts, hm) if hm else None
+                if reset is not None:
+                    window(reset)["resumes"] += 1
+                continue
+            if rest.startswith("wound down "):
+                k = next((k for k in sorted(win) if k - WINDOW_S <= ts < k + 60), None)
+                (win[k] if k is not None else window(ts + WINDOW_S))["winddowns"] += 1
+
+    for (typ, resets_at), li in sorted(limits.items()):
+        try:
+            ra, first = int(resets_at), int(li["first_ts"])
+        except (TypeError, ValueError):
+            continue
+        if typ == "five_hour":
+            w = window(ra)
+            w["hits"] = max(w["hits"], 1)
+            w["limited_s"] = max(w["limited_s"], max(0, ra - first))
+            w["session_peak_pct"] = max(w["session_peak_pct"], 100)
+        elif typ == "seven_day":
+            week(ra)["hits"] = 1
+
+    # Merge into what was kept: max() per field, matched within the tolerance.
+    for k, w in win.items():
+        ok = _near(old, k)
+        if ok is None:
+            old[k] = dict(w)
+        else:
+            for c, v in w.items():
+                if c != "reset_at":
+                    old[ok][c] = max(old[ok].get(c, 0), v)
+    for k, w in weeks.items():
+        ok = _near(oldw, k, 3600)
+        if ok is None:
+            oldw[k] = dict(w)
+        elif w["sampled_at"] >= oldw[ok]["sampled_at"]:
+            oldw[ok].update(week_pct=w["week_pct"], sampled_at=w["sampled_at"],
+                            hits=max(oldw[ok]["hits"], w["hits"]))
+        else:
+            oldw[ok]["hits"] = max(oldw[ok]["hits"], w["hits"])
+
+    rows = []
+    for k in sorted(old):
+        r = dict(old[k])
+        # A window nothing happened in is not a window worth a row.
+        if not (r["session_peak_pct"] or r["hits"] or r["resumes"] or r["winddowns"]):
+            continue
+        r["day"] = local_day(r["window_start"])
+        rows.append(r)
+    wrows = []
+    for k in sorted(oldw):
+        r = dict(oldw[k])
+        r["day"] = local_day(r["reset_at"])
+        wrows.append(r)
+    if rows or (state / "budget.tsv").exists():
+        _write_if_changed(state / "budget.tsv", _tsv(rows, BUDGET_COLS))
+    if wrows or (state / "weeks.tsv").exists():
+        _write_if_changed(state / "weeks.tsv", _tsv(wrows, WEEK_COLS))
+
+
+# -------------------------------------------------------------- lanes
+# lanes.tsv: one row per lane slug. Sources: the watchdog's tree.tsv (which it
+# prunes after 14 days, hence this file), schedule entries' `launched:`
+# stamps, handovers/done/ (the mtime of a finished STATUS file is when the
+# lane was marked done), QUESTIONS files (fork COUNTS only) and the log's
+# `stranded:` lines. Merged into what was kept, like budget.tsv.
+LANE_COLS = ("slug", "parent", "launched", "done", "questions_asked",
+             "questions_answered", "stranded")
+# The fork rules of muxtelegram.py (plan-handover-visibility §2.2), mirrored:
+# a file is answered iff a line matches ^\W*ANSWERED\b; a fork starts at a
+# `## ` heading or a top-level `N.` item; a fork is answered when one of its
+# lines starts `**Answer`.
+_ANSWERED_RE = r"^\W*ANSWERED\b"
+_FORK_RE = r"^\s*(\d+\.|##\s)"
+_ANSWER_RE = r"^\s*\*\*Answer"
+
+
+def _sched_slug(raw: str) -> str:
+    """claude-watchdog.sh sched_sanitise: [A-Za-z0-9._-], the rest '-', 22 max."""
+    import re
+    return re.sub(r"[^A-Za-z0-9._-]", "-", raw)[:22]
+
+
+def _sched_header(path: pathlib.Path) -> dict:
+    out = {}
+    try:
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                line = line.rstrip("\n")
+                if line == "---":
+                    break
+                k, sep, v = line.partition(": ")
+                if sep and k and k not in out:
+                    out[k] = v
+    except OSError:
+        pass
+    return out
+
+
+def fork_counts(text: str) -> tuple[int, int]:
+    import re
+    forks, answered, cur = 0, 0, False
+    for line in text.splitlines():
+        if re.match(_FORK_RE, line):
+            forks += 1
+            cur = False
+        elif forks and not cur and re.match(_ANSWER_RE, line):
+            answered += 1
+            cur = True
+    if re.search(_ANSWERED_RE, text, re.M):
+        answered = forks
+    return forks, answered
+
+
+def lanes_collect(state, wd_dir, schedules_dir, handovers_dir) -> None:
+    import re
+    state = pathlib.Path(state)
+    old = {d["slug"]: d for d in _read_tsv(state / "lanes.tsv", LANE_COLS) if d["slug"]}
+    new: dict[str, dict] = {}
+
+    def lane(slug):
+        return new.setdefault(slug, {"slug": slug, "parent": "", "launched": "", "done": "",
+                                     "questions_asked": "", "questions_answered": "",
+                                     "stranded": ""})
+
+    def earliest(r, ep):
+        r["launched"] = str(ep) if not r["launched"] else str(min(int(r["launched"]), ep))
+
+    wd = pathlib.Path(wd_dir) if wd_dir else None
+    if wd:
+        try:
+            tree = (wd / "tree.tsv").read_text().splitlines()
+        except OSError:
+            tree = []
+        for line in tree:
+            f = line.split("\t")
+            if len(f) < 6 or not f[0] or f[5] == "(adopted)":
+                continue
+            r = lane(_clean(f[0]))
+            r["parent"] = r["parent"] or _clean(f[1])
+            if f[4].isdigit():
+                earliest(r, int(f[4]))
+        stranded = {}
+        for _, rest in _log_lines(wd / "log"):
+            m = re.match(r"^stranded: (\S+)", rest)
+            if m:
+                s = m.group(1).replace("➥", "")
+                stranded[s] = stranded.get(s, 0) + 1
+        for s, n in stranded.items():
+            lane(_clean(s))["stranded"] = str(n)
+    if schedules_dir:
+        for p in sorted(pathlib.Path(schedules_dir).glob("*.md")):
+            h = _sched_header(p)
+            t = h.get("launched", "")
+            try:
+                lt = _dt.datetime.strptime(t.strip(), "%Y-%m-%d %H:%M")
+            except ValueError:
+                continue
+            slug = _sched_slug(h.get("slug") or h.get("title") or p.stem)
+            r = lane(slug)
+            r["parent"] = r["parent"] or _clean(h.get("parent", ""))
+            ep = _local_epoch(lt.year, lt.month, lt.day, lt.hour, lt.minute)
+            if ep is not None:
+                earliest(r, ep)
+    if handovers_dir:
+        hd = pathlib.Path(handovers_dir)
+        for p in sorted((hd / "done").glob("STATUS-*.md")):
+            slug = re.sub(r"-\d{8}-\d{6}$", "", p.stem[len("STATUS-"):])
+            try:
+                mt = int(p.stat().st_mtime)
+            except OSError:
+                continue
+            r = lane(slug)
+            r["done"] = str(max(int(r["done"] or 0), mt))
+        qs = {}
+        for p in sorted(list(hd.glob("QUESTIONS-*.md")) + list((hd / "done").glob("QUESTIONS-*.md"))):
+            slug = re.sub(r"-\d{8}-\d{6}$", "", p.stem[len("QUESTIONS-"):])
+            try:
+                a, b = fork_counts(p.read_text(errors="replace"))
+            except OSError:
+                continue
+            qa = qs.setdefault(slug, [0, 0])
+            qa[0] += a
+            qa[1] += b
+        for slug, (a, b) in qs.items():
+            r = lane(slug)
+            r["questions_asked"], r["questions_answered"] = str(a), str(b)
+
+    for slug, r in new.items():
+        o = old.get(slug)
+        if o is None:
+            old[slug] = r
+            continue
+        o["parent"] = o["parent"] or r["parent"]
+        if r["launched"]:
+            o["launched"] = r["launched"] if not o["launched"] else str(min(int(o["launched"]), int(r["launched"])))
+        if r["done"]:
+            o["done"] = str(max(int(o["done"] or 0), int(r["done"])))
+        if r["questions_asked"]:
+            o["questions_asked"], o["questions_answered"] = r["questions_asked"], r["questions_answered"]
+        if r["stranded"]:
+            o["stranded"] = str(max(int(o["stranded"] or 0), int(r["stranded"])))
+    rows = [old[k] for k in sorted(old)]
+    if rows or (state / "lanes.tsv").exists():
+        _write_if_changed(state / "lanes.tsv", _tsv(rows, LANE_COLS))
+
+
+# ---------------------------------------------------------------- prices
+class PriceTable:
+    """$ per million tokens per model, and each model's context window.
+
+    A block matches a model id EXACTLY, or with a date suffix
+    (claude-haiku-4-5 matches claude-haiku-4-5-20251001). Deliberately not a
+    looser prefix: claude-fable-5 must not price a future claude-fable-5-2 --
+    a model the file does not name shows `no price`, never a guess.
+    """
+    FIELDS = ("input", "output", "cache_read", "cache_write_5m", "cache_write_1h")
+
+    def __init__(self, models: dict | None = None, as_of: str = "", errors=None):
+        self.models = models or {}
+        self.as_of = as_of
+        self.errors = list(errors or [])
+
+    def entry(self, model: str) -> dict | None:
+        import re
+        if model in self.models:
+            return self.models[model]
+        m = re.match(r"^(.*)-\d{8}$", model or "")
+        return self.models.get(m.group(1)) if m else None
+
+    def price(self, model: str) -> dict | None:
+        e = self.entry(model)
+        return e if e and all(isinstance(e.get(f), (int, float)) for f in self.FIELDS) else None
+
+    def window(self, model: str) -> int | None:
+        e = self.entry(model)
+        w = e.get("window") if e else None
+        return w if isinstance(w, int) and w > 0 else None
+
+
+def cost(row: dict, table: PriceTable | None) -> float | None:
+    """API-equivalent dollars for one ledger row; None when unpriced (or coarse,
+    whose single total has no split to price)."""
+    if table is None or row.get("coarse"):
+        return None
+    p = table.price(row["model"])
+    if p is None:
+        return None
+    return (row["in"] * p["input"] + row["out"] * p["output"]
+            + row["cache_read"] * p["cache_read"] + row["cache_w5m"] * p["cache_write_5m"]
+            + row["cache_w1h"] * p["cache_write_1h"]) / 1e6
+
+
+# ----------------------------------------------------------------- load
+@dataclasses.dataclass
+class Ledger:
+    rows: list
+    meta: dict
+    budget: list
+    weeks: list
+    lanes: list
+
+
+def load(state_dirs) -> Ledger:
+    """One account's stats dir, or several merged (the `a` view: accounts'
+    sessions are distinct, so rows simply concatenate)."""
+    if isinstance(state_dirs, (str, os.PathLike)):
+        state_dirs = [state_dirs]
+    rows, budget, weeks, lanes, sinces, meta = [], [], [], [], [], {}
+    for sd in state_dirs:
+        sd = pathlib.Path(sd)
+        rows += load_ledger(sd)
+        for d in _read_tsv(sd / "budget.tsv", BUDGET_COLS):
+            budget.append({c: (d[c] if c == "day" else int(d[c] or 0)) for c in BUDGET_COLS})
+        for d in _read_tsv(sd / "weeks.tsv", WEEK_COLS):
+            weeks.append({c: (d[c] if c == "day" else int(d[c] or 0)) for c in WEEK_COLS})
+        lanes += _read_tsv(sd / "lanes.tsv", LANE_COLS)
+        m = load_meta(sd)
+        if m.get("since"):
+            sinces.append(m["since"])
+        meta.setdefault("last_collect", m.get("last_collect", ""))
+    meta["since"] = min(sinces) if sinces else ""
+    return Ledger(rows, meta, budget, weeks, lanes)
+
+
+# ---------------------------------------------------------------- query
+PERIODS = ("today", "week", "last7", "month", "last30", "all")
+PERIOD_LABELS = {"today": "today", "week": "this week", "last7": "last 7 d",
+                 "month": "this month", "last30": "last 30 d", "all": "all"}
+GROUPS = ("project", "model", "lane", "day", "week", "month", "session", "side")
+FILTER_KEYS = ("project", "model", "lane", "side", "session")
+THIN_DAYS = 7
+
+
+def _d(s: str) -> _dt.date:
+    return _dt.date.fromisoformat(s)
+
+
+def period_range(name: str, today: _dt.date, first: _dt.date | None = None):
+    """(start, end, prev_start, prev_end), all inclusive local dates. A week
+    starts on Monday. The previous period is the SAME ELAPSED LENGTH, so a
+    Wednesday compares Mon-Wed with last Mon-Wed, not with a whole week."""
+    D = _dt.timedelta
+    if name == "today":
+        return today, today, today - D(1), today - D(1)
+    if name == "week":
+        s = today - D(today.weekday())
+        return s, s + D(6), s - D(7), today - D(7)
+    if name == "last7":
+        return today - D(6), today, today - D(13), today - D(7)
+    if name == "month":
+        s = today.replace(day=1)
+        nxt = (s + D(32)).replace(day=1)
+        ps = (s - D(1)).replace(day=1)
+        pe = min(ps + (today - s), s - D(1))
+        return s, nxt - D(1), ps, pe
+    if name == "last30":
+        return today - D(29), today, today - D(59), today - D(30)
+    if name == "all":
+        return (first or today), today, None, None
+    raise ValueError("unknown period: %s" % name)
+
+
+def _tokens(r: dict) -> int:
+    return r["in"] + r["out"] + r["cache_read"] + r["cache_w5m"] + r["cache_w1h"]
+
+
+def _match(r: dict, filters: dict) -> bool:
+    for k, vals in (filters or {}).items():
+        if not vals:
+            continue
+        if k == "side":
+            v = "sub" if r["side"] else "main"
+        else:
+            v = r.get(k, "")
+        if v not in vals:
+            return False
+    return True
+
+
+def _median(xs):
+    xs = sorted(xs)
+    if not xs:
+        return None
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
+def _group_key(r: dict, g: str) -> str:
+    if g == "side":
+        return "sub" if r["side"] else "main"
+    if g == "week":
+        d = _d(r["day"])
+        return (d - _dt.timedelta(d.weekday())).isoformat()
+    if g == "month":
+        return r["day"][:7]
+    return str(r.get(g, ""))
+
+
+def query(ledger: Ledger, period: str = "week", filters: dict | None = None,
+          group_by: str = "project", now: int | None = None,
+          table: PriceTable | None = None) -> dict:
+    """Every figure of plan-insights §2 for one period, from rows alone. A
+    figure that needs a distribution is None, with the reason in `needs`,
+    until THIN_DAYS days have been collected."""
+    now = int(now if now is not None else _dt.datetime.now().timestamp())
+    today = _dt.date.fromtimestamp(now)
+    filters = {k: list(v) for k, v in (filters or {}).items() if v}
+    if group_by not in GROUPS:
+        raise ValueError("unknown group: %s" % group_by)
+    since = ledger.meta.get("since") or ""
+    all_days = [r["day"] for r in ledger.rows]
+    first = _d(min(all_days)) if all_days else None
+    start, end, pstart, pend = period_range(period, today, first)
+    last = min(end, today)
+    collected = (today - _d(since)).days + 1 if since else 0
+    thin = collected < THIN_DAYS
+    needs = {}
+
+    def withhold(key, why="%d days" % THIN_DAYS):
+        needs[key] = why
+        return None
+
+    rows_f = [r for r in ledger.rows if _match(r, filters)]
+    inp = [r for r in rows_f if start.isoformat() <= r["day"] <= end.isoformat()]
+    real = [r for r in inp if not r["coarse"]]
+    coarse = [r for r in inp if r["coarse"]]
+
+    S = lambda rs, c: sum(r[c] for r in rs)  # noqa: E731
+    total_real = sum(_tokens(r) for r in real)
+    coarse_tok = S(coarse, "in")
+    total = total_real + coarse_tok
+    out = S(real, "out")
+    active = S(real, "active_s")
+    writes = S(real, "cache_w5m") + S(real, "cache_w1h")
+    fed = S(real, "in") + S(real, "cache_read") + writes
+
+    rep = {
+        "period": {"name": period, "label": PERIOD_LABELS[period],
+                   "start": start.isoformat(), "end": end.isoformat(),
+                   "prev_start": pstart.isoformat() if pstart else None,
+                   "prev_end": pend.isoformat() if pend else None},
+        "now": now, "since": since, "collected_days": collected, "thin": thin,
+        "filters": filters, "group_by": group_by,
+        "prices_as_of": table.as_of if table else None,
+    }
+    rep["tokens"] = {
+        "total": total, "input": S(real, "in"), "output": out,
+        "cache_read": S(real, "cache_read"), "cache_write": writes, "coarse": coarse_tok,
+        "thinking_share": (S(real, "thinking") / out) if out else None,
+        "per_active_hour": (total_real / (active / 3600)) if active else None,
+    }
+
+    priced_usd, unpriced, unpriced_tok, saved = 0.0, set(), 0, 0.0
+    for r in real:
+        c = cost(r, table)
+        if c is None:
+            if _tokens(r):
+                unpriced.add(r["model"])
+                unpriced_tok += _tokens(r)
+            continue
+        priced_usd += c
+        p = table.price(r["model"])
+        saved += (r["cache_read"] * (p["input"] - p["cache_read"])
+                  - r["cache_w5m"] * (p["cache_write_5m"] - p["input"])
+                  - r["cache_w1h"] * (p["cache_write_1h"] - p["input"])) / 1e6
+    have_price = table is not None and (total_real - unpriced_tok > 0 or not real)
+    rep["cache"] = {
+        "read_share": (S(real, "cache_read") / fed) if fed else None,
+        "write_5m": S(real, "cache_w5m"), "write_1h": S(real, "cache_w1h"),
+        # NET of the write premium: what caching saved against sending the
+        # same input uncached.
+        "saved_usd": round(saved, 6) if have_price else None,
+    }
+    elapsed = max(1, (last - max(start, _d(since) if since else start)).days + 1)
+    usd = round(priced_usd, 6) if have_price else None
+    per_day = round(priced_usd / elapsed, 6) if have_price else None
+    month_days = ((today.replace(day=1) + _dt.timedelta(32)).replace(day=1) - today.replace(day=1)).days
+    rep["cost"] = {
+        "usd": usd, "per_day": per_day,
+        "projected_month": (withhold("cost.projected_month") if thin
+                            else (round(per_day * month_days, 6) if per_day is not None else None)),
+        "unpriced_models": sorted(unpriced), "unpriced_tokens": unpriced_tok,
+        "elapsed_days": elapsed,
+    }
+
+    # CONTEXT: the peak of a session is its main conversation's, where a
+    # window filling up is the thing worth knowing.
+    peaks = {}
+    for r in real:
+        if r["side"] or not r["ctx_n"]:
+            continue
+        p = peaks.get(r["session"])
+        if p is None or r["ctx_peak"] > p[0]:
+            peaks[r["session"]] = (r["ctx_peak"], r["model"])
+    pcts = []
+    for peak, model in peaks.values():
+        w = table.window(model) if table else None
+        if w:
+            pcts.append(peak / w)
+    ctx_n = S(real, "ctx_n")
+    rep["context"] = {
+        "avg_per_request": (S(real, "ctx_sum") / ctx_n) if ctx_n else None,
+        "avg_session_peak": (sum(p for p, _ in peaks.values()) / len(peaks)) if peaks else None,
+        "avg_session_peak_pct": (sum(pcts) / len(pcts)) if pcts else None,
+        "sessions_past_80": sum(1 for x in pcts if x >= 0.8) if pcts else None,
+        "sessions_measured": len(pcts),
+        "compactions": S(real, "compactions"),
+    }
+
+    sess = {}
+    for r in real:
+        sess.setdefault(r["session"], 0)
+        sess[r["session"]] += r["active_s"]
+    act = [v for v in sess.values() if v > 0]
+    mix = {}
+    for r in real:
+        for k, v in _mix_parse(r["tool_mix"]).items():
+            mix[k] = mix.get(k, 0) + v
+    sub_tok = sum(_tokens(r) for r in real if r["side"])
+    rep["sessions"] = {
+        "count": len(sess),
+        "median_active_s": withhold("sessions.median_active_s") if thin else _median(act),
+        "longest_active_s": max(act) if act else None,
+        "turns_per_session": (S(real, "turns") / len(sess)) if sess else None,
+        "subagent_share": (sub_tok / total_real) if total_real else None,
+        "tool_calls": S(real, "tools"),
+        "top_tools": sorted(mix.items(), key=lambda kv: (-kv[1], kv[0]))[:5],
+        "web": S(real, "web"),
+    }
+
+    bud = [b for b in ledger.budget if start.isoformat() <= b["day"] <= end.isoformat()]
+    peaked = [b["session_peak_pct"] for b in bud if b["session_peak_pct"] > 0]
+    wk = [w for w in ledger.weeks if start.isoformat() <= w["day"] <= end.isoformat()
+          and w["reset_at"] <= now and w["sampled_at"]]
+    rep["budget"] = {
+        "windows": len(peaked), "hits": sum(b["hits"] for b in bud),
+        "limited_s": sum(b["limited_s"] for b in bud),
+        "resumes": sum(b["resumes"] for b in bud), "winddowns": sum(b["winddowns"] for b in bud),
+        "avg_window_peak_pct": (sum(peaked) / len(peaked)) if peaked else None,
+        "week_pct_at_reset": [[w["day"], w["week_pct"]] for w in sorted(wk, key=lambda w: w["reset_at"])],
+    }
+
+    rep["lanes"] = _lane_figures(ledger.lanes, start, end, filters, thin, withhold)
+    rep["rhythm"] = _rhythm(rows_f, inp, start, last, pstart, pend, since, thin, withhold, total)
+
+    groups = {}
+    for r in inp:
+        groups.setdefault(_group_key(r, group_by), []).append(r)
+    bd = []
+    for key, rs in groups.items():
+        rr = [r for r in rs if not r["coarse"]]
+        tok = sum(_tokens(r) for r in rr) + S([r for r in rs if r["coarse"]], "in")
+        n = S(rr, "ctx_n")
+        fd = S(rr, "in") + S(rr, "cache_read") + S(rr, "cache_w5m") + S(rr, "cache_w1h")
+        costs = [cost(r, table) for r in rr if _tokens(r)]
+        bd.append({"key": key, "tokens": tok, "share": (tok / total) if total else None,
+                   "sessions": len({r["session"] for r in rr}),
+                   "avg_ctx": (S(rr, "ctx_sum") / n) if n else None,
+                   "cache_pct": (S(rr, "cache_read") / fd) if fd else None,
+                   "usd": round(sum(c for c in costs if c is not None), 6)
+                   if table is not None and any(c is not None for c in costs) else None,
+                   "unpriced": any(c is None for c in costs)})
+    if group_by in ("day", "week", "month"):
+        bd.sort(key=lambda b: b["key"])
+    else:
+        bd.sort(key=lambda b: (-b["tokens"], b["key"]))
+    rep["breakdown"] = bd
+    rep["needs"] = needs
+    return rep
+
+
+def _lane_figures(lanes, start, end, filters, thin, withhold) -> dict:
+    def day(ep):
+        return local_day(int(ep)) if ep else ""
+    want = filters.get("lane")
+    ls = [l for l in lanes if not want or l["slug"] in want]
+    s, e = start.isoformat(), end.isoformat()
+    launched = [l for l in ls if l["launched"] and s <= day(l["launched"]) <= e]
+    done = [l for l in ls if l["done"] and s <= day(l["done"]) <= e]
+    spans = [int(l["done"]) - int(l["launched"]) for l in done
+             if l["launched"] and int(l["done"]) >= int(l["launched"])]
+    parent = {l["slug"]: l["parent"] for l in lanes}
+
+    def depth(slug):
+        n, seen = 0, set()
+        while slug in parent and slug not in seen:
+            seen.add(slug)
+            n += 1
+            slug = parent[slug]
+        return n
+    num = lambda l, c: int(l[c] or 0)  # noqa: E731
+    return {
+        "launched": len(launched), "done": len(done),
+        "median_launch_to_done_s": withhold("lanes.median_launch_to_done_s") if thin else _median(spans),
+        "deepest": max((depth(l["slug"]) for l in launched), default=0),
+        "forks_asked": sum(num(l, "questions_asked") for l in launched),
+        "forks_answered": sum(num(l, "questions_answered") for l in launched),
+        "stranded": sum(num(l, "stranded") for l in launched),
+    }
+
+
+def _rhythm(rows_f, inp, start, last, pstart, pend, since, thin, withhold, total) -> dict:
+    by_wd, by_hr, by_day = [0] * 7, [0] * 24, {}
+    for r in inp:
+        t = r["in"] if r["coarse"] else _tokens(r)
+        by_day[r["day"]] = by_day.get(r["day"], 0) + t
+        by_wd[_d(r["day"]).weekday()] += t
+        for h, v in _mix_parse(r["hours"]).items():
+            if h.isdigit() and 0 <= int(h) < 24:
+                by_hr[int(h)] += v
+    active_days = {r["day"] for r in rows_f
+                   if (r["coarse"] and r["in"]) or (not r["coarse"] and (r["requests"] or r["turns"]))}
+    D = _dt.timedelta
+    cur, d = 0, last
+    if d.isoformat() not in active_days:
+        d -= D(1)                     # today is not over: a streak may end yesterday
+    while d.isoformat() in active_days:
+        cur += 1
+        d -= D(1)
+    longest, run, d = 0, 0, start
+    while d <= last:
+        run = run + 1 if d.isoformat() in active_days else 0
+        longest = max(longest, run)
+        d += D(1)
+    vs = None
+    prev_total = None
+    if pstart is None:
+        vs = None
+    elif thin:
+        vs = withhold("rhythm.vs_previous_pct")
+    elif not since or pstart.isoformat() < since:
+        vs = withhold("rhythm.vs_previous_pct", "a previous period")
+    else:
+        prev_total = sum((r["in"] if r["coarse"] else _tokens(r)) for r in rows_f
+                         if pstart.isoformat() <= r["day"] <= pend.isoformat())
+        cur_total = sum(v for k, v in by_day.items() if k <= last.isoformat())
+        vs = ((cur_total - prev_total) / prev_total * 100) if prev_total else \
+            withhold("rhythm.vs_previous_pct", "a previous period")
+    return {
+        "by_weekday": by_wd, "by_hour": by_hr,
+        "busiest_day": max(sorted(by_day), key=lambda k: by_day[k]) if by_day and total else None,
+        "busiest_hour": by_hr.index(max(by_hr)) if any(by_hr) else None,
+        "streak": cur, "longest_streak": longest,
+        "vs_previous_pct": vs, "previous_total": prev_total,
+    }
 
 
 # ------------------------------------------------------------------ CLI

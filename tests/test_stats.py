@@ -25,6 +25,7 @@ sys.path.insert(0, str(FIX))
 import make_fixtures  # noqa: E402
 
 A, B = make_fixtures.A, make_fixtures.B
+HAIKU = make_fixtures.HAIKU
 PROJ = "projects/" + make_fixtures.PROJ
 NOW = 1788400000
 
@@ -61,7 +62,7 @@ def state_files(state: pathlib.Path) -> dict:
 
 def test_fixture_is_generated():
     for rel, text in make_fixtures.build().items():
-        p = FIX / "claude" / rel
+        p = FIX / rel
         check(p.is_file() and p.read_text() == text,
               "fixture %s is what make_fixtures.py writes" % rel.rsplit("/", 1)[-1])
 
@@ -125,7 +126,8 @@ def test_ledger(tmp):
         ("2026-08-30", "claude-opus-5", 123456), ("2026-08-31", "claude-opus-5", 1000),
         ("2026-08-31", "claude-sonnet-5", 2000)],
           "coarse rows for 08-30 and 08-31; 09-01 overlaps a transcript and is skipped")
-    check(muxstats.load_meta(st).get("since") == "2026-08-30", "collecting since the oldest day")
+    check(muxstats.load_meta(st).get("since") == "2026-09-01",
+          "collecting since the oldest WATCHED day, not a coarse one")
 
     # The privacy promise, checked on every byte this wrote.
     leaked = [n for n, data in state_files(st).items()
@@ -243,6 +245,247 @@ def test_lanes(tmp):
           "a lane, once known, survives its window closing")
 
 
+# ------------------------------------------------------------ phase 2
+PRICES = muxstats.PriceTable({
+    "claude-opus-5": {"input": 5, "output": 25, "cache_read": 0.5, "cache_write_5m": 6.25,
+                      "cache_write_1h": 10, "window": 1_000_000},
+    "claude-haiku-4-5": {"input": 1, "output": 5, "cache_read": 0.1, "cache_write_5m": 1.25,
+                         "cache_write_1h": 2, "window": 200_000},
+}, as_of="2026-09-17")
+
+
+def utc(s):
+    import datetime as dt
+    return int(dt.datetime.fromisoformat(s + "+00:00").timestamp())
+
+
+def near(a, b, eps=1e-9):
+    return a is not None and b is not None and abs(a - b) <= eps * max(1, abs(b))
+
+
+def test_query_figures():
+    led = muxstats.load(FIX / "ledger")
+    now = utc("2026-09-17T12:00:00")          # a Thursday
+    q = muxstats.query(led, "week", {}, "project", now, PRICES)
+    p = q["period"]
+    check((p["start"], p["end"], p["prev_start"], p["prev_end"]) ==
+          ("2026-09-14", "2026-09-20", "2026-09-07", "2026-09-10"),
+          "week = Monday..Sunday; previous = the same Mon..Thu a week earlier")
+    check(q["collected_days"] == 17 and not q["thin"] and q["needs"] == {},
+          "17 days collected: nothing withheld")
+
+    t = q["tokens"]
+    check((t["total"], t["input"], t["output"], t["cache_read"], t["cache_write"], t["coarse"]) ==
+          (174000, 3600, 7400, 149000, 14000, 0), "TOKENS total and its four parts")
+    check(near(t["thinking_share"], 1500 / 7400), "thinking share of output = 1500/7400")
+    check(near(t["per_active_hour"], 104400), "tokens per active hour = 174000 / (6000s/3600)")
+
+    c = q["cache"]
+    check(near(c["read_share"], 149000 / 166600), "cache share of input = 149000/166600")
+    check((c["write_5m"], c["write_1h"]) == (10000, 4000), "5m vs 1h writes")
+    check(near(c["saved_usd"], 0.6056), "cache saved, net of the write premium = $0.6056 (%r)" % c["saved_usd"])
+
+    k = q["cost"]
+    check(near(k["usd"], 0.3414), "API-equiv $ = 0.1675 + 0.0039 + 0.17 (%r)" % k["usd"])
+    check(k["unpriced_models"] == ["mystery-model"] and k["unpriced_tokens"] == 1000,
+          "an unpriced model is named with its tokens, not guessed")
+    check(k["elapsed_days"] == 4 and near(k["per_day"], 0.08535), "per day over the 4 elapsed days")
+    check(near(k["projected_month"], 0.08535 * 30), "projected September (30 days)")
+
+    x = q["context"]
+    check(near(x["avg_per_request"], 58280), "avg context per request = 1165600 / 20")
+    check(near(x["avg_session_peak"], (600000 + 850000 + 100) / 3), "avg session peak (main side)")
+    check(near(x["avg_session_peak_pct"], 0.725) and x["sessions_measured"] == 2,
+          "avg peak % of window over the 2 sessions with a known window")
+    check(x["sessions_past_80"] == 1 and x["compactions"] == 1, "one session past 80%; one compaction")
+
+    s = q["sessions"]
+    check(s["count"] == 3 and s["median_active_s"] == 1800 and s["longest_active_s"] == 3600,
+          "3 sessions; median active 1800 s, longest 3600 s")
+    check(near(s["turns_per_session"], 7 / 3), "turns per session = 7/3")
+    check(near(s["subagent_share"], 10000 / 174000), "subagent share of tokens")
+    check(s["tool_calls"] == 28 and s["top_tools"] == [("Bash", 17), ("Read", 8), ("Grep", 3)],
+          "tool calls and the top tools (%r)" % (s["top_tools"],))
+    check(s["web"] == 3, "web searches + fetches")
+
+    r = q["rhythm"]
+    check(r["by_weekday"] == [123000, 50000, 1000, 0, 0, 0, 0], "tokens by weekday, Monday first")
+    hours = [0] * 24
+    hours[9], hours[10], hours[14], hours[23] = 50000, 73000, 50000, 1000
+    check(r["by_hour"] == hours, "tokens by hour")
+    check((r["busiest_day"], r["busiest_hour"]) == ("2026-09-14", 10), "busiest day and hour")
+    check((r["streak"], r["longest_streak"]) == (3, 3),
+          "streak 14-15-16, today not over yet so it still counts")
+    check(near(r["vs_previous_pct"], 248.0) and r["previous_total"] == 50000,
+          "▲ 248% against last Mon..Thu (50000)")
+
+    bd = {b["key"]: b for b in q["breakdown"]}
+    check([b["key"] for b in q["breakdown"]] == ["~/p/alpha", "~/p/beta"], "breakdown by tokens")
+    a, b = bd["~/p/alpha"], bd["~/p/beta"]
+    check((a["tokens"], a["sessions"]) == (123000, 1) and near(a["share"], 123000 / 174000),
+          "alpha: tokens, share, sessions")
+    check(near(a["avg_ctx"], 1119500 / 15) and near(a["cache_pct"], 109000 / 120500)
+          and near(a["usd"], 0.1714) and not a["unpriced"], "alpha: avg ctx, cache %, $")
+    check((b["tokens"], b["sessions"]) == (51000, 2) and near(b["usd"], 0.17) and b["unpriced"],
+          "beta: its $ is flagged partial (a model has no price)")
+
+    # Filters compose: AND across keys, OR within one.
+    f = lambda **kw: muxstats.query(led, "week", kw, "model", now, PRICES)["tokens"]["total"]  # noqa: E731
+    check(f(project=["~/p/alpha"], side=["main"]) == 113000, "project AND main side")
+    check(f(model=["claude-opus-5", HAIKU]) == 173000, "two models: OR within a key")
+    check(f(lane=["L1"], model=["claude-opus-5"]) == 113000, "lane AND model")
+    check(f(side=["sub"]) == 10000, "subagents only")
+
+    al = muxstats.query(led, "all", {}, "month", now, PRICES)
+    check(al["period"]["start"] == "2026-08-30" and al["tokens"]["total"] == 251000
+          and al["tokens"]["coarse"] == 7000, "all: from the first row, coarse counted in the total")
+    check(al["rhythm"]["vs_previous_pct"] is None and "rhythm.vs_previous_pct" not in al["needs"],
+          "all has no previous period and does not pretend to")
+    check([b["key"] for b in al["breakdown"]] == ["2026-08", "2026-09"], "group by month, in date order")
+    check(al["cost"]["usd"] is not None and near(al["cost"]["usd"], 0.3414 + 0.025 + 0.0245 + 0.5),
+          "coarse days are not priced; the real ones are")
+
+    mo = muxstats.query(led, "month", {}, "day", now, PRICES)
+    check((mo["period"]["prev_start"], mo["period"]["prev_end"]) == ("2026-08-01", "2026-08-17"),
+          "this month compares with the same 17 days of last month")
+    check(mo["rhythm"]["vs_previous_pct"] is None and mo["needs"].get("rhythm.vs_previous_pct") == "a previous period",
+          "...which predates collecting, so it says so")
+    l7 = muxstats.query(led, "last7", {}, "day", now, PRICES)
+    check((l7["period"]["start"], l7["tokens"]["total"]) == ("2026-09-11", 174000), "last 7 d")
+    td = muxstats.query(led, "today", {}, "project", now, PRICES)
+    check(td["tokens"]["total"] == 0 and td["breakdown"] == [] and td["context"]["avg_per_request"] is None,
+          "an empty today is zeros and blanks, not an exception")
+
+    nop = muxstats.query(led, "week", {}, "project", now, None)
+    check(nop["cost"]["usd"] is None and nop["cache"]["saved_usd"] is None
+          and nop["context"]["avg_session_peak_pct"] is None and nop["tokens"]["total"] == 174000,
+          "no price table: tokens only, no $ and no window %")
+
+
+def test_thin_data(tmp):
+    d = tmp / "thin"
+    shutil.copytree(FIX / "ledger", d)
+    (d / "meta").write_text("since\t2026-09-14\n")
+    q = muxstats.query(muxstats.load(d), "week", {}, "project",
+                       utc("2026-09-17T12:00:00"), PRICES)
+    check(q["thin"] and q["collected_days"] == 4, "4 days collected is thin")
+    check(q["sessions"]["median_active_s"] is None and q["cost"]["projected_month"] is None
+          and q["rhythm"]["vs_previous_pct"] is None,
+          "medians, projection and vs-previous are withheld")
+    check(q["needs"] == {"sessions.median_active_s": "7 days", "cost.projected_month": "7 days",
+                         "rhythm.vs_previous_pct": "7 days", "lanes.median_launch_to_done_s": "7 days"},
+          "...each with its reason (%r)" % q["needs"])
+    check(q["tokens"]["total"] == 174000 and q["sessions"]["longest_active_s"] == 3600,
+          "totals and maxima are still shown")
+
+
+def test_dst(tmp):
+    os.environ["TZ"] = "Europe/Berlin"
+    time.tzset()
+    try:
+        cfg = tmp / "dst" / "claude"
+        proj = cfg / "projects" / "-home-user-dst"
+        proj.mkdir(parents=True)
+        sid = "dddddddd-0000-4000-8000-00000000000d"
+        recs = []
+        # 10-25 is the day CEST ends: 02:30 happens twice.
+        for i, ts in enumerate(["2026-10-24T22:30:00Z", "2026-10-25T00:30:00Z",
+                                "2026-10-25T01:30:00Z", "2026-10-25T22:30:00Z",
+                                "2026-10-25T23:30:00Z"]):
+            recs += make_fixtures.message(sid, ts.replace("Z", ".000Z"), "claude-opus-5",
+                                          "msg_dst_%d" % i, "req_dst_%d" % i,
+                                          make_fixtures.usage(0, 1000, 0, 0, 0), ["text"])
+        (proj / (sid + ".jsonl")).write_text(make_fixtures.dumps(recs))
+        st = tmp / "dst" / "state"
+        muxstats.collect(cfg, st, utc("2026-10-26T10:00:00"))
+        rows = {r["day"]: r for r in muxstats.load_ledger(st)}
+        check(sorted(rows) == ["2026-10-25", "2026-10-26"],
+              "days are LOCAL: 22:30Z on the 24th is the 25th in Berlin, 23:30Z on the 25th the 26th")
+        check(rows["2026-10-25"]["out"] == 4000 and rows["2026-10-25"]["hours"] == "0=1000;2=2000;23=1000",
+              "the repeated 02:00 hour holds both of its readings (%r)" % rows["2026-10-25"]["hours"])
+        led = muxstats.load(st)
+        sun = muxstats.query(led, "week", {}, "day", utc("2026-10-25T12:00:00"), None)
+        mon = muxstats.query(led, "week", {}, "day", utc("2026-10-26T10:00:00"), None)
+        l7 = muxstats.query(led, "last7", {}, "day", utc("2026-10-26T10:00:00"), None)
+        check((sun["period"]["start"], sun["period"]["end"]) == ("2026-10-19", "2026-10-25"),
+              "Sunday the 25th is still in the week that began Monday the 19th")
+        check(mon["period"]["start"] == "2026-10-26" and mon["tokens"]["total"] == 1000,
+              "Monday the 26th starts a new week holding only its own hour")
+        check(l7["tokens"]["total"] == 5000, "last 7 d spans the DST change whole")
+    finally:
+        os.environ["TZ"] = "UTC"
+        time.tzset()
+
+
+def test_budget_and_lanes(tmp):
+    home = tmp / "muxhome"
+    shutil.copytree(FIX / "muxhome", home)
+    for rel, stamp in [("handovers/done/STATUS-lane-a.md", "2026-09-15T09:00:00"),
+                       ("handovers/done/STATUS-lane-b-20260916-120000.md", "2026-09-16T12:00:00")]:
+        os.utime(home / rel, (utc(stamp), utc(stamp)))
+    st = tmp / "budget-state"
+    st.mkdir()
+    shutil.copy(FIX / "ledger" / "meta", st / "meta")
+    e = utc("2026-09-14T12:10:00")
+    limits = {("five_hour", str(e + 30)): {"type": "five_hour", "resets_at": str(e + 30),
+                                           "first_ts": str(e - 1800), "last_ts": str(e - 60)},
+              ("seven_day", str(utc("2026-09-17T17:00:00"))): {
+                  "type": "seven_day", "resets_at": str(utc("2026-09-17T17:00:00")),
+                  "first_ts": str(utc("2026-09-17T16:30:00")), "last_ts": "0"}}
+    wd = FIX / "watchdog"
+    muxstats.budget_collect(st, wd, limits)
+    muxstats.lanes_collect(st, wd, home / "schedules", home / "handovers")
+
+    b = {r["reset_at"]: r for r in muxstats.load(st).budget}
+    w1 = b.get(e)
+    check(w1 is not None and (w1["day"], w1["window_start"], w1["session_peak_pct"], w1["week_pct"]) ==
+          ("2026-09-14", e - 18000, 100, 30), "the 12:10 window: readings to a peak of 100%, week 30%")
+    check(w1 is not None and (w1["hits"], w1["limited_s"], w1["resumes"], w1["winddowns"]) == (1, 1830, 2, 1),
+          "...a limit hit 30 s off the reading's minute is the same window; 2 resumes, 1 wind-down")
+    w2 = b.get(utc("2026-09-14T17:10:00"))
+    check(w2 is not None and w2["session_peak_pct"] == 5, "'resets=5:10pm' is 17:10")
+    check(utc("2026-09-15T01:00:00") not in b, "a 0% window with nothing in it is not a row")
+    w4 = b.get(utc("2026-09-16T10:00:00"))
+    check(w4 is not None and (w4["winddowns"], w4["session_peak_pct"]) == (1, 0),
+          "a wind-down outside any known window still counts")
+    check(len(b) == 4, "four windows (%d)" % len(b))
+
+    before = state_files(st)
+    muxstats.budget_collect(st, wd, limits)
+    muxstats.lanes_collect(st, wd, home / "schedules", home / "handovers")
+    check(state_files(st) == before, "budget and lanes collected twice -> byte-identical")
+    muxstats.budget_collect(st, tmp / "rotated-away", {})
+    muxstats.lanes_collect(st, tmp / "rotated-away", None, None)
+    check(state_files(st) == before, "a log rotated away loses nothing already counted")
+
+    lanes = {l["slug"]: l for l in muxstats.load(st).lanes}
+    check(sorted(lanes) == ["a-title-that-is-far-to", "lane-a", "lane-b", "lane-c", "lane-d"],
+          "lanes from tree + entries (slug rule of the watchdog); adopted and unlaunched skipped")
+    la, lb = lanes["lane-a"], lanes["lane-b"]
+    check((la["parent"], la["launched"], la["done"]) ==
+          ("root", str(utc("2026-09-14T08:30:00")), str(utc("2026-09-15T09:00:00"))),
+          "lane-a: launched = the earlier of entry and tree; done = its done/ mtime")
+    check((la["questions_asked"], la["questions_answered"]) == ("2", "2"), "an ANSWERED file answers all its forks")
+    check((lb["done"], lb["questions_asked"], lb["questions_answered"], lb["stranded"]) ==
+          (str(utc("2026-09-16T12:00:00")), "3", "1", "2"),
+          "lane-b: stamped done file, 3 forks 1 answered, stranded twice (not 'no longer')")
+
+    q = muxstats.query(muxstats.load(st), "week", {}, "project", utc("2026-09-17T23:00:00"), PRICES)
+    bu = q["budget"]
+    check((bu["windows"], bu["hits"], bu["limited_s"], bu["resumes"], bu["winddowns"]) == (3, 1, 1830, 2, 2),
+          "BUDGET: 3 windows, 1 hit, 1830 s limited, 2 resumes, 2 wind-downs")
+    check(near(bu["avg_window_peak_pct"], 50.0), "average window peak = (100 + 5 + 45) / 3")
+    check(bu["week_pct_at_reset"] == [["2026-09-17", 77]],
+          "week % at the reset that passed; next week's is not a reset yet")
+    ln = q["lanes"]
+    check((ln["launched"], ln["done"], ln["deepest"]) == (5, 2, 4), "LANES: 5 launched, 2 done, depth 4")
+    check(ln["median_launch_to_done_s"] == (88200 + 180000) / 2, "median launch-to-done")
+    check((ln["forks_asked"], ln["forks_answered"], ln["stranded"]) == (5, 3, 2), "forks and stranded")
+    lq = muxstats.query(muxstats.load(st), "week", {"lane": ["lane-b"]}, "project",
+                        utc("2026-09-17T23:00:00"), PRICES)["lanes"]
+    check((lq["launched"], lq["forks_asked"]) == (1, 3), "the lane filter narrows the LANES row")
+
+
 def main() -> int:
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="muxstats-test-"))
     try:
@@ -251,6 +494,10 @@ def main() -> int:
         test_idempotent_and_incremental(tmp, cfg, st)
         test_shrink_and_replace(tmp)
         test_lanes(tmp)
+        test_query_figures()
+        test_thin_data(tmp)
+        test_dst(tmp)
+        test_budget_and_lanes(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print()

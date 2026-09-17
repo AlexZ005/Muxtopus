@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes the synthetic transcripts tests/test_stats.py reads.
 
-    python3 tests/fixtures/transcripts/make_fixtures.py     (rewrites claude/)
+    python3 tests/fixtures/transcripts/make_fixtures.py     (rewrites every fixture)
 
 SYNTHETIC, WITH THE REAL SHAPE. Every record carries the keys a Claude Code
 2.1.27x transcript carries (checked against real files by listing KEYS only);
@@ -21,6 +21,17 @@ What is in it, and what the test expects of it:
   stats-cache.json  two coarse days before the oldest transcript, and one that
                     overlaps it (must be skipped)
 
+and, for query() (every figure hand-computed in tests/test_stats.py):
+
+  ledger/           a small ledger: four rows this week (2026-09-14..), one the
+                    week before, one on 09-01, one coarse day
+  watchdog/         usage.log (hourly readings, a failed read, an am/pm reset,
+                    an idle 0% window), log (resumes, wind-downs, stranded),
+                    tree.tsv (three launched lanes and one adopted window)
+  muxhome/          schedules/ with `launched:` stamps, handovers/ with done
+                    STATUS files and QUESTIONS files (mtimes are set by the test:
+                    git does not keep them)
+
 test_stats.py checks that this script still produces the committed files, so
 the generator and the fixture cannot drift apart.
 """
@@ -28,7 +39,6 @@ import json
 import pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE / "claude"
 PROJ = "-home-user-proj-alpha"
 CWD = "/home/user/proj/alpha"
 A = "aaaaaaaa-0000-4000-8000-00000000000a"
@@ -141,7 +151,13 @@ def dumps(recs):
 
 
 def build() -> dict:
-    """relative path -> file content"""
+    """path relative to this directory -> file content"""
+    out = {"claude/" + k: v for k, v in build_transcripts().items()}
+    out.update(build_query())
+    return out
+
+
+def build_transcripts() -> dict:
     _n[0] = 0
     D1 = "2026-09-01T"
     D2 = "2026-09-02T"
@@ -205,12 +221,125 @@ def build() -> dict:
     }
 
 
+LEDGER_COLS = ("day", "session", "project", "lane", "model", "side",
+               "requests", "in", "out", "cache_read", "cache_w5m", "cache_w1h", "thinking",
+               "ctx_peak", "ctx_sum", "ctx_n", "tools", "web", "turns", "active_s",
+               "compactions", "first_ts", "last_ts", "hours", "tool_mix", "coarse")
+OPUS, HAIKU = "claude-opus-5", "claude-haiku-4-5-20251001"
+S1, S2, S3, S4, S5 = ("11111111-0000-4000-8000-000000000001", "22222222-0000-4000-8000-000000000002",
+                      "33333333-0000-4000-8000-000000000003", "44444444-0000-4000-8000-000000000004",
+                      "55555555-0000-4000-8000-000000000005")
+# R1..R7 of tests/test_stats.py, in column order after `side`:
+# req in out read w5m w1h think peak ctx_sum ctx_n tools web turns active comp first last hours mix coarse
+LEDGER_ROWS = [
+    ("2026-08-30", "-", "-", "", OPUS, 0, 0, 7000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", "", 1),
+    ("2026-09-01", S5, "~/p/alpha", "", OPUS, 0, 1, 0, 20000, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 300, 0,
+     1788264000, 1788264300, "12=20000", "", 0),
+    ("2026-09-08", S4, "~/p/alpha", "", OPUS, 0, 2, 0, 1000, 49000, 0, 0, 0, 30000, 49000, 2, 0, 0, 1, 1200, 0,
+     1788854400, 1788855600, "8=50000", "", 0),
+    ("2026-09-14", S1, "~/p/alpha", "L1", HAIKU, 1, 5, 500, 500, 9000, 0, 0, 0, 5000, 9500, 5, 3, 0, 0, 0, 0,
+     1789380000, 1789383000, "10=10000", "Grep=3", 0),
+    ("2026-09-14", S1, "~/p/alpha", "L1", OPUS, 0, 10, 1000, 2000, 100000, 10000, 0, 500, 600000, 1110000, 10,
+     20, 1, 4, 3600, 1, 1789376400, 1789383600, "9=50000;10=63000", "Bash=12;Read=8", 0),
+    ("2026-09-15", S2, "~/p/beta", "", OPUS, 0, 4, 2000, 4000, 40000, 0, 4000, 1000, 850000, 46000, 4,
+     5, 2, 2, 1800, 0, 1789480800, 1789482600, "14=50000", "Bash=5", 0),
+    ("2026-09-16", S3, "~/p/beta", "", "mystery-model", 0, 1, 100, 900, 0, 0, 0, 0, 100, 100, 1,
+     0, 0, 1, 600, 0, 1789599600, 1789600200, "23=1000", "", 0),
+]
+
+USAGE_LOG = """\
+2026-09-14 08:15:00\tsession=10%\tresets=12:10\tweek=20%\tresets=Sep 17, 17:00\tFable=10%
+2026-09-14 10:15:00\tsession=60%\tresets=12:10\tweek=24%\tresets=Sep 17, 17:00\tFable=15%
+2026-09-14 11:59:00\tsession=100%\tresets=12:10\tweek=30%\tresets=Sep 17, 17:00\tFable=20%
+2026-09-14 12:30:00\tREAD FAILED: the probe never rendered /usage
+2026-09-14 13:15:00\tsession=5%\tresets=5:10pm\tweek=31%\tresets=Sep 17, 17:00\tFable=21%
+2026-09-14 20:00:00\tsession=0%\tresets=01:00\tweek=31%\tresets=Sep 17, 17:00\tFable=21%
+2026-09-17 16:00:00\tsession=40%\tresets=20:00\tweek=77%\tresets=Sep 17, 17:00\tFable=50%
+2026-09-17 18:00:00\tsession=45%\tresets=20:00\tweek=2%\tresets=Sep 24, 17:00\tFable=1%
+"""
+
+WATCHDOG_LOG = """\
+2026-09-14 11:00:00  wound down 1234abcd in alpha band=1 session=79% week=25% ctx=500000
+2026-09-14 12:00:00  alive: 3 session(s), 0 pending schedule(s), polling every 30s
+2026-09-14 12:10:40  prompted 1234abcd in alpha (pane %3) after reset 12:10pm
+2026-09-14 12:10:41  prompted 5678abcd in beta (pane %4) after reset 12:10pm
+2026-09-15 03:00:00  stranded: ➥➥lane-b idle 2h10m with an open handover (/x/STATUS-lane-b.md) and no pending schedule entry naming it
+2026-09-15 04:00:00  no longer stranded: ➥➥lane-b is now working
+2026-09-16 03:00:00  stranded: ➥➥lane-b idle 1h05m with an open handover (/x/STATUS-lane-b.md) and no pending schedule entry naming it
+2026-09-16 05:00:00  wound down 1234abcd in alpha band=2 session=90% week=40% ctx=900000
+"""
+
+TREE = """\
+lane-a\troot\t@1\t%1\t1789376400\tlane-a.md
+lane-b\tlane-a\t@2\t%2\t1789380000\tlane-b.md
+lane-c\tlane-b\t@3\t%3\t1789466400\tlane-c.md
+adopted-window\tlane-a\t@4\t%4\t1789380000\t(adopted)
+"""
+
+
+def entry(title, launched, slug=None, parent=None):
+    h = ["title: " + title]
+    if slug:
+        h.append("slug: " + slug)
+    if parent:
+        h.append("parent: " + parent)
+    h += ["type: work", "status: " + ("done" if launched else "pending")]
+    if launched:
+        h.append("launched: " + launched)
+    return "\n".join(h) + "\n---\nA synthetic prompt body.\nlaunched: 1999-01-01 00:00 is body text, not a header\n"
+
+
+QUESTIONS_B = """\
+# Questions from lane-b
+
+## 1. First synthetic fork
+Which way?
+**Answer:** the first way.
+
+## 2. Second synthetic fork
+Which way?
+
+3. A third, as a numbered item
+Which way?
+"""
+
+QUESTIONS_A = """\
+# Questions from lane-a
+ANSWERED 2026-09-15
+
+## One
+?
+
+## Two
+?
+"""
+
+
+def build_query() -> dict:
+    ledger = ["\t".join(LEDGER_COLS)] + ["\t".join(str(v) for v in r) for r in LEDGER_ROWS]
+    return {
+        "ledger/ledger.tsv": "\n".join(ledger) + "\n",
+        "ledger/meta": "backfill\tdone\nlast_collect\t1789646400\nschema\t1\nsince\t2026-09-01\n",
+        "watchdog/usage.log": USAGE_LOG,
+        "watchdog/log": WATCHDOG_LOG,
+        "watchdog/tree.tsv": TREE,
+        "muxhome/schedules/lane-a.md": entry("lane a", "2026-09-14 08:30", slug="lane-a", parent="root"),
+        "muxhome/schedules/lane-d.md": entry("lane d", "2026-09-16 08:00", slug="lane-d", parent="lane-c"),
+        "muxhome/schedules/never.md": entry("never launched", None, slug="never"),
+        "muxhome/schedules/long.md": entry("a title that is far too long", "2026-09-16 09:00"),
+        "muxhome/handovers/done/STATUS-lane-a.md": "# lane-a\nsynthetic handover\n",
+        "muxhome/handovers/done/STATUS-lane-b-20260916-120000.md": "# lane-b\nsynthetic handover\n",
+        "muxhome/handovers/done/QUESTIONS-lane-a.md": QUESTIONS_A,
+        "muxhome/handovers/QUESTIONS-lane-b.md": QUESTIONS_B,
+    }
+
+
 def main():
     for rel, text in build().items():
-        p = ROOT / rel
+        p = HERE / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
-    print("wrote %d file(s) under %s" % (len(build()), ROOT))
+    print("wrote %d file(s) under %s" % (len(build()), HERE))
 
 
 if __name__ == "__main__":

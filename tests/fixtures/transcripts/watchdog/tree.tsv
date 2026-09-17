@@ -1,0 +1,4 @@
+lane-a	root	@1	%1	1789376400	lane-a.md
+lane-b	lane-a	@2	%2	1789380000	lane-b.md
+lane-c	lane-b	@3	%3	1789466400	lane-c.md
+adopted-window	lane-a	@4	%4	1789380000	(adopted)

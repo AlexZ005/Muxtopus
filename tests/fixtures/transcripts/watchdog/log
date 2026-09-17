@@ -1,0 +1,8 @@
+2026-09-14 11:00:00  wound down 1234abcd in alpha band=1 session=79% week=25% ctx=500000
+2026-09-14 12:00:00  alive: 3 session(s), 0 pending schedule(s), polling every 30s
+2026-09-14 12:10:40  prompted 1234abcd in alpha (pane %3) after reset 12:10pm
+2026-09-14 12:10:41  prompted 5678abcd in beta (pane %4) after reset 12:10pm
+2026-09-15 03:00:00  stranded: ➥➥lane-b idle 2h10m with an open handover (/x/STATUS-lane-b.md) and no pending schedule entry naming it
+2026-09-15 04:00:00  no longer stranded: ➥➥lane-b is now working
+2026-09-16 03:00:00  stranded: ➥➥lane-b idle 1h05m with an open handover (/x/STATUS-lane-b.md) and no pending schedule entry naming it
+2026-09-16 05:00:00  wound down 1234abcd in alpha band=2 session=90% week=40% ctx=900000
