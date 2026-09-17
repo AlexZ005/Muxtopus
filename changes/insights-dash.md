@@ -24,3 +24,7 @@ its own record.
 - A figure that needs a distribution (a median, "vs previous", the month
   projection) says `— needs 7 days` until the ledger has them, so day one is a
   correct sparse screen rather than zeros dressed as findings.
+- The watchdog now collects into the ledger every five minutes, so it accrues
+  whether or not the dashboard is open. A collector that fails or hangs is
+  logged and the pass carries on — restarting a limited window is the daemon's
+  job, and counting tokens may never get in its way.

@@ -145,6 +145,20 @@ SCHED_PROBE_EVERY=900
 # Working trees change far more slowly than sessions do, and each one costs a
 # git fork, so the repo sweep runs on its own slower clock.
 REPO_EVERY=120
+# THE STATS LEDGER (docs/plan-insights.md §1). muxstats reads what is new out
+# of the transcripts into a ledger that outlives them -- Claude Code deletes a
+# transcript after cleanupPeriodDays, so "everything to date" only exists if
+# something keeps its own record, and it has to accrue with no dashboard open.
+# A STAMP FILE, NOT A COUNTER: the daemon re-execs on a config edit and
+# restarts with the machine, and a counter would begin again at zero each
+# time while the stamp remembers. Five minutes, so a 30-second pass pays for
+# a transcript walk twice an hour instead of a hundred and twenty times.
+STATS_AT="$STATE_DIR/stats.at"
+STATS_EVERY=300
+# Bounded, because this daemon's real job is restarting limited windows and a
+# collector that hung would stop every pass queued behind it.
+STATS_TIMEOUT=120
+STATS_ERR="$STATE_DIR/stats.err"
 
 DEFAULT_MSG="The usage limit has reset. Continue from where you left off."
 INTERVAL="${WATCHDOG_INTERVAL:-30}"
@@ -2096,6 +2110,38 @@ notify_end() {
   return 0
 }
 
+# ------------------------------------------------------------ the ledger
+# Run muxstats' collector, at most every STATS_EVERY seconds.
+#
+# IT CAN NEVER FAIL A PASS, and that is the whole contract: counting tokens is
+# a nicety, restarting a window that hit its limit at 4am is not, and a nicety
+# that can take the daemon down is a bug. Every failure mode -- no python, no
+# muxstats.py, a traceback, a hang -- ends in `return 0` and one log line.
+# THE STAMP IS WRITTEN FIRST, before the run rather than after it: a collector
+# that dies, or that the timeout kills, is then retried in five minutes rather
+# than on the very next pass and every pass after that.
+stats_collect() {
+  local now="$1" at=0 rc=0
+  # --dry-run prints what a pass WOULD do; reading new transcript bytes into
+  # the ledger is a write, and a write is the one thing it promises not to be.
+  [ "$DRY" = 1 ] && return 0
+  [ -f "$SCRIPT_DIR/muxstats.py" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  [ -f "$STATS_AT" ] && at="$(cat "$STATS_AT" 2>/dev/null)"
+  case "$at" in ''|*[!0-9]*) at=0 ;; esac
+  [ $(( now - at )) -ge "$STATS_EVERY" ] || return 0
+  printf '%s\n' "$now" > "$STATS_AT"
+  timeout "$STATS_TIMEOUT" python3 "$SCRIPT_DIR/muxstats.py" \
+    ${MUX_PROFILE:+--profile "$MUX_PROFILE"} collect \
+    >/dev/null 2>"$STATS_ERR" || rc=$?
+  if [ "$rc" != 0 ]; then
+    log "stats collect failed (rc $rc): $(tail -1 "$STATS_ERR" 2>/dev/null). The ledger is unchanged; the next attempt is in ${STATS_EVERY}s."
+  else
+    rm -f "$STATS_ERR"
+  fi
+  return 0
+}
+
 pass() {
   local enabled=0; [ -f "$ENABLED" ] && enabled=1
   local msg; msg="$(head -1 "$MSGFILE" 2>/dev/null)"; msg="${msg:-$DEFAULT_MSG}"
@@ -2324,6 +2370,10 @@ pass() {
       "$SCRIPT_DIR/claude-usage.sh" --ensure "$USAGE_EVERY" >/dev/null 2>&1
     fi
   fi
+  # LAST, and on its own five-minute clock. Everything above this line is the
+  # daemon's job; this is the ledger the insights view (dashboard `i`) and
+  # `muxtopus stats` read, accruing whether or not anybody is looking.
+  stats_collect "$now"
   if [ "$DRY" = 1 ]; then
     { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\tMONOPTOUT\tPID\n'
       awk -F'\t' 'BEGIN{OFS="\t"} {$1=substr($1,1,8);
