@@ -1,8 +1,22 @@
 # Plan: insights -- usage statistics that outlive the transcripts
 
-Status: PLAN, 2026-09-17, written by lane `handover-visibility` at the user's
-request; the three questionable points (§9) were ANSWERED interactively first.
-Nothing here is implemented. Locate by symbol, not by line.
+Status: BUILT, 2026-09-18. Phases 1-3 by lane `insights-core` (`muxstats.py`,
+`seeds/prices.md`, `muxtopus stats`), phases 4-6 by lane `insights-dash` (the
+`i` view, the watchdog's collect hook, the seeding and the docs). Written
+2026-09-17 by lane `handover-visibility` at the user's request; the three
+questionable points (§9) were ANSWERED interactively first. Locate by symbol,
+not by line.
+
+TWO THINGS BELOW ARE NOT WHAT SHIPPED, and the code is the truth:
+
+* **`/stats` in the Telegram bot is not here.** `muxtelegram.py` belongs to
+  the `notify-dash` lane, so §4's third face and half of §7's phase-5 row
+  moved there. What that lane needs in order to add it is written down in
+  `handovers/QUESTIONS-insights-dash.md`.
+* **§2 says "fourteen, in seven rows" and the screen draws EIGHT** -- the
+  table under that sentence already lists eight, RHYTHM included.
+  `muxstats.figure_lines` returns those eight and every face draws all of
+  them.
 
 Read before this: the transcript-reading part of `claude-watchdog.sh` (the
 `tokens/` cache, "every poll after it reads a few KB"), `claude-usage.sh`

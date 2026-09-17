@@ -136,6 +136,24 @@ else
   ok "$OPTS seeded ($(grep -c '^key: ' "$OPTS") options)"
 fi
 
+# prices.md -- the price and model table behind the insights view's $ figures
+# and its "% of the context window". Beside the config file for the same reason
+# options.md is, and ONLY IF MISSING for the same reason too: the numbers in it
+# go out of date, the user is the one who updates them, and an installer that
+# "refreshed" them would throw away an edit with no way to get it back. A price
+# change in a later release is a line in the release notes.
+PRICES="$CFG_DIR/prices.md"
+if [ -f "$PRICES" ]; then
+  skip "$PRICES already exists, leaving it alone"
+elif [ ! -f "$SRC/seeds/prices.md" ]; then
+  warn "no seeds/prices.md in $SRC -- insights will show tokens and no \$ figures"
+elif [ "$DRY" = 1 ]; then
+  printf '    \033[90m$ cp %s %s\033[0m\n' "$SRC/seeds/prices.md" "$PRICES"
+else
+  cp "$SRC/seeds/prices.md" "$PRICES"
+  ok "$PRICES seeded ($(grep -c '^model: ' "$PRICES") models, $(sed -n 's/^as of: //p' "$PRICES" | head -1))"
+fi
+
 # ---------------------------------------------------------------- 4. the link
 step "4/5  muxtopus"
 run chmod +x "$SRC/muxtopus" "$SRC"/*.sh

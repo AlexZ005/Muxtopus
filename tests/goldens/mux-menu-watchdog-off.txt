@@ -21,6 +21,7 @@
 │    ····················································                                                                                                      │
 │  ▸ Watchdog: off  restart a limited window once its limit resets                                                                                             │
 │    Monitor: ON  ask a working window to wind down near the limit                                                                                             │
+│    Insights ▸  tokens, cache, cost, context, sessions, budget, lanes, rhythm  (i)                                                                            │
 │    ····················································                                                                                                      │
 │    Disconnect  detach this tmux client; the dashboard and every window keep running                                                                          │
 │    Reload the dashboard  re-exec this script, as R does                                                                                                      │

@@ -128,8 +128,16 @@ is a `RegistrationError` at start-up naming both, not last-one-wins.
 
 `f` is in the shell's list and arguably should not be — it filters the main
 view's lanes table. It is there because it was reachable from the schedule
-view before the split and the split was not the place to change that. Whoever
-adds the third view gets to settle it.
+view before the split and the split was not the place to change that.
+
+**The third view settled half of it.** `dashboard/views/insights.py` claims
+`f` for its own filter, and the routing rule above is what makes that safe
+with this file untouched: the active view's `on_key` runs BEFORE the shell's
+list, so `f` on the insights view is that view's and `f` on the main view is
+still the lanes filter. What is still wrong is `f` on the SCHEDULE view,
+which reaches through to a table that screen does not show; moving the branch
+out of `deck_status.py` into `MainView.on_key` is one line in each, and is
+left for whoever next has a reason to be in those two files.
 
 ## A view's own modal
 
@@ -174,6 +182,7 @@ missing a tab. `tests/sandbox/onefile.sh` fires this too.
 | the picture, 148 screens | `tests/sandbox/goldens.sh` | no — local |
 | the rows that WRITE something | `tests/sandbox/actions.sh` | no — local |
 | a view is one new file | `tests/sandbox/onefile.sh` | no — local |
+| the insights view, every key | `tests/sandbox/insights.sh` | no — local |
 | where every pre-split definition went | `tests/sandbox/moved.py` | no — local |
 | the App: routing, registration, ordering, failure | `tests/test_dashboard_app.py` | yes |
 | every name the code mentions is reachable | `tests/test_names.py` | yes |
