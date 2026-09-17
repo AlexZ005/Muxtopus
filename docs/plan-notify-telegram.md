@@ -111,6 +111,36 @@ No new daemon, no webhook, no open port.
 * After acting: `answerCallbackQuery`, and the message is EDITED to say what
   was done and when, so the chat is the audit trail; `notify.log` gets a line.
 
+## 3b. Pull: ask the bot instead of being told (added 2026-09-17, the user's request)
+
+Every switch in §1 may be OFF and the phone must still be able to find out and
+act: a push can be missed, muted or dismissed, and a dismissed message takes
+its buttons with it. So the bot answers COMMANDS, registered with
+`setMyCommands` by `--setup` (and re-registered by the poller when its stored
+command-list hash differs), so they appear in Telegram's own menu button:
+
+| command | reply |
+|---|---|
+| `/status` | one message per account: sessions by state (`3 working · 1 needs you · 2 idle · 1 limited`), session/week budget and reset time, pending / blocked / stalled entries, open handovers, unanswered question files, watchdog heartbeat age. Buttons: **Needs you (N) · Questions (N) · Blocked (N) · Refresh** |
+| `/pending` | everything actionable, RE-ISSUED with fresh buttons: each `waiting` prompt (Yes · No · More), each unanswered fork ((a) (b) (c) · ✎), each stalled / long-blocked / stranded item with its WHY sentence. `nothing needs you` when empty. This is the "I dismissed it" command |
+| `/questions` | a list of unanswered QUESTIONS files as buttons (`25-late · 2 forks`); pressing one sends its forks as in §2 -- select WHAT to answer, then answer it |
+| `/blocked` | each non-launching entry with the executor's WHY line; for an `after:` hold, the lane it waits on and that lane's state |
+| `/windows` | one line per session: name, state, idle time, context %; a `needs you` row carries its buttons |
+| `/mute 2h` · `/unmute` | pushes off for a while (a timestamp in the shared state folder; pull keeps working) |
+| `/help` | this table |
+
+Rules: commands are obeyed only from `TELEGRAM_CHAT`, like callbacks. They
+need `MUXTOPUS_NOTIFY_INBOUND=on` and NOTHING else -- with all four event
+switches off the bot is silent until asked, which is a supported way to run
+it and the setup guide offers it as a choice (`tell me · only when I ask`).
+Re-issuing an action creates a NEW pending id and retires the old one for the
+same target, so a stale button on an old message can never fire twice; the old
+message is edited to `superseded`. Everything is read from what the watchdogs
+already publish (`status.tsv`, `sched-why.tsv`, `tree.tsv`, usage, the
+handovers folders) for BOTH accounts -- a command costs no tmux fork except
+the pane re-capture behind a prompt's buttons. Latency is one pass (≤30 s);
+the reply to the first command of a burst says so once.
+
 ## 4. Setup: `claude-notify.sh --setup`, opened from Settings
 
 Interactive, plain `read`, no dependency beyond `curl` and `jq`:
@@ -164,7 +194,8 @@ the real `claude-notify.conf`, or sends a key to a real pane. The real
 | 1 | core | `[feat] notify: --setup guide, --buttons, a swappable API base` | the wizard driven by a here-doc against the fake API: bad token refused, waits then finds the chat, conf is 0600 with a `.bak`, test message has a keyboard; ntfy/pushbullet paths still send; unconfigured still exits 0 |
 | 2 | core | `[feat] watchdog: waiting state, and four events told once` | sandbox daemon + fake `claude` printing today's prompt: `status.tsv` says `waiting` on pass 2, ONE message, none on passes 3-5, a new one after the prompt clears and returns; each switch off -> nothing sent; blocked threshold with a faked clock file; `done` names the released entry; key-list mirror test green |
 | 3 | core | `[feat] muxtelegram: the phone answers a prompt` | scripted callback from the right chat -> the sandbox pane receives `1`; from a wrong chat -> dropped and logged; stale `prompt_sha` -> not sent, message edited; expired id; two daemons, one lock: every update handled exactly once |
-| 4 | dash | `[feat] muxtelegram: the phone answers a fork` | button and typed reply both land as `write_answer` lines; last fork marks ANSWERED; file changed underneath -> re-applied |
+| 3b | core | `[feat] muxtelegram: /status, /pending and the bot's menu` | fake API: `setMyCommands` sent once and again only when the list changes; `/status` numbers equal the sandbox's `status.tsv`/`sched-why.tsv`; `/pending` with all four event switches OFF re-issues the sandbox prompt with a new id, the OLD button is refused and its message edited `superseded`; `/mute` suppresses a push but not a pull; a command from a wrong chat is dropped; `/questions` and the fork half of `/pending` reply `not yet` until phase 4 |
+| 4 | dash | `[feat] muxtelegram: the phone answers a fork` | `/questions` lists files, a press sends that file's forks; `/pending` includes forks; button and typed reply both land as `write_answer` lines; last fork marks ANSWERED; file changed underneath -> re-applied |
 | 5 | dash | `[feat] settings: notifications, and a needs-you row` | captures: the submenu, a toggle round-tripped to the file the sandbox watchdog reads, `Set up…` opens a window IN THE SANDBOX server, `waiting` drawn yellow |
 | 6 | dash | `[docs] notifications: README, help, the setup guide` | `--check` on real entries still 0 (read only) |
 
@@ -183,4 +214,5 @@ and `--buttons` is the only thing it must implement to get inbound.
   the keys of §1 in Settings).
 * Setup: **Settings ▸ Notifications opening a new tmux window** running an
   interactive guide; Telegram first.
+* Pull (third request): **bot menu commands for status and for re-issuing anything actionable, usable with every push switched off** -- §3b.
 * Delegation: **another window, opus.**
