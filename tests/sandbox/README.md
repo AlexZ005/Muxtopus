@@ -21,6 +21,8 @@ split into a package draws the same picture: you take the picture first.
     goldens.sh      route -> compare against tests/goldens/ (or --bless)
     actions.sh      the rows that WRITE something, fired and checked
     moved.py        where every pre-split definition went, and was it changed
+    mkledger.py     a synthetic stats ledger, anchored on TODAY
+    insights.sh     the `i` view, driven: every key, at 24/40/58 rows
 
 ## The goldens are pictures; two things they cannot see
 
@@ -32,6 +34,12 @@ to press. Two checks cover what that leaves:
   save the options table -- and looks at the files afterwards. It navigates
   by LOOKING for the row it wants, never by counting Downs, because the
   mover skips separators and a later phase may move one.
+* `insights.sh` presses every key the insights view claims and asserts what
+  the screen then says, rather than comparing it with a golden: that screen's
+  title carries today's date and its periods are "today" and "this week", so a
+  golden taken on Tuesday would fail on Wednesday. `mkledger.py` writes its
+  ledger against today for the same reason. What the FIGURES say is
+  `tests/test_stats.py`'s subject — hand-computed, from rows.
 * `tests/test_names.py` (a plain python test, also in CI) checks that every
   global name the code mentions is one it can reach. The split moved two
   methods into a module whose import list was missing a constant they used,
@@ -53,6 +61,7 @@ to press. Two checks cover what that leaves:
 ## Running it
 
     tests/sandbox/setup.sh
+    tests/sandbox/insights.sh           # the i view
     tests/sandbox/goldens.sh            # compare
     tests/sandbox/goldens.sh --bless    # write tests/goldens/ (phase 0 only)
 
