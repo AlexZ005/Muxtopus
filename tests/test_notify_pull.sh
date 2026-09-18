@@ -33,7 +33,8 @@ press() {
 kb_of_last() { sb_calls sendMessage | jq -c 'select(.reply_markup) | .reply_markup | fromjson' | tail -1; }
 cb_of() { kb_of_last | jq -r --arg l "$1" '.inline_keyboard[][] | select(.text|startswith($l)) | .callback_data'; }
 
-for k in WAITING QUESTIONS TROUBLE DONE; do setkey "MUXTOPUS_NOTIFY_$k" off; done
+# Every PUSH switch off -- the four events and, since mux-alerts, the alerts.
+for k in WAITING QUESTIONS TROUBLE DONE SESSION AUTH LIMIT STALLED STRANDED; do setkey "MUXTOPUS_NOTIFY_$k" off; done
 screen
 tmux new-session -d -s claude -n '➥lane-a' -x 100 -y 40 "cd $HOME && claude"
 for i in $(seq 50); do ls "$HOME/.claude/sessions/"*.json >/dev/null 2>&1 && break; sleep 0.1; done
@@ -137,6 +138,7 @@ check "mute acknowledged" grep -q "pushes muted until" <<<"$(last_text)"
 check "the mute file holds a future time" [ "$(cat "$SH/mute")" -gt "$(date +%s)" ]
 setkey MUXTOPUS_NOTIFY_WAITING on
 setkey MUXTOPUS_NOTIFY_TROUBLE on
+setkey MUXTOPUS_NOTIFY_STALLED on
 n="$(sb_ncalls sendMessage)"
 screen "$FIX/edit-file.txt"; pass; pass
 check "muted: the waiting push is not sent" [ "$(sb_ncalls sendMessage)" = "$n" ]

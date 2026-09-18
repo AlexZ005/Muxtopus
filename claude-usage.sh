@@ -210,7 +210,7 @@ scrape() {
 #
 # Colour codes are stripped first: capture-pane -p emits them.
 parse() {
-  local plain kv sp sr wp wr mp mn
+  local plain kv sp sr wp wr mp mn mr
   plain="$(sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' "$RAW")"
 
   kv="$(awk '
@@ -232,6 +232,7 @@ parse() {
   sp="$(fld session_pct)";  sr="$(fld session_reset)"
   wp="$(fld week_pct)";     wr="$(fld week_reset)"
   mp="$(fld model_pct)";    mn="$(fld model_name)"
+  mr="$(fld model_reset)"
 
   # Read the PREVIOUS reading before overwriting it: an early reset is only
   # visible as a change between two readings.
@@ -261,6 +262,9 @@ parse() {
     printf 'week_reset\t%s\n'       "$(todate "${wr:-}")"
     printf 'model\t%s\n'            "${mn:-$MODEL_KEY}"
     printf 'model_pct\t%s\n'        "${mp:-}"
+    # Appended, not inserted: every reader looks a key up by name. The
+    # watchdog's limit alert names it ("Fable week, resets Sep 22, 09:00").
+    printf 'model_reset\t%s\n'      "$(todate "${mr:-}")"
     printf 'account\t%s\n'          "$MUX_LABEL"
   } > "$CACHE.tmp" && mv "$CACHE.tmp" "$CACHE"
   rm -f "$FAIL"

@@ -1325,6 +1325,52 @@ sched_off() {
   [ "${v,,}" = off ]
 }
 
+# `rc: on|off` -- SEND /rc TO THE NEW WINDOW once it is ready. Unlike the
+# two opt-outs both values mean something, because there is a DEFAULT to
+# override: DASHBOARD_NEW_RC (Settings, off unless set), which is how every
+# new window gets it without an entry saying so. Prints "on" or "off", a tab,
+# and where that came from -- the launcher uses the first half, --check
+# prints both.
+sched_rc() {
+  local v d; v="$(sched_field "$1" rc)"; v="${v,,}"
+  case "$v" in
+    on|off) printf '%s\trc: %s in the entry' "$v" "$v"; return 0 ;;
+  esac
+  d="${DASHBOARD_NEW_RC:-off}"; d="${d,,}"
+  [ "$d" = on ] || d=off
+  if [ -n "$v" ]; then
+    printf '%s\trc: "%s" is not on or off -- the default applies (DASHBOARD_NEW_RC=%s)' "$d" "$v" "$d"
+  elif [ "$d" = on ]; then
+    printf 'on\tthe Settings default, DASHBOARD_NEW_RC=on'
+  else
+    printf 'off\tthe default (DASHBOARD_NEW_RC=off)'
+  fi
+}
+
+# SEND /rc AND GET OUT OF ITS WAY. Before the paste, never after it: once the
+# body is in, the window is working, and a /rc typed then is queued as a
+# MESSAGE to the model rather than run as a command. Typed literally (-l), one
+# Enter, and then a short look: if what /rc drew is a dialog or a panel that
+# holds the keyboard, Escape closes it -- the paste must land in the prompt,
+# not in an overlay. Remote control, once on, survives its panel closing.
+sched_send_rc() {
+  local pane="$1" f="$2" i txt
+  tmux send-keys -t "$pane" -l "/rc" 2>/dev/null
+  sleep 0.5
+  tmux send-keys -t "$pane" Enter 2>/dev/null
+  for i in 1 2 3 4 5 6; do
+    sleep 0.5
+    txt="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
+    if prompt_scan "$txt" || grep -qiE 'esc to (close|cancel|exit|go back)|enter to (confirm|continue)' <<<"$txt"; then
+      tmux send-keys -t "$pane" Escape 2>/dev/null
+      sleep 0.5
+      log "schedule $(basename "$f"): /rc left a dialog or panel up in $pane; closed it with Escape before the paste"
+      break
+    fi
+  done
+  log "schedule $(basename "$f"): sent /rc to $pane"
+}
+
 # THE SESSION ID BEHIND A PANE WE JUST OPENED. The opt-out files are keyed by
 # session id, and that id does not exist until claude mints it at startup and
 # publishes it in sessions/<pid>.json, whose .tmux ends in the pane id. So an
@@ -1348,7 +1394,7 @@ sched_pane_sid() {
 launch_schedule() {
   local f="$1" why="${2:-}"
   local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn model effort
-  local parent depth wid wd_off mon_off sid
+  local parent depth wid wd_off mon_off sid rc_on
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
   # (an enabled user unit) long before anyone has run muxtopus, and an item that
@@ -1391,6 +1437,8 @@ launch_schedule() {
   wd_off=""; mon_off=""
   sched_off "$f" watchdog && wd_off=1
   sched_off "$f" monitor && mon_off=1
+  rc_on=""
+  [ "$(sched_rc "$f" | cut -f1)" = on ] && rc_on=1
 
   slug="$(sched_slug "$f")"
   parent="$(sched_parent "$f")"
@@ -1491,6 +1539,10 @@ launch_schedule() {
     fi
   fi
 
+  # /rc, WHEN ASKED -- after readiness (a window at the trust dialog or still
+  # starting has nowhere to type it) and before the paste (see sched_send_rc).
+  [ -n "$rc_on" ] && sched_send_rc "$pane" "$f"
+
   # PASTE, never send-keys: a multi-line body through send-keys submits at
   # every newline. Bracketed paste (-p) hands the TUI one paste event.
   tmux load-buffer -b schedbody "$bodyf" 2>/dev/null
@@ -1504,7 +1556,7 @@ launch_schedule() {
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
-  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort}${pmode:+ perm=$pmode}${wd_off:+ watchdog=off}${mon_off:+ monitor=off} -- ${why:-due}"
+  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort}${pmode:+ perm=$pmode}${wd_off:+ watchdog=off}${mon_off:+ monitor=off}${rc_on:+ rc=on} -- ${why:-due}"
 }
 
 # ------------------------------------------------------------- --check
@@ -1539,7 +1591,7 @@ kv() { printf '  %-14s %s\n' "$1" "$2"; }
 sched_check_one() {
   local f="$1" body="${2:-}"
   local type at title win cwd tmpl st slug wname warn now rc idx nlines nbytes rcout=0
-  local parent depth after blocked pwarn resolved model effort
+  local parent depth after blocked pwarn resolved model effort rcv
   type="$(sched_field "$f" type)"; at="$(sched_field "$f" at)"
   title="$(sched_field "$f" title)"; win="$(sched_field "$f" window)"
   cwd="$(sched_field "$f" cwd)"; tmpl="$(sched_field "$f" template)"
@@ -1577,6 +1629,9 @@ sched_check_one() {
   else kv watchdog "covered (default)"; fi
   if sched_off "$f" monitor; then kv monitor "opted out at launch"
   else kv monitor "covered (default)"; fi
+  rcv="$(sched_rc "$f")"
+  if [ "${rcv%%$'\t'*}" = on ]; then kv rc "on   -- /rc is sent once the window is ready ($(cut -f2 <<<"$rcv"))"
+  else kv rc "off   ($(cut -f2 <<<"$rcv"))"; fi
   if [ -n "$(sched_field "$f" slug)" ]; then kv slug "$slug   (pinned by slug:)"
   elif [ -n "$title" ]; then kv slug "$slug   (derived from title: \"$title\")"
   else kv slug "$slug   (derived from the filename)"; fi
@@ -1838,17 +1893,56 @@ heartbeat() {
 #   baseline      absent until the first configured pass, which records the
 #                 done/ and QUESTIONS files that already exist instead of
 #                 announcing a history nobody asked about
+#   clear.tsv     key <TAB> title, for every ALERT that was actually sent: when
+#                 its key ends, one "cleared: <title>" goes out and the row goes
+#                 (§1b -- an alert that was switched off, or muted, and so
+#                 never reached the phone is not "cleared" either... except a
+#                 muted one IS in here: see notify_alert)
+#   panes.tsv     pane <TAB> window name <TAB> passes missing -- every pane that
+#                 carried a session of this account, for `session lost`
 NOTIFY_DIR="$STATE_DIR/notify"
 NOTIFY_SENT="$NOTIFY_DIR/sent.tsv"
 NOTIFY_PROMPTS="$NOTIFY_DIR/prompts.tsv"
 NOTIFY_BLOCKED="$NOTIFY_DIR/blocked.tsv"
 NOTIFY_QSIG="$NOTIFY_DIR/questions.sig"
 NOTIFY_BASELINE="$NOTIFY_DIR/baseline"
+NOTIFY_CLEAR="$NOTIFY_DIR/clear.tsv"
+NOTIFY_PANES="$NOTIFY_DIR/panes.tsv"
 NOTIFY_CONF="${CLAUDE_NOTIFY_CONF:-$HOME/.config/claude-notify.conf}"
 declare -A NOTIFY_HAVE=() NOTIFY_ALIVE=() NOTIFY_FAM=() NOTIFY_PROMPT_PREV=()
+# The alerts' per-pass facts, filled by the session loop from what it already
+# captured (no extra fork): panes that carry a session, auth errors on screen,
+# limit banners by budget.
+declare -A NOTIFY_CLEARS=() NOTIFY_PANES_NOW=() NOTIFY_BANNER=()
+NOTIFY_AUTH_SEEN=""
 NOTIFY_READY=0; NOTIFY_BACKEND=""; NOTIFY_PROMPT_ROWS=""
 
 notify_on() { [ "${1:-on}" = on ]; }
+
+# The alerts' look at one captured pane (see the session loop). The last 15
+# lines only: what is on screen NOW, not a scrolled-up quote of it.
+NOTIFY_AUTH_RE='^[[:space:]⎿●]*(API Error: 401|Invalid API key|OAuth token has expired|Please run /login|Select login method|Log in with your Claude)'
+NOTIFY_BANNER_RE="hit your ([A-Za-z0-9.-]+) limit"
+notify_scan_alerts() {
+  local text="$1" name="$2" st="$3" reset="$4" line kind r
+  local -a L=()
+  mapfile -t L <<<"$text"
+  local n=${#L[@]} i=$(( ${#L[@]} > 15 ? ${#L[@]} - 15 : 0 ))
+  for (( ; i < n; i++ )); do
+    line="${L[$i]}"
+    if [ -z "$NOTIFY_AUTH_SEEN" ] && [[ "$line" =~ $NOTIFY_AUTH_RE ]]; then
+      NOTIFY_AUTH_SEEN="$name shows: ${BASH_REMATCH[1]}"
+    fi
+    if [[ "$line" =~ $NOTIFY_BANNER_RE ]]; then
+      kind="${BASH_REMATCH[1],,}"
+      case "$kind" in session) kind=session ;; weekly|week) kind=week ;; *) kind=model ;; esac
+      r=""; [[ "$line" =~ resets\ ([^·]*[^·[:space:]]) ]] && r="${BASH_REMATCH[1]}"
+      [ "$kind" = session ] && [ -n "$reset" ] && [ "$reset" != - ] && r="$reset"
+      [ -n "${NOTIFY_BANNER[$kind]-}" ] || NOTIFY_BANNER[$kind]="$r"
+    fi
+  done
+  return 0
+}
 # May the phone answer? Only Telegram has buttons that come back, and the
 # account's own switch says whether they are offered and obeyed at all.
 notify_inbound() { [ "$NOTIFY_BACKEND" = telegram ] && notify_on "$MUXTOPUS_NOTIFY_INBOUND"; }
@@ -1858,6 +1952,7 @@ notify_inbound() { [ "$NOTIFY_BACKEND" = telegram ] && notify_on "$MUXTOPUS_NOTI
 notify_begin() {
   local line k fp at mid pane sha since
   NOTIFY_HAVE=(); NOTIFY_ALIVE=(); NOTIFY_FAM=(); NOTIFY_PROMPT_PREV=()
+  NOTIFY_CLEARS=(); NOTIFY_PANES_NOW=(); NOTIFY_BANNER=(); NOTIFY_AUTH_SEEN=""
   NOTIFY_READY=0; NOTIFY_BACKEND=""; NOTIFY_PROMPT_ROWS=""; SCHED_RAN=""
   mkdir -p "$NOTIFY_DIR"
   if [ -f "$NOTIFY_PROMPTS" ]; then
@@ -1880,6 +1975,11 @@ notify_begin() {
     while IFS=$'\t' read -r k fp at mid; do
       [ -n "$k" ] && NOTIFY_HAVE[$k]="$fp"$'\t'"$at"$'\t'"$mid"
     done < "$NOTIFY_SENT"
+  fi
+  if [ -f "$NOTIFY_CLEAR" ]; then
+    while IFS=$'\t' read -r k fp; do
+      [ -n "$k" ] && NOTIFY_CLEARS[$k]="$fp"
+    done < "$NOTIFY_CLEAR"
   fi
   return 0
 }
@@ -1947,8 +2047,9 @@ notify_waiting() {
   notify_send "waiting:$pane" "$PROMPT_SHA" "needs you: $name" "$body"
 }
 
-# TROUBLE from the schedule verdicts: stalled, error, and blocked for longer
-# than MUXTOPUS_NOTIFY_BLOCKED_AFTER minutes. Plain blocked is ordinary waiting.
+# FROM THE SCHEDULE VERDICTS: stalled (an ALERT, its own switch -- it clears),
+# and, as TROUBLE, error and blocked for longer than
+# MUXTOPUS_NOTIFY_BLOCKED_AFTER minutes. Plain blocked is ordinary waiting.
 notify_schedules() {
   [ "${SCHED_RAN:-}" = 1 ] || return 0
   local b verdict why when now since after f st
@@ -1964,7 +2065,7 @@ notify_schedules() {
   while IFS=$'\t' read -r b verdict why when; do
     case "$verdict" in
       stalled)
-        notify_on "$MUXTOPUS_NOTIFY_TROUBLE" && notify_event "stalled:$b" stalled "stalled: $b" "$why" ;;
+        notify_alert "stalled:$b" stalled "${MUXTOPUS_NOTIFY_STALLED:-on}" "stalled: $b" "$why" ;;
       blocked)
         since="${since_of[$b]:-$now}"
         printf '%s\t%s\n' "$b" "$since" >> "$NOTIFY_BLOCKED.tmp"
@@ -2087,8 +2188,170 @@ notify_questions() {
   return 0
 }
 
+# ------------------------------------------------------------------ alerts
+# THE CONDITIONS WHERE EVERY LANE SILENTLY STOPS. docs/plan-notify-telegram.md
+# §1b. Each is an ALERT: told once when it starts (the dedupe above), told once
+# more as "cleared" when it ends, and behind a switch of its own:
+#
+#   session   MUXTOPUS_NOTIFY_SESSION      on   a pane lost its claude session
+#   auth      MUXTOPUS_NOTIFY_AUTH         on   the account is not logged in
+#   limit     MUXTOPUS_NOTIFY_LIMIT        on   a budget is AT its limit
+#             MUXTOPUS_NOTIFY_LIMIT_BANDS  off  ...or past SOFT_PCT / HARD_PCT
+#   stalled   MUXTOPUS_NOTIFY_STALLED      on   an entry cannot be judged
+#   stranded  MUXTOPUS_NOTIFY_STRANDED     on   nothing will resume a lane
+#
+# NOTHING HERE RE-DERIVES A STATE. The session loop publishes status.tsv and,
+# on the way past, notes what these need from the text it already captured
+# (NOTIFY_PANES_NOW, NOTIFY_AUTH_SEEN, NOTIFY_BANNER); the budgets come from
+# usage.tsv, stalled from sched-why.tsv, stranded from the loop's own verdict.
+
+# One alert. SWITCH off: the key is remembered as `quiet` -- it does not send,
+# it will not "clear", and switching it on while the condition lasts tells it
+# then (the fingerprint differs). On: notify_event, so the dedupe and the
+# /mute rule are the ones every other event has -- a muted alert is RECORDED
+# as sent, and so is its "cleared" (claude-notify.sh drops that too while the
+# mute lasts), and /unmute is not a flood.
+notify_alert() {
+  local key="$1" fp="$2" sw="$3" title="$4" body="$5"
+  if ! notify_on "$sw"; then
+    notify_would "$key" quiet && notify_record "$key" quiet
+    unset 'NOTIFY_CLEARS[$key]'
+    return 0
+  fi
+  notify_event "$key" "$fp" "$title" "$body" || return 0
+  NOTIFY_CLEARS[$key]="$title"
+  return 0
+}
+
+# SESSION LOST: a pane that carried a session of this account last pass and
+# does not now, while tmux still has the pane. The loop only lists sessions
+# whose process is alive, so this is "the process died" and "the pane is no
+# longer claude" and "the id vanished from status.tsv" in one test. TWO passes,
+# like waiting: a claude restarted in the same pane is not news. Costs one
+# tmux fork, and only on a pass where some known pane is missing.
+notify_sessions() {
+  local pane name miss cmd dead rows="" asked=""
+  local -A prev=() live=()
+  if [ -f "$NOTIFY_PANES" ]; then
+    while IFS=$'\t' read -r pane name miss; do
+      [ -n "$pane" ] && prev[$pane]="$name"$'\t'"${miss:-0}"
+    done < "$NOTIFY_PANES"
+  fi
+  for pane in "${!NOTIFY_PANES_NOW[@]}"; do
+    rows+="$pane"$'\t'"${NOTIFY_PANES_NOW[$pane]}"$'\t'0$'\n'
+  done
+  for pane in "${!prev[@]}"; do
+    [ -n "${NOTIFY_PANES_NOW[$pane]+x}" ] && continue
+    if [ -z "$asked" ]; then
+      asked=1
+      while IFS=$'\t' read -r name cmd dead; do
+        [ -n "$name" ] && live[$name]="$cmd"$'\t'"$dead"
+      done < <(tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{pane_dead}' 2>/dev/null)
+    fi
+    # Gone from tmux too: the window was closed, and the key (if any) ends.
+    [ -n "${live[$pane]+x}" ] || continue
+    cmd="${live[$pane]%%$'\t'*}"; dead="${live[$pane]#*$'\t'}"
+    name="${prev[$pane]%%$'\t'*}"; miss="${prev[$pane]#*$'\t'}"
+    case "$miss" in ''|*[!0-9]*) miss=0 ;; esac
+    miss=$(( miss + 1 ))
+    rows+="$pane"$'\t'"$name"$'\t'"$miss"$'\n'
+    if [ "$miss" -ge 2 ]; then
+      if [ "$dead" = 1 ]; then cmd="nothing (the pane is dead)"; else cmd="${cmd:-?}"; fi
+      notify_alert "session:$pane" gone "${MUXTOPUS_NOTIFY_SESSION:-on}" "session lost: $name" \
+        "the claude session in $name ($pane) has ended, but its window is still open -- the pane now runs $cmd. Nothing will resume it by itself."
+    else
+      # One pass missing: not news yet, but an alert already out stays out.
+      [ -n "${NOTIFY_HAVE[session:$pane]-}" ] && NOTIFY_ALIVE[session:$pane]=1
+    fi
+  done
+  NOTIFY_FAM[session]=1
+  [ "$DRY" = 1 ] || printf '%s' "$rows" > "$NOTIFY_PANES"
+  return 0
+}
+
+# LOGGED OUT. Three witnesses, any one enough, all named in the body: the
+# /usage probe stopped on the login screen (claude-usage.sh's usage.fail, newer
+# than the last good reading), the credentials file a login writes is gone
+# from an account that has read its budget before, or an idle pane shows an
+# auth error or the login screen (NOTIFY_AUTH_SEEN, from the loop).
+notify_auth() {
+  local why="" fat freason cat
+  local fail="$STATE_DIR/usage.fail"
+  if [ -f "$fail" ]; then
+    IFS=$'\t' read -r fat freason < "$fail"
+    cat="$(usage_val at)"
+    case "$fat" in ''|*[!0-9]*) fat=0 ;; esac
+    case "$cat" in ''|*[!0-9]*) cat=0 ;; esac
+    if [ "$fat" -gt "$cat" ] && [[ "$freason" == *"not logged in"* ]]; then
+      why+=$'\n'"· the /usage probe found the login screen ($(date -d "@$fat" '+%H:%M'))"
+    fi
+  fi
+  if [ -f "$USAGE" ] && [ ! -f "$MUX_CONFIG_DIR/.credentials.json" ]; then
+    why+=$'\n'"· $MUX_CONFIG_DIR/.credentials.json is gone"
+  fi
+  [ -n "$NOTIFY_AUTH_SEEN" ] && why+=$'\n'"· $NOTIFY_AUTH_SEEN"
+  NOTIFY_FAM[auth]=1
+  [ -n "$why" ] || return 0
+  notify_alert "auth:account" lost "${MUXTOPUS_NOTIFY_AUTH:-on}" "logged out" \
+    "this account is not authenticated -- every lane on it stops at its next turn.$why"$'\n\n'"log in again: CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR claude, then /login"
+}
+
+# LIMITS. Per budget -- session, week, the model's week -- a band: 0 under
+# SOFT_PCT, 1 soft, 2 hard, 3 at the limit (a reading of 100%, or a limit
+# BANNER in some pane, which beats any reading). Band 3 is MUXTOPUS_NOTIFY_LIMIT;
+# 1 and 2 are MUXTOPUS_NOTIFY_LIMIT_BANDS. A band that only FELL is recorded
+# quietly; back under SOFT_PCT the key ends, and "cleared" says so. A reading
+# older than WATCHDOG_USAGE_STALE is not looked at (the key neither fires nor
+# ends) -- the same rule the scheduler holds its gate to.
+notify_limits() {
+  local at now fresh=0 b pct band have label reset sw title body
+  at="$(usage_val at)"; now="$(date +%s)"
+  case "$at" in ''|*[!0-9]*) at=0 ;; esac
+  [ "$at" -gt 0 ] && [ $(( now - at )) -le $(( USAGE_STALE * 60 )) ] && fresh=1
+  for b in session week model; do
+    case "$b" in
+      session) pct="$(usage_val session_pct)"; reset="$(usage_val session_reset)"
+               label="session budget" ;;
+      week)    pct="$(usage_val week_pct)"; reset="$(usage_val week_reset)"
+               label="weekly budget (all models)" ;;
+      model)   pct="$(usage_val model_pct)"; reset="$(usage_val model_reset)"
+               label="$(usage_val model)"; label="${label:-model} weekly budget" ;;
+    esac
+    pct="${pct%%.*}"; case "$pct" in ''|*[!0-9]*) pct="" ;; esac
+    band=0
+    if [ -n "${NOTIFY_BANNER[$b]+x}" ]; then
+      band=3; [ -n "${NOTIFY_BANNER[$b]}" ] && reset="${NOTIFY_BANNER[$b]}"
+    elif [ "$fresh" = 1 ] && [ -n "$pct" ]; then
+      [ "$pct" -ge "$SOFT_PCT" ] && band=1
+      [ "$pct" -ge "$HARD_PCT" ] && band=2
+      [ "$pct" -ge 100 ] && band=3
+    else
+      # Not looked at: whatever was said stays said.
+      [ -n "${NOTIFY_HAVE[limit:$b]-}" ] && NOTIFY_ALIVE[limit:$b]=1
+      continue
+    fi
+    [ "$band" = 0 ] && continue
+    have="${NOTIFY_HAVE[limit:$b]-}"; have="${have%%$'\t'*}"
+    if [[ "$have" == [123] ]] && [ "$band" -lt "$have" ]; then
+      notify_record "limit:$b" "$band"; continue
+    fi
+    if [ "$band" = 3 ]; then
+      sw="${MUXTOPUS_NOTIFY_LIMIT:-on}"; title="limit hit: $label"
+      body="the $label is at its limit${pct:+ ($pct% used)}${NOTIFY_BANNER[$b]+, and a window says so}. Resets ${reset:-(time unknown)}. The watchdog restarts limited windows after the reset."
+    else
+      sw="${MUXTOPUS_NOTIFY_LIMIT_BANDS:-off}"
+      if [ "$band" = 2 ]; then title="hard band: $label $pct%"
+      else title="soft band: $label $pct%"; fi
+      body="the $label is at $pct% (soft $SOFT_PCT%, hard $HARD_PCT%). Resets ${reset:-(time unknown)}."
+    fi
+    notify_alert "limit:$b" "$band" "$sw" "$title" "$body"
+  done
+  [ "$fresh" = 1 ] && NOTIFY_FAM[limit]=1
+  return 0
+}
+
 # End of pass: the prompt ledger, the baseline, and sent.tsv minus every key a
-# looked-at family no longer raised.
+# looked-at family no longer raised -- an ALERT among them says "cleared".
 notify_end() {
   local k
   [ "$DRY" = 1 ] || printf '%s' "$NOTIFY_PROMPT_ROWS" > "$NOTIFY_PROMPTS"
@@ -2099,6 +2362,10 @@ notify_end() {
       log "notify: $k ended"
       # A prompt that left the screen takes its buttons with it: the message
       # says so, and a late press finds nothing to type.
+      if [ -n "${NOTIFY_CLEARS[$k]-}" ]; then
+        notify_send "" "" "cleared: ${NOTIFY_CLEARS[$k]}" "no longer the case ($(date +%H:%M))."
+        unset 'NOTIFY_CLEARS[$k]'
+      fi
       case "$k" in
         waiting:*)
           if notify_inbound && [[ "$NOTIFY_PROMPT_ROWS" != *"${k#waiting:}"$'\t'* ]]; then
@@ -2111,6 +2378,11 @@ notify_end() {
     printf '%s\t%s\n' "$k" "${NOTIFY_HAVE[$k]}" >> "$NOTIFY_SENT.tmp"
   done
   mv "$NOTIFY_SENT.tmp" "$NOTIFY_SENT"
+  : > "$NOTIFY_CLEAR.tmp"
+  for k in "${!NOTIFY_CLEARS[@]}"; do
+    [ -n "${NOTIFY_HAVE[$k]-}" ] && printf '%s\t%s\n' "$k" "${NOTIFY_CLEARS[$k]}" >> "$NOTIFY_CLEAR.tmp"
+  done
+  mv "$NOTIFY_CLEAR.tmp" "$NOTIFY_CLEAR"
   [ -f "$NOTIFY_BASELINE" ] || date +%s > "$NOTIFY_BASELINE"
   # INBOUND, once a pass: the phone's presses and commands, for BOTH accounts
   # -- whichever daemon gets the shared lock first reads the bot (§3).
@@ -2244,6 +2516,17 @@ pass() {
       fi
     fi
 
+    # FOR THE ALERTS, from what was captured above -- no fork. A pane that
+    # carries a session; an auth error or the login screen near the bottom of
+    # an idle pane (anchored, so a transcript QUOTING the words is not it); a
+    # limit banner, by budget.
+    if [ -n "$paneid" ]; then
+      NOTIFY_PANES_NOW[$paneid]="$name"
+      if [ "$state" != working ]; then
+        notify_scan_alerts "$text" "$name" "$state" "$reset"
+      fi
+    fi
+
     wound="$(last_wound "$sid")"
     wind_down "$sid" "$name" "$ctx" "$state" "$optout" "$spct" "$wpct" "$rkey" "$now"
 
@@ -2327,9 +2610,8 @@ pass() {
       state=stranded
       [ "$prev" = stranded ] || \
         log "stranded: $name idle $(dur_hm "$idle") with an open handover ($HANDOVERS/STATUS-$lane.md) and no pending schedule entry naming it"
-      notify_on "$MUXTOPUS_NOTIFY_TROUBLE" && \
-        notify_event "stranded:$lane" stranded "stranded: $name" \
-          "idle $(dur_hm "$idle") with an open handover ($HANDOVERS/STATUS-$lane.md) and no pending schedule entry naming it"
+      notify_alert "stranded:$lane" stranded "${MUXTOPUS_NOTIFY_STRANDED:-on}" "stranded: $name" \
+        "idle $(dur_hm "$idle") with an open handover ($HANDOVERS/STATUS-$lane.md) and no pending schedule entry naming it"
     elif [ "$prev" = stranded ]; then
       log "no longer stranded: $name is now $state"
     fi
@@ -2356,7 +2638,10 @@ pass() {
     notify_schedules
     notify_done
     notify_questions
+    notify_auth
+    notify_limits
   fi
+  notify_sessions
   notify_end
   heartbeat "$(grep -c '' "$STATUS" 2>/dev/null)"
   # Keep the limit figures warm on their own hourly clock. --ensure is a no-op

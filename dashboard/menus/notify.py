@@ -6,7 +6,7 @@ any of that on or off, sets it up, and proves it works -- and it is one new
 file, registering through the seam, with nothing in the shell edited.
 
     Settings ▸ Notifications ▸      a menu kind of its own (esc_to="settings")
-    the seven MUXTOPUS_NOTIFY_* keys via muxsettings.register(..., menu="notify")
+    the thirteen MUXTOPUS_NOTIFY_* keys (seven, and the six alerts) via muxsettings.register(..., menu="notify")
     `waiting` drawn as a yellow `needs you` via app.add_state
 
 WHY THE SEVEN KEYS ARE NOT IN THE SETTINGS LIST. muxsettings.register puts a
@@ -37,7 +37,7 @@ from dashboard.core import DIM, PROFILE, SCRIPTS, YELLOW
 
 NOTIFY_SH = SCRIPTS / "claude-notify.sh"
 
-# The seven, in the order they have in muxconfig.KEYS and profile.sh's
+# The thirteen, in the order they have in muxconfig.KEYS and profile.sh's
 # MUX_CONFIG_KEYS -- the order a reader comparing the three lists expects,
 # and the order the rows come out in, because this dict is what draws them.
 NOTIFY_KEYS: dict[str, dict] = {
@@ -49,7 +49,7 @@ NOTIFY_KEYS: dict[str, dict] = {
         "hint": "a new unanswered QUESTIONS file, or a new fork in one"},
     "MUXTOPUS_NOTIFY_TROUBLE": {
         "label": "Trouble", "kind": "onoff",
-        "hint": "stalled or errored entries, a stranded lane, a failed launch"},
+        "hint": "a failed launch (entry error), an entry blocked too long"},
     "MUXTOPUS_NOTIFY_BLOCKED_AFTER": {
         "label": "Say an entry is blocked after", "kind": "choice",
         "choices": ("0", "30", "60", "120", "360"),
@@ -63,6 +63,28 @@ NOTIFY_KEYS: dict[str, dict] = {
     "MUXTOPUS_NOTIFY_PANE_TEXT": {
         "label": "Quote the prompt box", "kind": "onoff",
         "hint": "pane text leaves the machine for Telegram's servers"},
+    # THE ALERTS (mux-alerts): the conditions where lanes silently stop.
+    # Each is told once and "cleared" once. ON by default where every lane
+    # can stop without a word; OFF for the budget bands, which the watchdog
+    # already acts on and which fire most days -- news, not trouble.
+    "MUXTOPUS_NOTIFY_SESSION": {
+        "label": "A session was lost", "kind": "onoff",
+        "hint": "claude exited in a window that is still open"},
+    "MUXTOPUS_NOTIFY_AUTH": {
+        "label": "The account logged out", "kind": "onoff",
+        "hint": "the /usage probe, a pane or the credentials file says so"},
+    "MUXTOPUS_NOTIFY_LIMIT": {
+        "label": "A limit was hit", "kind": "onoff",
+        "hint": "session, week or model week at its limit -- and when it resets"},
+    "MUXTOPUS_NOTIFY_LIMIT_BANDS": {
+        "label": "A budget crossed a band", "kind": "onoff",
+        "hint": "past WATCHDOG_SOFT_PCT / HARD_PCT -- chatty, off by default"},
+    "MUXTOPUS_NOTIFY_STALLED": {
+        "label": "An entry stalled", "kind": "onoff",
+        "hint": "the scheduler cannot judge it at all"},
+    "MUXTOPUS_NOTIFY_STRANDED": {
+        "label": "A lane is stranded", "kind": "onoff",
+        "hint": "idle, an open handover, nothing will ever resume it"},
 }
 
 # The blocked-after row is minutes on disk and words on screen. One table,
@@ -80,11 +102,20 @@ HELP_NOTIFY = f"""
 
     `Let the phone answer` is the inbound half: Yes · No · More under a
     prompt, (a) (b) (c) · ✎ under a fork, and the bot's own menu
-    (/status, /pending, /questions, /blocked, /windows, /mute). With all four
-    push switches off and this one on, the bot is silent until asked -- a
+    (/status, /pending, /questions, /blocked, /windows, /mute). With every
+    push switch off and this one on, the bot is silent until asked -- a
     supported way to run it. `Quote the prompt box` is the one line of pane
     text that leaves this machine for Telegram's servers; off, a waiting
     message names the window and nothing else.
+
+    ALERTS, each a switch, each told once and "cleared" once when it ends:
+    a session was lost (claude exited, the window is still open), the
+    account logged out, a limit was hit (which budget, when it resets), an
+    entry stalled, a lane is stranded -- all ON, because each is a way
+    every lane stops without a word. `A budget crossed a band` (the soft
+    and hard percentages the watchdog winds down at) is OFF: it fires most
+    days and the watchdog already acts on it. Under /mute an alert is
+    recorded as sent, so /unmute does not replay it.
 
     `Set up…` opens {NOTIFY_SH.name} --setup in a tmux window of its own:
     it walks BotFather, validates the token, waits for your first START, and

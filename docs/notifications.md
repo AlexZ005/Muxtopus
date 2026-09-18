@@ -44,7 +44,7 @@ TELEGRAM_CHAT=987654321
 
 `claude-notify.sh --telegram-chat TOKEN` prints which chats have messaged a bot, which is the fiddly half of finding your chat id. Unconfigured is not an error: the caller is a background service and a missing phone is not a reason to fail a pass.
 
-What you are *told* is per account, in the settings store, on the seven `MUXTOPUS_NOTIFY_*` keys ([Configuration](configuration.md)) — the same Settings menu writes those, one row each, and the top row says which backend is configured and when it last sent. `Send a test` proves the phone hears this account.
+What you are *told* is per account, in the settings store, on the `MUXTOPUS_NOTIFY_*` keys ([Configuration](configuration.md)) — the same Settings menu writes those, one row each, and the top row says which backend is configured and when it last sent. `Send a test` proves the phone hears this account.
 
 ## Four things, each its own switch
 
@@ -54,13 +54,30 @@ Each is said **once per occurrence rather than once per pass**, and every title 
 |---|---|---|
 | **waiting** | an idle pane shows a permission or trust prompt on two consecutive passes (so ≥ 30 s, not a flash). Drawn `needs you`, yellow, on the dashboard too | `MUXTOPUS_NOTIFY_WAITING` |
 | **questions** | an unanswered QUESTIONS file is new, or has a new unanswered fork | `MUXTOPUS_NOTIFY_QUESTIONS` |
-| **trouble** | a verdict becomes `stalled` or an entry `error`; a lane becomes `stranded`; a launch fails; an entry has been `blocked` longer than `MUXTOPUS_NOTIFY_BLOCKED_AFTER` minutes (120; `0` never) — plain blocked is ordinary waiting | `MUXTOPUS_NOTIFY_TROUBLE` |
+| **trouble** | an entry is marked `error` (a launch failed); an entry has been `blocked` longer than `MUXTOPUS_NOTIFY_BLOCKED_AFTER` minutes (120; `0` never) — plain blocked is ordinary waiting. Stalled and stranded are [alerts](#alerts-when-lanes-silently-stop) with switches of their own | `MUXTOPUS_NOTIFY_TROUBLE` |
 | **done** | a handover reaches `done/`: its gist, and the entries it released | `MUXTOPUS_NOTIFY_DONE` |
 | (always) | a usage limit that empties *before* the time it promised | — |
 
 Two more switches: `MUXTOPUS_NOTIFY_INBOUND` — whether buttons are attached and replies obeyed at all, and whether the bot answers commands; and `MUXTOPUS_NOTIFY_PANE_TEXT` — whether a waiting message may quote the prompt box. That is the one line of pane text that leaves this machine for the backend's servers; off, a waiting message names the window and nothing else.
 
 A daemon restart re-reads what was already sent and re-sends nothing; a condition that ended and comes back fires again.
+
+## Alerts when lanes silently stop
+
+The events above are news; these are the ways every lane can stop without a word. Each is told **once** when it starts and **once more, as `cleared: …`, when it ends**, each has its own switch (one row each in `esc ▸ Settings ▸ Notifications`), and under `/mute` each is recorded as sent — its `cleared` too — so `/unmute` does not replay what you slept through.
+
+| alert | fires when | key | default |
+|---|---|---|---|
+| **session lost** | a pane that carried a claude session no longer does, while its window is still open (the process died; the pane is back at a shell). Seen on two passes, so a restart in place is not news | `MUXTOPUS_NOTIFY_SESSION` | **on** |
+| **logged out** | the `/usage` probe finds the login screen, an idle pane shows an auth error or the login screen, or the account's credentials file is gone | `MUXTOPUS_NOTIFY_AUTH` | **on** |
+| **limit hit** | the session, weekly or model-week budget is at its limit — a limit banner in a pane, or a reading of 100% — naming the budget and when it resets | `MUXTOPUS_NOTIFY_LIMIT` | **on** |
+| **budget band** | a budget past `WATCHDOG_SOFT_PCT` or `WATCHDOG_HARD_PCT`; a band that only fell is not news | `MUXTOPUS_NOTIFY_LIMIT_BANDS` | off |
+| **stalled** | the scheduler cannot judge an entry at all (`stalled` in `sched-why.tsv`) | `MUXTOPUS_NOTIFY_STALLED` | **on** |
+| **stranded** | a lane is idle with an open handover and nothing will ever resume it | `MUXTOPUS_NOTIFY_STRANDED` | **on** |
+
+**Why those defaults.** On is every condition where lanes stop and nothing else will say so: a lost session and a logout end work silently — a logout ends *all* of it, at each lane's next turn — a limit is hours of nothing, and stalled and stranded are the scheduler admitting it cannot help. The bands are off because they are a forecast rather than trouble: the watchdog already winds sessions down at them, and on a busy day they fire several times.
+
+Nothing here re-derives a state: the alerts read what the watchdog already publishes — `status.tsv`, `usage.tsv`, `sched-why.tsv` and the pane text it captured anyway. A usage reading older than `WATCHDOG_USAGE_STALE` neither fires nor clears a limit. A switched-off alert is remembered quietly: switching it on while the condition lasts tells it then.
 
 ## The phone can answer
 
