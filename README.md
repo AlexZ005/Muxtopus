@@ -535,6 +535,18 @@ still there, so an answer that arrived after you answered at the machine edits
 itself to say so instead. `Yes, and don't ask again` is never offered from a
 phone: approving one action is not the same as changing a policy.
 
+**A question, too.** Each unanswered fork arrives as a message of its own:
+the fork's text, a button per option (`(a) · ★ (b)`, the star on the one
+the lane recommends) and **✎ type**. Or just reply to the message. The answer
+is written into the fork as `**Answer (user via telegram, <date>):**`, by the
+same function the dashboard's answer flow uses. A lane that rewrote its file
+in the meantime still gets the answer in the right fork, found by title, and
+the message says the file had changed. A fork already answered at the machine
+is left alone, and the message says that instead. When the last fork is
+answered the file is marked ANSWERED, and if the lane's window is open and
+idle it is told `Your questions are answered in <path>`. Every answered
+message is edited to say what was written and when, so the chat is the record.
+
 **Or ask it, with every push switched off.** A push can be missed, muted or
 dismissed, and a dismissed message takes its buttons with it — so the bot
 also answers commands, registered in Telegram's own menu button:
@@ -542,8 +554,8 @@ also answers commands, registered in Telegram's own menu button:
 | | |
 |---|---|
 | `/status` | per account: sessions by state, budget and reset, pending/blocked/stalled entries, open handovers, unanswered questions, watchdog heartbeat |
-| `/pending` | everything actionable, **re-issued with fresh buttons**. The "I dismissed it" command |
-| `/questions` | the unanswered QUESTIONS files and how many forks each has |
+| `/pending` | everything actionable, **re-issued with fresh buttons**: prompts, each unanswered fork, trouble. The "I dismissed it" command |
+| `/questions` | the unanswered QUESTIONS files as buttons (`25-late · 2 forks`); press one for its forks |
 | `/blocked` | each entry that is not launching, with the scheduler's own why |
 | `/windows` | one line per session; a `needs you` row brings its buttons |
 | `/stats` | the usage ledger's totals; the buttons switch week / month / all |
@@ -559,9 +571,9 @@ handled exactly once.
 Two honest limits. Pane text leaves your machine for the backend's servers
 when `MUXTOPUS_NOTIFY_PANE_TEXT` is on, which is what that switch is for; and
 nothing typed on a phone is ever run as a shell — a prompt answer is one of
-two keys and nothing else. Answering a *fork* from the phone is the one piece
-still to land: today a questions message tells you which file is waiting, and
-you answer it in the dashboard.
+two keys and nothing else, and a typed fork answer is a line of text in a
+QUESTIONS file. At most eight forks of a file are sent at once; the rest wait
+in the dashboard.
 
 ---
 

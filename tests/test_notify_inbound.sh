@@ -127,11 +127,11 @@ press "$old"; poll; sleep 0.5
 check "the old button types nothing" [ -z "$(keys)" ]
 screen; pass
 
-echo "== a fork callback is 'not yet'"
+echo "== a fork callback whose message is gone is refused (answering forks: test_notify_forks.sh)"
 mkdir -p "$SH/pending" "$SH/groups"
-printf '{"id":"abcdef01","group":"g1","kind":"fork","action":"a","target":"fork:x#1","created":%s}' "$(date +%s)" > "$SH/pending/abcdef01.json"
+printf '{"id":"abcdef01","group":"g1","kind":"fork","action":"opt-a","target":"fork:x#1","created":%s}' "$(date +%s)" > "$SH/pending/abcdef01.json"
 press abcdef01; poll
-check "logged not yet" grep -q "fork callback for fork:x#1: not yet" "$NLOG"
+check "answered: expired or already used" [ "$(sb_calls answerCallbackQuery | tail -1 | jq -r .text)" = "expired or already used" ]
 
 echo "== INBOUND off: no buttons"
 setkey MUXTOPUS_NOTIFY_INBOUND off

@@ -88,7 +88,8 @@ echo "== /pending with every switch OFF re-issues the prompt; the old button is 
 say /pending; poll
 old_yes="$(sb_calls sendMessage | jq -r 'select(.text|test("needs you")) | .reply_markup | fromjson | .inline_keyboard[0][0].callback_data' | tail -1)"
 check "a prompt message with buttons" [ -f "$SH/pending/$old_yes.json" ]
-check "the fork half says not yet" grep -q "Answering a fork from the phone: not yet" <<<"$(texts)"
+check "the fork half sends the fork itself" grep -q "^personal · lane-q · fork 1/1" <<<"$(texts)"
+check "..with its buttons" [ "$(sb_calls sendMessage | jq -c 'select(.text|test("lane-q · fork")) | .reply_markup | fromjson | [.inline_keyboard[][] .text]' | tail -1)" = '["(a)","✎ type"]' ]
 check "trouble lists the stalled entry with its why" grep -q "stalled: bad.md -- STALLED: type must be plan or work" <<<"$(texts)"
 check "trouble lists the long-blocked entry" grep -q "blocked: held.md -- blocked: waiting for lane-x" <<<"$(texts)"
 say /pending; poll
@@ -103,10 +104,10 @@ press "$new_yes"; poll; sleep 1
 check "the NEW button works: the pane got 1" [ "$(keys)" = 1 ]
 : > "$HOME/fake-claude.keys"
 
-echo "== /questions: not yet"
+echo "== /questions: the files as buttons (answering: test_notify_forks.sh)"
 say /questions; poll
-check "lists the file" grep -q "personal · lane-q · 1 fork(s)" <<<"$(last_text)"
-check "and says not yet" grep -q "not yet" <<<"$(last_text)"
+check "lists the file" grep -q "personal · lane-q · 1 fork$" <<<"$(last_text)"
+check "..as a button" [ "$(kb_of_last | jq -c '[.inline_keyboard[][] .text]')" = '["lane-q · 1 fork"]' ]
 
 echo "== /blocked and /windows"
 say /blocked; poll

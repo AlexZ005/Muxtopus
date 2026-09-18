@@ -2068,6 +2068,14 @@ notify_questions() {
     shown=0
     for id in "${new[@]}"; do
       shown=$(( shown + 1 )); [ "$shown" -le 8 ] || break
+      # WITH BUTTONS when the phone may answer: (a) (b) … and ✎ type, from
+      # muxtelegram, which also knows the fork's message when it is replied to.
+      if notify_inbound && python3 "$SCRIPT_DIR/muxtelegram.py" fork-message \
+           ${MUX_PROFILE:+--profile "$MUX_PROFILE"} --path "$path" --fork "$id" \
+           --title "$MUX_LABEL · $slug · fork $shown/$n" >/dev/null 2>&1; then
+        log "notify: fork $id of $slug (buttons)"
+        continue
+      fi
       notify_send "" "" "$slug · fork $shown/$n" \
         "$(jq -r --arg p "$path" --arg i "$id" 'select(.path==$p) | .forks[] | select(.id==$i) | .text' <<<"$rows")"
     done
