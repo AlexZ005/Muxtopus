@@ -51,7 +51,12 @@ K="$HERE/k.sh"; C="$HERE/cap.sh"
 "$HERE/start.sh" 58 >/dev/null
 
 echo "== it loaded, and the seam carried every part of it"
-check "a badge is on every session row" grep -q "➥root-lane ◆" <("$C")
+# TWO badges now: dashboard/views/handovers.py puts a yellow ? on a lane
+# with an unanswered QUESTIONS file, at order=10, and the demo's ◆ follows
+# it. That two modules can both write on one row, in a fixed order neither
+# of them chose, is the registry working -- so the check names both rather
+# than pretending the row is the demo's alone.
+check "a badge is on every session row" grep -q "➥root-lane ? ◆" <("$C")
 check "a hint is on the footer"         grep -q "· demo loaded" <("$C")
 $K Escape
 check "its row is in the esc menu"      grep -q "Demo ▸  a row this file added" <("$C")
@@ -98,7 +103,7 @@ printf 'raise RuntimeError("this module is deliberately broken")\n' \
 check "the notice names the module and the reason" \
   grep -q "views.broken failed to load: this module is deliberately broken" <("$C")
 check "the main view still drew"     grep -q "➥root-lane" <("$C")
-check "...with the demo badge still on it" grep -q "➥root-lane ◆" <("$C")
+check "...with the demo badge still on it" grep -q "➥root-lane ? ◆" <("$C")
 $K s
 $K Right
 check "and the demo tab still works" grep -q "the demo view is a tab of s" <("$C")

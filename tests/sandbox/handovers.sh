@@ -560,6 +560,28 @@ check "...and the frame is still whole down there" \
 rm -f -- "${H:?}"/QUESTIONS-bulk-*.md
 "$HERE/stop.sh" >/dev/null
 
+echo "== the main view says it in one character"
+"$HERE/clean.sh"
+"$HERE/stop.sh" >/dev/null
+"$HERE/start.sh" 40 >/dev/null
+has "the lane with an unanswered file carries a ?" "➥root-lane ?"
+snapc
+check "...in yellow" \
+  bash -c 'grep -a "root-lane" "'"$COL"'" | grep -q "38;5;179m?"'
+has "and the key line says how many files are waiting" "· 2 ?"
+snap
+check "a lane with nothing asked of it carries nothing" \
+  bash -c '! grep -q "kid-lane ?" "'"$NOW"'"'
+# ANSWERED, from outside the dashboard: the mark is a fact about the folder,
+# not about this process, so the frame has to pick it up on its own.
+"$SCRIPTS/handover.sh" answered root-lane >/dev/null 2>&1
+sleep 7                          # muxhandovers.asking re-globs every 5s
+snap
+check "marking it answered takes the ? off the row" \
+  bash -c '! grep -q "root-lane ?" "'"$NOW"'"'
+has "...and the count with it"               "· 1 ?"
+"$HERE/clean.sh"
+
 echo "== the WHY line on the schedules tab is unchanged"
 # handover_state is now a call to muxhandovers.lane_state, whose order is the
 # watchdog's. The one row it draws on the other tab must say what it always said.

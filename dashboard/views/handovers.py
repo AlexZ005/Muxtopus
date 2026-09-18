@@ -116,6 +116,11 @@ HELP_HANDOVERS = """
                     and is running again
     WINDOW  the window the lane was launched in, ● while it is still open
     HOLDS   how many PENDING schedule entries are waiting on this lane
+
+    ON THE MAIN VIEW, a session whose lane has an unanswered QUESTIONS file
+    carries a yellow ? beside its name, and the key line says how many files
+    are waiting in all. Both read the same folders this tab does, at most
+    once every five seconds, so the main frame pays a glob and no fork.
 """ % DIM
 
 
@@ -1071,6 +1076,29 @@ class HandoversView(View):
         return True
 
 
+# ===================================== the main view, in one character (§6)
+# The most actionable fact on this dashboard should not need a view switch to
+# be seen. A session whose lane has an unanswered QUESTIONS file gets a yellow
+# `?` beside its name, and the main footer says how many files are waiting.
+#
+# BOTH OF THESE RUN ON THE MAIN FRAME, which is measured in forks per second
+# (2) and milliseconds (12.9), and a badge runs once per session per frame.
+# So they read muxhandovers.asking(), which globs two folders and tests the
+# marker at most every 5 seconds and caches the rest. No fork, and the same
+# definition of "unanswered" the tab uses -- not a second one that could
+# disagree with the row it is meant to point at.
+def lane_badge(app, session):
+    slug = lane_slug_of(session.window)
+    if slug and slug in muxhandovers.asking(HANDOVERS_DIR, QUESTIONS_DIR):
+        return Text("?", style="bold " + YELLOW)
+    return None
+
+
+def asks_hint(app):
+    n = len(muxhandovers.asking(HANDOVERS_DIR, QUESTIONS_DIR))
+    return Text("  · %d ?" % n, style=YELLOW) if n else None
+
+
 def register(app) -> None:
     # THE SETTINGS FIRST: the view reads its filters out of the store as it
     # is built, and muxsettings.get asserts the key is a declared one.
@@ -1085,5 +1113,7 @@ def register(app) -> None:
     view = HandoversView(app)
     app.add_view(view)
     app.add_menu("handover", view.menu_entries, title_fn=view.menu_title)
+    app.add_badge(lane_badge, order=10)
+    app.add_hint(asks_hint)
     app.add_help("HANDOVERS AND QUESTIONS (the second tab of s)",
                  HELP_HANDOVERS, order=52)
