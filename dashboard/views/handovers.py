@@ -33,8 +33,9 @@ from rich.table import Table
 from rich.text import Text
 
 import muxhandovers
+import muxsettings
 from dashboard.app import View
-from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR,
+from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, PROFILE,
                             QUESTIONS_DIR, RED, YELLOW, human_age)
 from dashboard.data import claude_sessions, lane_slug_of, live_windows, read_tree
 from dashboard.menulayout import menu_viewport, rendered_height
@@ -58,12 +59,33 @@ BODY_MIN, BODY_MAX = 3, 10
 # (mtime, size) on top of this; only the directory listing is repeated.
 SCAN_EVERY = 1.0
 
+# THE TWO FILTERS, and why they are on disk rather than in memory (plan §4,
+# fork Q2 as the user answered it). `R` re-execs the dashboard and the code's
+# own comment says it "gets pressed a lot"; an in-memory toggle dies with
+# every one of them, so a done list that came back on each R would be
+# switched off once and for good. The sibling lane refused to persist the
+# main view's `t` and `f` -- "nobody asked". Here somebody asked.
+#
+# done   governs every FINISHED thing, done handovers and answered questions
+#        alike, so two switches cover four kinds of row without a third key.
+DONE_KEY = "DASHBOARD_HANDOVERS_DONE"
+ASKS_KEY = "DASHBOARD_HANDOVERS_QUESTIONS"
+
 HELP_HANDOVERS = """
   [%s]HANDOVERS AND QUESTIONS (the second tab of s)[/]
     ←→          move between the schedules and the handovers
     ↑↓          pick a row; the cursor starts on what is OWED
+    f           show or hide everything FINISHED -- done handovers and
+                answered question files alike
+    a           show or hide the question rows
     r           re-read the folder
     s / esc     back to the main view
+
+    Both filters are REMEMBERED (dashboard.conf, and the Settings menu lists
+    them): R re-execs the dashboard, and a filter that reset on every R would
+    be switched off once and for good. What a filter hides is always counted
+    on the bottom border, so a row can be hidden but never the fact that it
+    is there.
 
     The rows are every STATUS and QUESTIONS file of this account, in both
     folders, ordered by what is owed: unanswered questions first, then open
@@ -96,11 +118,28 @@ class HandoversView(View):
         # scanned every frame and 30-odd files would otherwise be read twice a
         # second to draw one line each.
         self.cache: dict = {}
-        self.show_done = False
-        self.show_questions = True
+        self.show_done = self._knob(DONE_KEY)
+        self.show_questions = self._knob(ASKS_KEY)
         self._foot = None
         self._body_cache: dict = {}
         self._scanned = 0.0
+
+    # ---------------------------------------------------------- the filters
+    @staticmethod
+    def _knob(key: str) -> bool:
+        return muxsettings.get(key, PROFILE) == "on"
+
+    def toggle(self, key: str, attr: str, label: str) -> str:
+        """Flip one filter and WRITE IT, atomically and reread-verified
+        (muxsettings.put). The screen always shows what was actually set:
+        a refused write leaves the filter where it was and says why, rather
+        than showing a state the next `R` would silently undo."""
+        want = not getattr(self, attr)
+        why = muxsettings.put(key, "on" if want else "off", PROFILE)
+        if why:
+            return "%s: not saved -- %s" % (label, why)
+        setattr(self, attr, want)
+        return "%s %s" % (label, "shown" if want else "hidden")
 
     # ------------------------------------------------------ the protocol
     def tab_label(self, app) -> str:
@@ -424,6 +463,7 @@ class HandoversView(View):
     def foot(self) -> Text:
         keys = Text.assemble(
             (" ↑↓", DIM), " pick  ", ("←→", DIM), " tab  ",
+            ("f", DIM), " done  ", ("a", DIM), " asks  ",
             ("r", DIM), " reload  ",
             ("s", DIM), "/", ("esc", DIM), " back  ", ("q", DIM), " quit",
         )
@@ -451,6 +491,10 @@ class HandoversView(View):
             self.app.say("handovers re-read")
         elif key in ("s", "\x1b"):
             self.app.switch_to("main")
+        elif key == "f":
+            self.app.say(self.toggle(DONE_KEY, "show_done", "finished rows"))
+        elif key == "a":
+            self.app.say(self.toggle(ASKS_KEY, "show_questions", "question rows"))
         elif key in ("c", "o", "l", "d"):
             self.app.say("%s: schedules tab only — ← goes back to it" % key)
         elif key == "t":
@@ -463,6 +507,16 @@ class HandoversView(View):
 
 
 def register(app) -> None:
+    # THE SETTINGS FIRST: the view reads its filters out of the store as it
+    # is built, and muxsettings.get asserts the key is a declared one.
+    muxsettings.register({
+        DONE_KEY: {
+            "label": "Handovers: show finished rows", "kind": "onoff",
+            "hint": "done handovers and answered question files (f on the tab)"},
+        ASKS_KEY: {
+            "label": "Handovers: show question rows", "kind": "onoff",
+            "hint": "QUESTIONS files, answered and not (a on the tab)"},
+    })
     view = HandoversView(app)
     app.add_view(view)
     app.add_help("HANDOVERS AND QUESTIONS (the second tab of s)",

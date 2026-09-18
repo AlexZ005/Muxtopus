@@ -80,6 +80,12 @@ KEYS = {
     "MUXTOPUS_NOTIFY_DONE": "on",
     "MUXTOPUS_NOTIFY_INBOUND": "on",
     "MUXTOPUS_NOTIFY_PANE_TEXT": "on",
+    # THE HANDOVERS TAB'S TWO FILTERS (dashboard/views/handovers.py;
+    # docs/plan-handover-visibility.md §4). They persist because R re-execs
+    # the dashboard and is pressed a lot, and a done list that came back on
+    # every R would be switched off for good.
+    "DASHBOARD_HANDOVERS_DONE": "off",
+    "DASHBOARD_HANDOVERS_QUESTIONS": "on",
 }
 KINDS = ("schedules", "backups", "handovers")
 

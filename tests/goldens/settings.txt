@@ -25,6 +25,8 @@
 │    Default model for a new window: fable  a CLI alias (opus, fable…), or the account default                                                                 │
 │    Default effort for a new window: high  passed as claude --effort                                                                                          │
 │    Default working folder: <SB>/work/repo-b  offered first by c and used by the schedule create flow <pad>│
+│    Handovers: show finished rows: off  done handovers and answered question files (f on the tab)                                                             │
+│    Handovers: show question rows: ON  QUESTIONS files, answered and not (a on the tab)                                                                       │
 │    ····················································                                                                                                      │
 │    Back                                                                                                                                                      │
 │    watchdog on — an idle limited window is prompted once its limit resets   ·   ↑↓ pick · enter change · esc back                                            │

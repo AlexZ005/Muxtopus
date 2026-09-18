@@ -351,5 +351,20 @@ eq(marked2.splitlines()[0], opened.splitlines()[0], "the title stays the title")
 eq(mh.mark_answered(marked, DATE), marked, "a file that already has one is untouched")
 eq(mh.parse_forks(marked2)[0]["title"], fk[0]["title"], "no fork moved")
 
+# ---- 10. the two filter keys exist in BOTH halves of the contract --------
+# tests/test_settings.py compares the whole lists name for name; this is the
+# narrower claim that the two names the handovers tab actually reads are in
+# them, so renaming a constant in dashboard/views/handovers.py without
+# touching the lists fails here rather than silently writing a value the
+# shell half never reads.
+import muxconfig                             # noqa: E402
+for key, default in (("DASHBOARD_HANDOVERS_DONE", "off"),
+                     ("DASHBOARD_HANDOVERS_QUESTIONS", "on")):
+    ok(key in muxconfig.KEYS, "%s is a config key" % key)
+    eq(muxconfig.KEYS[key], default, "%s defaults to %r" % (key, default))
+    ok(re.search(r"^%s=%s$" % (key, default),
+                 (ROOT / "profile.sh").read_text(), re.M),
+       "%s is in profile.sh's MUX_CONFIG_KEYS with the same default" % key)
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("muxhandovers: %d checks green" % n)

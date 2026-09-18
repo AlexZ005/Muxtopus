@@ -155,6 +155,51 @@ has "...and the handovers are one arrow away" "▸handovers"
 $K s
 has "s from the handovers tab leaves too"    "➥root-lane"
 
+echo "== the two filters, and they survive an R"
+"$HERE/clean.sh"
+"$HERE/stop.sh" >/dev/null
+"$HERE/start.sh" 40 >/dev/null
+CONF="${SB:?}/config/muxtopus/profiles/mxsplit.dashboard.conf"
+$K s; $K Right
+has "finished rows are hidden to begin with"  "done hidden: 4"
+$K f
+has "f says what it did"                      "finished rows shown"
+has "...and the finished handovers are there" "done       1d      root-lane"
+has "...answered question files too"          "? done"
+has "...and a stamped earlier run says which" "old-lane ·earlier"
+check "the setting is on disk, not just on screen" \
+  grep -q '^DASHBOARD_HANDOVERS_DONE="on"' "$CONF"
+# R RE-EXECS THE DASHBOARD. That is the whole reason these two are on disk:
+# every in-memory toggle dies here, and a done list that came back on every
+# R would be switched off once and for good.
+$K R
+sleep 3
+$K s; $K Right
+has "and it is still on after R re-execs the whole dashboard" "done       1d      root-lane"
+$K f
+has "f puts it back"                          "finished rows hidden"
+check "...on disk as well" grep -q '^DASHBOARD_HANDOVERS_DONE="off"' "$CONF"
+
+$K a
+has "a hides the question rows"               "question rows hidden"
+snap
+check "...every one of them" bash -c '! grep -q "? ask" "'"$NOW"'"'
+has "...and says how many it is hiding"       "questions hidden: 3"
+check "the setting is on disk" \
+  grep -q '^DASHBOARD_HANDOVERS_QUESTIONS="off"' "$CONF"
+has "the strip still carries the count the filter hides" "· 2 ?"
+$K a
+has "a brings them back"                      "question rows shown"
+
+echo "== both filters are rows in the Settings menu, with no extra code"
+$K Escape
+$K Escape
+$K Enter
+has "the esc menu opens Settings"             "Menu layout"
+has "the done filter is a row"                "Handovers: show finished rows"
+has "and so is the question filter"           "Handovers: show question rows"
+$K Escape; $K Escape
+
 echo "== the viewport: more rows than the screen has, and a bottom border"
 # THIRTY MORE ROWS. done rows are hidden by default and the filter that shows
 # them is phase 4, so what overflows the screen here is unanswered question
