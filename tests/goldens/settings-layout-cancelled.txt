@@ -8,7 +8,7 @@
 │                                                                                                                                                              │
 │        MON    WINDOW               MODEL         CONTEXT                            SPENT     IDLE   STATE              DIRTY   WOUND          RESUMED       │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
-│  ▸✔    on     ➥root-lane           opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
+│  ▸✔    on     ➥root-lane ?         opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
 │   ✔    on       └ ➥➥kid-lane       fable         ████··········  31% 310k            880k      15m   limited 14:30          3   Jan 2 03:06    —             │
 │   ✔    on     ➥stranded-lane       sonnet        ██············  18% 180k            410k       2h   stranded               7   —              —             │
 │   ✔    on     ➥due-lane            opus[1m]      █·············   9% 90k             250k       5m   due 13:00              3   —              Jan 2 05:53   │
@@ -25,6 +25,8 @@
 │    Default model for a new window: fable  a CLI alias (opus, fable…), or the account default                                                                 │
 │    Default effort for a new window: high  passed as claude --effort                                                                                          │
 │    Default working folder: <SB>/work/repo-b  offered first by c and used by the schedule create flow <pad>│
+│    Handovers: show finished rows: off  done handovers and answered question files (f on the tab)                                                             │
+│    Handovers: show question rows: ON  QUESTIONS files, answered and not (a on the tab)                                                                       │
 │    ····················································                                                                                                      │
 │    Back                                                                                                                                                      │
 │    cancelled   ·   ↑↓ pick · enter change · esc back                                                                                                         │

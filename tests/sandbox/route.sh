@@ -75,7 +75,10 @@ for H in 24 40 58; do
     shot "$H-$L-settings-back"     "Disconnect"
     $K Escape
     $K s
-    shot "$H-$L-sched"             "scheduled windows"
+    # The panel TITLE is the tab strip once a view shares group "s"
+    # (dashboard/views/handovers.py), so the schedules screen is identified
+    # by the strip rather than by the title it used to carry.
+    shot "$H-$L-sched"             "schedules 6"
     $K Space
     shot "$H-$L-sched-menu"        "Edit a-pending.md"
     "$HERE/stop.sh"
@@ -218,7 +221,7 @@ $K Escape; shot "create-cancelled" "cancelled — nothing written"
 $K d;      shot "sched-delete-confirm" "Delete a-pending.md?"
 $K n;      shot "sched-delete-cancelled" "cancelled"
 # enter/e: the editor hand-off (EDITOR is /usr/bin/true, so it returns at once)
-$K Enter;  shot "sched-after-edit" "scheduled windows"
+$K Enter;  shot "sched-after-edit" "schedules 6"
 "$HERE/stop.sh"
 
 python3 "$HERE/normalise.py" "${CAPS:?}"/*.txt

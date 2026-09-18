@@ -8,7 +8,7 @@
 │                                                                                                                                                              │
 │        MON    WINDOW               MODEL         CONTEXT                            SPENT     IDLE   STATE              DIRTY   WOUND          RESUMED       │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
-│  ▸✔    on     ➥root-lane  +1       opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
+│  ▸✔    on     ➥root-lane  +1 ?     opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
 │   ✔    on     ➥stranded-lane       sonnet        ██············  18% 180k            410k       2h   stranded               7   —              —             │
 │   ✔    on     ➥due-lane            opus[1m]      █·············   9% 90k             250k       5m   due 13:00              3   —              Jan 2 05:53   │
 │   ✔    on     (background)         haiku         ··············   4% 45k             120k        —   idle                   —   —              —             │
@@ -28,4 +28,4 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  collapsed ➥root-lane
  q quit  r refresh  R reload  s schedules  w watchdog  m monitor  u/U usage  ↑↓ pick  enter open  space menu  esc muxtopus  c new session  ←→ fold  t tree  f
-all lanes  p btop  ? help
+all lanes  p btop  ? help  · 2 ?

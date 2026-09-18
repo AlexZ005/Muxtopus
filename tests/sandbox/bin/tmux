@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
 # THE ONLY tmux this sandbox can see: a server of its own. Without this a
 # send-keys typo reaches the window you are reading this in.
-exec /usr/bin/tmux -L mxsplit "$@"
+#
+# THE SOCKET IS NAMED BY env.sh, defaulting to the mxsplit this harness was
+# born with, because THREE LANES NOW RUN SIDE BY SIDE off their own worktrees
+# (docs/plan-dashboard-split.md §5) and stop.sh's `kill-server` does not ask
+# whose server it is. One lane running goldens.sh would otherwise take down
+# another lane's dashboard mid-capture, and the capture that came back would
+# be a mystery rather than a failure.
+exec /usr/bin/tmux -L "${SANDBOX_SOCKET:-mxsplit}" "$@"

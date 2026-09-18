@@ -43,18 +43,36 @@ OUTPUT_CONTRACT = """\
 QUESTIONS_CONTRACT = """\
 ## Questions contract (nobody is watching this window)
 Any fork you would normally raise with AskUserQuestion: do NOT wait for an
-answer. Write it into core/plans/QUESTIONS-<topic>.md and continue with your
-own recommendation, marking that decision as provisional in the plan.
-Format so it can be answered later by replying in plain text:
+answer. Write it into {{QUESTIONS}} -- that placeholder is replaced with the
+real path when this window is launched, and it is the file the dashboard's
+handovers tab reads -- and continue with your own recommendation, marking
+that decision as provisional in the plan.
 
-    ## Q1: <the question>
-    - a) <option>   <- RECOMMENDED: <one-line why>
-    - b) <option>
-    - c) <option>
-    Answer: (reply "Q1: a" / "Q1: b" or write a custom answer in free text)
+One fork per numbered item or `## ` heading, at the start of a line.
+Options are lettered in brackets, the recommended one says so:
 
-One numbered question per fork, recommended option always marked, custom
-answers always possible.
+    1. **<the question, in a sentence>**
+       - **(a) RECOMMENDED: <option>**  <one-line why>
+       - (b) <option>
+       - (c) <option>
+
+The dashboard offers those options as rows with the recommended one already
+picked, and writes the answer back as one line at the end of the fork:
+
+    **Answer (user, <date>):** (a) - <note>
+
+so a line starting `**Answer` is what "this fork is settled" looks like,
+whoever wrote it. Free-text answers are always possible -- someone typing
+one is the normal case, not a failure.
+
+WHEN EVERY FORK IS ANSWERED the file gets a line matching `ANSWERED` (the
+dashboard writes `**ANSWERED <date>**`, and a hand-typed one counts). That
+marker is what tells `handover.sh done` the file may travel into done/ with
+this lane's handover; without it the file stays put and keeps asking.
+
+ADDING A FORK TO A FILE THAT IS ALREADY MARKED ANSWERED MEANS DELETING THE
+MARKER LINE. The marker is a claim about the whole file, and a new fork
+under an old marker is a question nobody will ever be shown.
 """
 
 TEMPLATES = {
@@ -100,8 +118,8 @@ You are running a hardening audit autonomously.
 Read {{STATUS_FILE}} and continue from its "How to resume" section.
 Work in phases, one commit per phase. Update {{STATUS_FILE}} before stopping
 so the next session can resume the same way. If a fork genuinely needs the
-user, record it in core/plans/QUESTIONS-<topic>.md with your recommended
-answer and proceed with the recommendation.
+user, record it in {{QUESTIONS}} with your recommended answer, in the format
+the Questions contract describes, and proceed with the recommendation.
 """,
 }
 
@@ -289,6 +307,15 @@ The entry is held until EVERY named lane is done. "Done" means, in order:
 An OPEN handover means the lane is still running -- that file is written early
 and lives until it is marked done. A dependency nothing has ever launched holds
 the entry too, and says so.
+
+A LANE THAT RAN, WAS MARKED DONE AND RAN AGAIN has BOTH files, and the order
+above is why that reads as finished: `done/STATUS-<slug>.md` is tested first,
+so every `after: <slug>` is satisfied the moment the earlier run's record
+exists, whatever the open file says. That is not a bug to work around -- it is
+what "done" has always meant here -- but it is a trap, so the dashboard's
+handovers tab draws such a row `open` with a yellow warning and says in words
+which file is doing the releasing. `handover.sh reopen <slug>` moves the old
+record back out if the hold was supposed to still be in force.
 
 The list is what an orchestrator needs: "integrate the four lanes" is ONE entry
 waiting on four, not four entries in a chain -- and a chain would also serialise

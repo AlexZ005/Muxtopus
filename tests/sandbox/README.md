@@ -23,6 +23,7 @@ split into a package draws the same picture: you take the picture first.
     moved.py        where every pre-split definition went, and was it changed
     mkledger.py     a synthetic stats ledger, anchored on TODAY
     insights.sh     the `i` view, driven: every key, at 24/40/58 rows
+    handovers.sh    the handovers TAB of `s`: rows, states, viewport
 
 ## The goldens are pictures; two things they cannot see
 
@@ -40,6 +41,12 @@ to press. Two checks cover what that leaves:
   golden taken on Tuesday would fail on Wednesday. `mkledger.py` writes its
   ledger against today for the same reason. What the FIGURES say is
   `tests/test_stats.py`'s subject — hand-computed, from rows.
+* `handovers.sh` drives the second tab of `s`. Most of what it proves is a
+  fact about ONE ROW -- its state, whether its window is still open, how many
+  pending entries it holds up -- which a reader of a 40-line golden cannot
+  see is being tested. It also carries `scap`, a settled capture: a read that
+  lands inside Live's repaint comes back MISSING A LINE (measured: the
+  cursor's row), so it takes captures until two agree.
 * `tests/test_names.py` (a plain python test, also in CI) checks that every
   global name the code mentions is one it can reach. The split moved two
   methods into a module whose import list was missing a constant they used,
@@ -62,8 +69,14 @@ to press. Two checks cover what that leaves:
 
     tests/sandbox/setup.sh
     tests/sandbox/insights.sh           # the i view
+    tests/sandbox/handovers.sh          # the handovers tab of s
     tests/sandbox/goldens.sh            # compare
     tests/sandbox/goldens.sh --bless    # write tests/goldens/ (phase 0 only)
 
 `SB` defaults to `${TMPDIR:-/tmp}/muxsplit-sandbox`; set it to put the fake
-machine somewhere else.
+machine somewhere else -- but **give it the same length** (21 characters), or
+the goldens differ on every line that names it: `normalise.py` masks the path
+to `<SB>`, which hides its text and not its width. `SANDBOX_SOCKET` and
+`SANDBOX_SESSION` move the tmux server and session the same way, which is how
+two lanes run this harness at once without `stop.sh` killing each other's
+dashboard.
