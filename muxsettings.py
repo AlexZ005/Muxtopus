@@ -22,6 +22,7 @@ this writes is the top layer for that account -- and BELOW the account's own
 hand-written file, which is the existing rule (a profile file narrows the
 scope) and would be the surprise to break.
 
+    register(specs, menu="")                     a module declares its keys
     get(key, profile)            -> str          the effective value ("" = unset)
     put(key, value, profile)     -> str          "" or the complaint; written and REREAD
     dashboard_conf_path(profile) -> Path
@@ -80,7 +81,28 @@ DASHBOARD_KEYS: dict[str, dict] = {
         "hint": "offered first by c and used by the schedule create flow"},
 }
 
-def register(specs: dict[str, dict]) -> None:
+# KEYS A MODULE DECLARED AS BELONGING TO ITS OWN MENU (register(..., menu=...)).
+# A setting in every other way -- get, put and validate treat it exactly like
+# one of the core eight -- but the Settings menu does not draw it, because the
+# module that registered it draws it itself. Without this, Settings ▸
+# Notifications ▸ would list its seven rows AND the Settings list above it
+# would list the same seven, because that list iterates DASHBOARD_KEYS and
+# must go on doing so without knowing this module exists.
+SUBMENU_KEYS: dict[str, dict] = {}
+
+
+def spec_of(key: str) -> dict | None:
+    """The declaration of one key, whichever half it was registered into."""
+    return DASHBOARD_KEYS.get(key) or SUBMENU_KEYS.get(key)
+
+
+def keys_of(menu: str) -> dict[str, dict]:
+    """Every key declared for one submenu, in registration order -- what that
+    menu's module draws its rows from."""
+    return {k: v for k, v in SUBMENU_KEYS.items() if v.get("menu") == menu}
+
+
+def register(specs: dict[str, dict], menu: str = "") -> None:
     """A dashboard module declares the settings keys it owns.
 
     DASHBOARD_KEYS above is the CORE EIGHT -- the ones the shell and the main
@@ -88,6 +110,11 @@ def register(specs: dict[str, dict]) -> None:
     two) calls this from its register(app) instead of editing that dict, and
     its rows then appear in the Settings menu in registration order after the
     core ones.
+
+    `menu` names a SUBMENU that draws the rows itself (notify passes
+    "notify"): the key is a full setting, but the Settings list leaves it to
+    that module. A module with one or two settings passes nothing and gets a
+    row in Settings for free; a module with seven gives them a menu.
 
     A KEY MUST ALREADY BE IN muxconfig.KEYS. That list and profile.sh's
     MUX_CONFIG_KEYS are the shell half and the python half of the same
@@ -98,7 +125,7 @@ def register(specs: dict[str, dict]) -> None:
     which is a conflict two lanes resolve, not a queue they wait in.
     """
     for key, spec in specs.items():
-        if key in DASHBOARD_KEYS:
+        if spec_of(key) is not None:
             raise ValueError("%s is already a dashboard setting" % key)
         if key not in KEYS:
             raise ValueError(
@@ -112,7 +139,10 @@ def register(specs: dict[str, dict]) -> None:
             raise ValueError("%s: kind must be choice, onoff or text" % key)
         if spec["kind"] == "choice" and "choices" not in spec:
             raise ValueError("%s: a choice needs choices" % key)
-        DASHBOARD_KEYS[key] = spec
+        if menu:
+            SUBMENU_KEYS[key] = dict(spec, menu=menu)
+        else:
+            DASHBOARD_KEYS[key] = spec
 
 
 HEADER = ("# Written by the muxtopus dashboard (esc → Settings). Edit config or\n"
@@ -120,13 +150,13 @@ HEADER = ("# Written by the muxtopus dashboard (esc → Settings). Edit config o
 
 
 def get(key: str, profile: str = "") -> str:
-    assert key in DASHBOARD_KEYS, key
+    assert spec_of(key), key
     return knob(key, profile, "") or ""
 
 
 def validate(key: str, value: str) -> str:
     """Why this value cannot be written, or ""."""
-    meta = DASHBOARD_KEYS[key]
+    meta = spec_of(key)
     if "\n" in value or '"' in value:
         return "no quotes or newlines in a value"
     if meta["kind"] == "onoff":
@@ -153,7 +183,7 @@ def put(key: str, value: str, profile: str = "") -> str:
     file and os.replace, so a crash mid-write leaves the old file intact.
     Then the layers are read back from disk, and success is only reported if
     the value read is the value written."""
-    assert key in DASHBOARD_KEYS, key
+    assert spec_of(key), key
     why = validate(key, value)
     if why:
         return why

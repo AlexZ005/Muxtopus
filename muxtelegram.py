@@ -64,6 +64,11 @@ try:                                    # handover-visibility's reader, when it 
 except ImportError:                     # pragma: no cover - depends on the tree
     muxhandovers = None
 
+try:                                    # the usage ledger, when it has collected
+    import muxstats                     # type: ignore  # noqa: E402
+except ImportError:                     # pragma: no cover - depends on the tree
+    muxstats = None
+
 STATE_HOME = pathlib.Path(os.environ.get("XDG_STATE_HOME")
                           or str(pathlib.Path.home() / ".local" / "state"))
 SHARED = STATE_HOME / "muxtopus-notify"
@@ -523,6 +528,7 @@ COMMANDS = [
     ("questions", "unanswered question files"),
     ("blocked", "schedule entries that are not launching, and why"),
     ("windows", "one line per session"),
+    ("stats", "what the ledger says: tokens, cost, sessions"),
     ("mute", "pushes off for a while, e.g. /mute 2h"),
     ("unmute", "pushes back on"),
     ("help", "what this bot answers"),
@@ -532,6 +538,7 @@ HELP = """/status -- per account: sessions by state, budget, schedule, handovers
 /questions -- unanswered QUESTIONS files
 /blocked -- each entry that is not launching, with the scheduler's why
 /windows -- one line per session; a needs-you row brings its buttons
+/stats -- the usage ledger's totals; the buttons switch week / month / all
 /mute 2h -- pushes off for a while (30m, 2h, 1d); asking keeps working
 /unmute -- pushes back on
 Replies come within one watchdog pass (at most ~30 s)."""
@@ -790,6 +797,81 @@ def cmd_windows(profiles_: list[str], note: str = "") -> None:
         reissue_prompt(p, s)
 
 
+# ------------------------------------------------------------------ stats
+# plan-insights.md §4: the same module, a third face. The VIEW and the CLI may
+# collect first; this one never does -- a command must cost no more than
+# reading what the watchdog's own five-minute hook already wrote, and a
+# ledger one pass out of date is not worth a fork on somebody's phone.
+STATS_PERIODS = ("week", "month", "all")
+
+
+def stats_report(profile: str, period: str):
+    """One account's ledger as muxstats reports it, or None with the reason."""
+    if muxstats is None:
+        return None, "muxstats is not in this checkout"
+    try:
+        led = muxstats.load(muxstats.stats_dir(profile))
+    except Exception as exc:                     # noqa: BLE001 - a report is optional
+        return None, "cannot read the ledger: %s" % exc
+    if not led.rows:
+        return None, ("nothing collected yet -- the watchdog writes the ledger "
+                      "every five minutes once a session has run")
+    table = muxstats.prices(muxstats.prices_path())
+    try:
+        rep = muxstats.query(led, period, {}, "project", None, table)
+    except Exception as exc:                     # noqa: BLE001
+        return None, "cannot read the ledger: %s" % exc
+    return rep, ""
+
+
+def stats_text(profile: str, period: str) -> str:
+    """The headline figures, not the eight-row report: a phone screen holds
+    about five lines before it is scrolled past. Every number here is one
+    `muxtopus stats --json` prints for the same period."""
+    rep, why = stats_report(profile, period)
+    if rep is None:
+        return "%s · stats\n%s" % (label(profile), why)
+    t, k, s = rep["tokens"], rep["cost"], rep["sessions"]
+    p = rep["period"]
+    lines = ["%s · stats · %s (%s – %s)" % (label(profile), p["label"], p["start"], p["end"]),
+             "%s tokens · %d session(s)" % (muxstats.human_tokens(t["total"]), s["count"])]
+    if k["usd"] is None:
+        lines.append("no prices -- tokens only")
+    else:
+        lines.append("%s API-equivalent · %s / day" % (muxstats._usd(k["usd"]),
+                                                       muxstats._usd(k["per_day"])))
+    lines.append("in %s · out %s · %s of input from cache"
+                 % (muxstats.human_tokens(t["input"]), muxstats.human_tokens(t["output"]),
+                    muxstats._pct(rep["cache"]["read_share"])))
+    top = [b for b in rep["breakdown"] if b["key"]][:3]
+    if top:
+        lines.append("top: " + " · ".join(
+            "%s %s" % (b["key"].rstrip("/").rsplit("/", 1)[-1], muxstats.human_tokens(b["tokens"]))
+            for b in top))
+    return "\n".join(lines)
+
+
+def stats_keyboard(profile: str, period: str) -> tuple[str, list]:
+    """week · month · all, the one in view marked. A new group every time, so
+    an old message's buttons retire rather than answering with a period its
+    own text does not show."""
+    return issue("cmd:" + secrets.token_hex(4), "cmd", profile,
+                 [(("· %s ·" % q) if q == period else q, "stats-" + q)
+                  for q in STATS_PERIODS], {"period": period}, "")
+
+
+def cmd_stats(profiles_: list[str], period: str = "week", note: str = "") -> None:
+    for p in profiles_:
+        text = stats_text(p, period)
+        gid, kb = stats_keyboard(p, period)
+        mid = send(text + note, kb)
+        note = ""
+        if mid is None:
+            drop_group(gid)
+        else:
+            bind(gid, mid)
+
+
 def parse_duration(arg: str) -> int | None:
     m = re.fullmatch(r"\s*(\d+)\s*([mhd]?)\s*", arg or "1h")
     if not m:
@@ -822,6 +904,9 @@ def handle_command(text: str, profile: str) -> None:
         cmd_blocked(ps, note)
     elif cmd == "windows":
         cmd_windows(ps, note)
+    elif cmd == "stats":
+        word = (arg or "week").strip().lower()
+        cmd_stats(ps, word if word in STATS_PERIODS else "week", note)
     elif cmd == "mute":
         sec = parse_duration(arg)
         if sec is None:
@@ -855,6 +940,16 @@ def handle_cmd_button(q: dict, d: dict) -> None:
         cmd_questions([p])
     elif action == "blocked":
         cmd_blocked([p])
+    elif action.startswith("stats-"):
+        period = action[len("stats-"):]
+        gid, kb = stats_keyboard(p, period)
+        r = api("editMessageText", chat_id=read_conf().get("TELEGRAM_CHAT"),
+                message_id=msg.get("message_id"), text=clip(stats_text(p, period)),
+                reply_markup={"inline_keyboard": kb})
+        drop_group(d["group"])
+        bind(gid, msg.get("message_id"))
+        if not r.get("ok"):
+            log("stats edit failed: %s" % r.get("description"))
     elif action == "refresh":
         text, c = status_text(p)
         gid, kb = cmd_keyboard(p, c)
