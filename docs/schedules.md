@@ -173,6 +173,8 @@ A `{{NAME}}` outside that table is left in the paste as **literal text** and war
 
 ## The `s` view
 
+![The schedules view: every entry with its status, and the executor's own why for the one under the cursor](screens/schedules.png)
+
 | key | |
 |---|---|
 | `↑` `↓` | pick an entry; the WHY panel under the table explains the one under the cursor |

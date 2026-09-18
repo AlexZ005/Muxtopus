@@ -62,6 +62,8 @@ A lane launched with the `questions` option ticked in [the options table](schedu
 
 ## The handovers tab (`s`, then `→`)
 
+![The handovers tab: what is owed first, and the detail of the row under the cursor](screens/handovers.png)
+
 The `s` screen has two tabs and the arrows move between them. The strip names both and carries their counts, so from the schedules you can still see how many handovers are open and how many question files are waiting on you.
 
 ```

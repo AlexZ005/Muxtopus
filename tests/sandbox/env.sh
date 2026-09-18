@@ -35,7 +35,14 @@ export EDITOR="${SANDBOX_EDITOR:-/usr/bin/true}"
 # the real /proc and cannot be faked -- find nothing, because every real dev
 # server on this machine belongs to some other account. A reproducible frame
 # on a working machine is what this one line buys.
-export CLAUDE_CONFIG_DIR="${SB:?}/home/.claude-mxsplit"
+# The account's NAME, so that a caller with a different story to tell -- the
+# screenshot, with a fixture set of its own -- can name its account something
+# a reader would see on a real machine. Every path that carries the suffix
+# is built from it; the default is the one the goldens were taken under.
+export SANDBOX_ACCOUNT="${SANDBOX_ACCOUNT:-mxsplit}"
+export CLAUDE_CONFIG_DIR="${SB:?}/home/.claude-${SANDBOX_ACCOUNT:?}"
+# Which fixture set setup.sh builds the fake machine from.
+export SANDBOX_FIXTURES="${SANDBOX_FIXTURES:-${SCRIPTS:?}/tests/fixtures/dashboard}"
 # Forks are read from here in the schedules view; point it at the fake machine
 # or the view lists the user's real, unanswered questions.
 export MUXTOPUS_QUESTIONS_DIR="${SB:?}/muxhome/questions"

@@ -7,7 +7,7 @@ nav_order: 4
 
 `Ctrl-b 0`. Everything is read from local files the watchdog publishes; the process never forks per frame, makes no API calls and spends no tokens. It is window 0 of every muxtopus session, and `?` inside it prints the help assembled from the screens that are actually loaded.
 
-![The dashboard: the main view above, the handovers tab of `s` below](dashboard.png)
+![The main view: a tree of lanes three levels deep, in every state the STATE column can show](screens/main.png)
 
 ## Screens
 
