@@ -54,7 +54,10 @@ set -uo pipefail
 # default account, whose paths are byte-identical to what they always were.
 # The arguments as given, kept for the daemon to re-exec itself with.
 _ARGV=("$@")
-. "$(dirname "$(readlink -f "$0")")/profile.sh"
+# Where this checkout is, for the one path the worker is told to run: a
+# fresh install lives in ~/.local/lib/muxtopus, not ~/.code/scripts.
+WD_SRC="$(dirname "$(readlink -f "$0")")"
+. "$WD_SRC/profile.sh"
 if [ "${1:-}" = "--profile" ]; then
   [ -n "${2:-}" ] || { echo "--profile needs a name" >&2; exit 2; }
   mux_use_profile "$2"; shift 2
@@ -1232,8 +1235,11 @@ sched_raw() {
   fi
   sched_body "$f"
   if [ "$type" = work ] && [ "$footer" = 1 ]; then
+    # ~ when it is under HOME, so the sentence reads as it always has here.
+    local hsh="$WD_SRC/handover.sh"
+    case "$hsh" in "$HOME"/*) hsh="~/${hsh#"$HOME"/}" ;; esac
     echo
-    echo "Work in phases, one commit per phase. When done -- or when asked to stop -- write {{HANDOVER}} saying what is done, what is next, and anything half-finished. When the whole item is finished, run: ~/.code/scripts/handover.sh done {{SLUG}}"
+    echo "Work in phases, one commit per phase. When done -- or when asked to stop -- write {{HANDOVER}} saying what is done, what is next, and anything half-finished. When the whole item is finished, run: $hsh done {{SLUG}}"
   fi
 }
 

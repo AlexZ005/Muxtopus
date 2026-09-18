@@ -11,12 +11,12 @@ The watchdog notices a window that stopped at a usage limit and types the contin
 ## Install
 
 ```bash
-git clone https://github.com/AlexZ005/Muxtopus.git ~/src/muxtopus
-cd ~/src/muxtopus
-./install.sh
+curl -fsSL https://github.com/AlexZ005/Muxtopus/releases/latest/download/get.sh | bash
 ```
 
-Needs `bash`, `tmux` ≥ 3.2, `jq`, `git`, `python3` ≥ 3.9 with `rich`, and the `claude` CLI. The installer symlinks `muxtopus` into `~/.local/bin`, writes a config file, creates the data folders and offers to install the watchdog as a user service. Nothing is written outside your home directory, and `./install.sh --dry-run` prints every path first.
+This installs the newest [release](https://github.com/AlexZ005/Muxtopus/releases), pinned to its tag and checked against its sha256, into `~/.local/lib/muxtopus`. It never follows `main`. To read it before running it, or to install from a git checkout instead, see [Install](https://alexz005.github.io/Muxtopus/install.html).
+
+Needs `bash`, `tmux` ≥ 3.2, `git`, `jq`, `python3` ≥ 3.10 and the `claude` CLI. The installer symlinks `muxtopus` into `~/.local/bin`, writes a config file, creates the data folders, builds the dashboard's venv and installs the watchdog as a user service. Nothing is written outside your home directory, and `install.sh --dry-run` prints every path first.
 
 ## Quick start
 

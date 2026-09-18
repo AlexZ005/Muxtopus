@@ -6,21 +6,54 @@ nav_order: 2
 # Install
 
 ```bash
+curl -fsSL https://github.com/AlexZ005/Muxtopus/releases/latest/download/get.sh | bash
+```
+
+That fetches the newest release's `get.sh`. It installs **that release's tag and nothing else**: it downloads the release's tarball, checks it against the sha256 stamped into `get.sh` when the release was built, unpacks it into `~/.local/lib/muxtopus` and runs its `install.sh`. It never follows `main`. To pin a version, put it in the URL (`releases/download/vX.Y.Z/get.sh`). The [releases page](https://github.com/AlexZ005/Muxtopus/releases) lists them.
+
+This installs a background daemon that types into your terminals, so reading it first is a good habit:
+
+```bash
+curl -fsSLO https://github.com/AlexZ005/Muxtopus/releases/latest/download/get.sh
+less get.sh
+bash get.sh                   # options after it go to install.sh: bash get.sh --no-watchdog
+```
+
+Running `get.sh` again from a newer release upgrades in place and keeps the dashboard's venv. It will not touch `~/.local/lib/muxtopus` if something else put it there, such as a git checkout.
+
+**From a git checkout** instead, if you want to follow `main` or send a patch:
+
+```bash
 git clone https://github.com/AlexZ005/Muxtopus.git ~/src/muxtopus
 cd ~/src/muxtopus
 ./install.sh
 ```
 
-The installer symlinks `muxtopus` into `~/.local/bin`, writes a config file, creates the data folders and offers to install the watchdog. Nothing is written outside your home directory, and it prints every path before it touches anything. There is no curl-pipe-sh on purpose: this thing installs a background daemon that types into your terminals, and that is not something anybody should run without having read it first.
+Either way, `install.sh` does the same things. It symlinks `muxtopus` into `~/.local/bin`, writes a config file, seeds the data folders, builds the dashboard's venv and installs the watchdog. Nothing is written outside your home directory, and it prints every path before touching anything.
 
 ```bash
 ./install.sh --dry-run        # print what it would do and stop
 ./install.sh --home ~/.code   # put schedules/backups/handovers somewhere else
 ./install.sh --bin DIR        # where the `muxtopus` link goes (default ~/.local/bin)
 ./install.sh --no-watchdog    # skip the watchdog service
+./install.sh --no-venv        # do not build .venv; the dashboard then uses a system python3 with rich, or its bash renderer
 ```
 
-**Requirements:** `bash`, `tmux` ≥ 3.2 (for `new-window -e`), `jq`, `git`, `python3` ≥ 3.9 with [`rich`](https://github.com/Textualize/rich) for the dashboard, and the `claude` CLI. `systemd --user` is used for the watchdog when present; without it the daemon is started as a plain background process instead.
+**Requirements:** `bash`, `tmux` ≥ 3.2 (for `new-window -e`), `git`, `jq`, `python3` ≥ 3.10 with its `venv` module (on Debian and Ubuntu that is the `python3-venv` package), `curl` or `wget`, and the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code). The installer builds the dashboard's [`rich`](https://github.com/Textualize/rich) venv itself. If it cannot, the dashboard falls back to a plain bash renderer instead of failing. `systemd --user` runs the watchdog where it is available; without it, the daemon is started as a plain background process.
+
+On Arch (and SteamOS in desktop mode, which already has most of these):
+
+```bash
+sudo pacman -S --needed tmux git jq python curl
+```
+
+On Debian or Ubuntu:
+
+```bash
+sudo apt install tmux git jq python3 python3-venv curl
+```
+
+`muxtopus --version` says which release you are running.
 
 ## One name on `PATH`, and it is `muxtopus`
 
