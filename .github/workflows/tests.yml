@@ -56,5 +56,7 @@ jobs:
         run: python3 tests/test_manual.py
       - name: VERSION is the only place the release number is written
         run: python3 tests/test_version.py
+      - name: a release builds from HEAD, and its get.sh installs it into a fresh HOME
+        run: bash tests/test_release.sh
       - name: the dashboard package imports without a terminal
         run: python3 -c "import deck_status"
