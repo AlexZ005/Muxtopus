@@ -1,3 +1,9 @@
+---
+title: A dashboard view is one new file
+parent: For contributors
+nav_order: 1
+---
+{% raw %}
 # A dashboard view is one new file
 
 `deck_status.py` is the shell: argv, the terminal, Rich's `Live`, the key
@@ -237,3 +243,4 @@ From `docs/plan-dashboard-split.md` §5b, and it applies to every lane:
   `git pull --ff-only`. "Done" then means "on main".
 * **One changelog fragment per lane**, `changes/<slug>.md`. A single
   CHANGELOG.md is a guaranteed conflict between parallel lanes.
+{% endraw %}

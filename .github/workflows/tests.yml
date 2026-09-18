@@ -48,5 +48,7 @@ jobs:
         run: python3 tests/test_handovers.py
       - name: handover.sh -- the marker, and what done carries with it
         run: bash tests/test_handover_sh.sh
+      - name: the manual -- front matter, links, Liquid-safe, nothing lost from the README
+        run: python3 tests/test_manual.py
       - name: the dashboard package imports without a terminal
         run: python3 -c "import deck_status"

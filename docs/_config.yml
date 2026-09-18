@@ -1,0 +1,40 @@
+# The manual, served by GitHub Pages from main:/docs.
+#
+# WHY THIS AND NOT A gh-pages BRANCH OR A BUILD WORKFLOW: the pages are plain
+# Markdown in the same commit as the code they describe, so a PR that changes
+# a key changes its page in the same diff, and there is no second branch, no
+# generated tree and no action to keep green. GitHub builds it with the
+# stock Jekyll it runs for every repository; nothing here needs a local
+# toolchain. The plan-*.md design notes beside the pages are EXCLUDED below:
+# GitHub's build pages every .md whether or not it has front matter, and the
+# plans are read on GitHub, where the contributors page links them.
+#
+# To add a page: docs/<name>.md, three lines of front matter (title,
+# nav_order, and `parent:` for a sub-page), the body inside {% raw %} ...
+# {% endraw %} so a {{PLACEHOLDER}} survives Liquid. tests/test_manual.py
+# checks both. Nothing else lists the pages.
+title: Muxtopus
+description: Run several Claude Code sessions side by side in tmux, one per account, and stop losing work to usage limits.
+url: https://alexz005.github.io
+baseurl: /Muxtopus
+
+remote_theme: just-the-docs/just-the-docs
+plugins:
+  - jekyll-remote-theme
+
+# just-the-docs
+search_enabled: true
+heading_anchors: true
+color_scheme: dark
+nav_external_links:
+  - title: Muxtopus on GitHub
+    url: https://github.com/AlexZ005/Muxtopus
+aux_links:
+  GitHub: https://github.com/AlexZ005/Muxtopus
+footer_content: MIT licence. The manual is docs/ in the repository; a change to the code and the page that describes it travel in one commit.
+
+# What Jekyll must not treat as a page or copy into the site.
+exclude:
+  - "plan-*.md"
+  - build-local.sh
+  - _site
