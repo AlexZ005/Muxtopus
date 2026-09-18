@@ -3,7 +3,9 @@
 One file per pull request, named after its lane (`changes/<slug>.md`): a
 heading and a few lines about what a USER would notice. A release
 concatenates them into `CHANGELOG.md`, bumps `VERSION` and tags `vX.Y.Z`,
-after which the fragments are removed.
+after which the fragments are removed -- `git rm`, in the release's own PR,
+so the folder only ever holds what the next release has not told anybody
+yet. The whole procedure is `docs/releasing.md`.
 
 Why fragments and not a changelog everyone edits: several lanes run at once,
 each on its own branch, and a single `CHANGELOG.md` is then a guaranteed
