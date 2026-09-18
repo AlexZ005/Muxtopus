@@ -48,6 +48,9 @@ from dashboard.tabstrip import fit
 from dashboard.menulayout import (MENU_MIN, menu_needed, menu_panel,
                                   rendered_height)
 
+# The setting that hides tabs (dashboard/menus/tabs.py draws its menu).
+TABS_KEY = "DASHBOARD_TABS_HIDDEN"
+
 # The hint under a menu when its kind does not name its own.
 MENU_HINT = "↑↓ pick · enter choose · esc close"
 
@@ -161,6 +164,9 @@ class App:
         # must not be asked to compare two functions either; this is the
         # tie-break that keeps it from having to.
         self._seq = 0
+        # DASHBOARD_TABS_HIDDEN, read at most once a second: tabs_of is asked
+        # several times a frame, and the menu that writes it says forget.
+        self._hidden: tuple | None = None
 
     def module_failed(self, name: str, exc: Exception) -> None:
         """A view or a menu module that would not load. Said out loud and
@@ -251,12 +257,30 @@ class App:
     def views(self) -> list:
         return sorted(self._views.values(), key=lambda v: (v.order, v.name))
 
-    def tabs_of(self, view) -> list:
-        """The views that share this one's group, in order -- its tab strip.
-        A view with no group is its own screen and has no strip."""
+    def group_tabs(self, view) -> list:
+        """EVERY view that shares this one's group, hidden or not, in order.
+        A view with no group is its own screen and has no tabs."""
         if not getattr(view, "group", None):
             return []
         return [v for v in self.views() if getattr(v, "group", None) == view.group]
+
+    def tabs_of(self, view) -> list:
+        """The tab strip: the group less the tabs the user hid (Settings ▸
+        Tabs) -- but never less `view` itself. A hidden tab reached by its
+        key or by "Open once" is in the strip while you are on it, so ←→
+        from it has somewhere to start and the cycle cannot break."""
+        hidden = self.hidden_tabs()
+        return [v for v in self.group_tabs(view) if v.name not in hidden or v is view]
+
+    def hidden_tabs(self) -> set:
+        now = time.time()
+        if self._hidden is None or now - self._hidden[0] > 1.0:
+            raw = knob(TABS_KEY, PROFILE) or ""
+            self._hidden = (now, {x.strip() for x in raw.split(",") if x.strip()})
+        return self._hidden[1]
+
+    def forget_hidden(self) -> None:
+        self._hidden = None
 
     def badges(self, session) -> list:
         out = []
@@ -557,6 +581,10 @@ class App:
         short = short_fn(self) if short_fn else \
             (full if len(full) <= 10 else full[:9].rstrip() + "…")
         initial = initial_fn(self) if initial_fn else full[:1]
+        if tab.name in self.hidden_tabs():
+            # On a hidden tab, reached by its key: say so, or the strip
+            # would show a tab the user believes they switched off.
+            full += " (hidden)"
         return full, short, initial
 
     def strip_width(self) -> int:
@@ -567,9 +595,12 @@ class App:
     def fit_strip(self, view):
         """The fitted strip (dashboard.tabstrip.Strip) for the group this
         view is in, or None when it is a screen of its own."""
-        tabs = self.tabs_of(view)
-        if len(tabs) < 2:
+        # The GROUP decides whether there is a strip, not what is shown of
+        # it: a user who hid every other tab still gets the strip, with this
+        # one marked hidden and the subtitle's count of the rest.
+        if len(self.group_tabs(view)) < 2:
             return None
+        tabs = self.tabs_of(view)
         return fit([self.tab_labels(t) for t in tabs], tabs.index(view),
                    self.strip_width())
 
@@ -607,9 +638,13 @@ class App:
             tabs = self.tabs_of(view)
             # Scrolled, the subtitle says WHERE in the whole set you are:
             # the strip no longer shows every tab, so it cannot.
-            panel.subtitle = "[%s]←→ tab%s" % (
+            gone = len(self.group_tabs(view)) - len(tabs)
+            panel.subtitle = "[%s]←→ tab%s%s" % (
                 DIM, " %d/%d" % (tabs.index(view) + 1, len(tabs))
-                if fitted.scrolled else "")
+                if fitted.scrolled else "",
+                # Hidden tabs are said where the strip is, so a user who
+                # forgot hiding one can see there is more to find.
+                " · %d hidden (esc ▸ Settings ▸ Tabs)" % gone if gone > 0 else "")
             panel.subtitle_align = "right"
         sub = self._submode_foot()
         if self.menu is not None and sub is None:
@@ -664,6 +699,18 @@ class App:
         inside the group, not by a key each."""
         name = self._view_keys.get(key)
         if not name or name == self.view:
+            return False
+        # A HIDDEN TAB'S KEY opens the first SHOWN tab of its group -- the
+        # key is the way into the screen, and the user hid this tab -- or
+        # the tab itself when every one of them is hidden, because a key
+        # that does nothing is how data becomes unreachable.
+        target = self._views[name]
+        if name in self.hidden_tabs():
+            shown = [v for v in self.group_tabs(target)
+                     if v.name not in self.hidden_tabs()]
+            if shown:
+                name = shown[0].name
+        if name == self.view:
             return False
         self.switch_to(name)
         return True

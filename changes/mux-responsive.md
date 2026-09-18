@@ -13,3 +13,9 @@
   the deck header step aside, and the claude title says so.
 - On a narrow terminal the tables drop their least important columns
   instead of squeezing the window names out, and no row wraps onto two lines.
+- **Choose which tabs exist:** esc ▸ Settings ▸ Tabs shows or hides each
+  tab (saved as `DASHBOARD_TABS_HIDDEN` in `dashboard.conf`). A hidden tab
+  leaves the strip and the `←` `→` cycle but nothing is lost: its marks on
+  the session rows stay, `s` still gets you in, and the menu has an "Open
+  … once" row for each hidden tab. When you hide one of the first six, the
+  next shown tab takes its place among the six that never scroll away.

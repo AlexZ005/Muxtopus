@@ -880,7 +880,10 @@ class ScheduleView(View):
             parts.append(Panel(
                 Text.assemble(
                     ("awaiting your answers: %d" % len(asking), "bold " + YELLOW),
-                    ("   → to answer", DIM)),
+                    # → skips a hidden tab, so the pointer must not lie.
+                    ("   → to answer", DIM) if "handovers" not in self.app.hidden_tabs()
+                    else ("   the handovers tab is hidden: esc ▸ Settings ▸ Tabs ▸ Open handovers once",
+                          DIM)),
                 border_style=FRAME, box=box.ROUNDED))
 
         keys = Text.assemble(

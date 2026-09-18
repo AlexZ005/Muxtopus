@@ -40,6 +40,8 @@ jobs:
         run: python3 tests/test_menulayout.py
       - name: the tab strip, fitted to a width
         run: python3 tests/test_tabstrip.py
+      - name: hiding a tab, and what it must not do
+        run: python3 tests/test_tabs_hidden.py
       - name: the App -- routing, registration, ordering, failure
         run: python3 tests/test_dashboard_app.py
       - name: every name the dashboard mentions is one it can reach

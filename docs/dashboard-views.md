@@ -130,6 +130,28 @@ in only one of them is a value the menu writes and the shell never reads. So
 those two stay shared files and a new setting is three lines in each — a
 conflict two lanes resolve, not a queue they wait in.
 
+## Tabs on a small terminal, and hidden tabs
+
+The strip is fitted to the width by `dashboard/tabstrip.py`: full labels,
+then `tab_short`, then `tab_initial` (the active tab keeps its short name
+longest), and only then do tabs past the first six scroll, with `«N` / `N»`
+counts and `←→ tab 7/9` in the subtitle. `App.cycle_tab` walks every tab in
+`App.tabs_of`, drawn or not.
+
+`App.tabs_of(view)` is the group LESS the tabs named in
+`DASHBOARD_TABS_HIDDEN` (esc ▸ Settings ▸ Tabs, `dashboard/menus/tabs.py`),
+but never less `view` itself; `App.group_tabs(view)` is every tab. **Hidden
+wins over locked**: the six a narrow strip keeps are the first six shown. A
+hidden tab's module still registers everything else it has -- badges, hints,
+help -- and a view key that names a hidden tab opens the first shown tab of
+its group (or the tab itself when all are hidden).
+
+A view that draws a table on a short terminal should use
+`menulayout.fit_columns` / `make_table` / `share_rows`: columns as
+`(header, kwargs, rank)` specs, rows as cell lists, the rows it has room for
+measured with `rendered_height`, and the `▲ N more` / `▼ N more` markers
+from the same arithmetic the menus scroll with.
+
 ## Key routing, one rule
 
     a submode (prompt, confirm, picker, or a view's own modal)

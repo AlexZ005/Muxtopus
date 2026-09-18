@@ -98,6 +98,9 @@ KEYS = {
     "MUXTOPUS_NOTIFY_STRANDED": "on",
     # `rc:` for an entry that does not say: send /rc to every new window.
     "DASHBOARD_NEW_RC": "off",
+    # WHICH TABS THE STRIP SHOWS (dashboard/menus/tabs.py): view names,
+    # comma-separated, hidden from the strip and from ←→. Unset: all shown.
+    "DASHBOARD_TABS_HIDDEN": None,
 }
 KINDS = ("schedules", "backups", "handovers")
 
