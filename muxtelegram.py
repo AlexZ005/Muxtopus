@@ -15,7 +15,11 @@
         message to say NOTE.
     python3 muxtelegram.py questions [--profile P]
         every UNANSWERED QUESTIONS file of one account, both folders, as JSON
-        lines: {path, slug, legacy, title, forks: [{id, title, text}]}.
+        lines: {path, slug, legacy, title, forks: [{id, title, text, options}]}.
+    python3 muxtelegram.py fork-message --profile P --path QFILE --fork ID --title T
+        send one fork with its buttons -- (a) (b) …, ★ on the recommended one,
+        ✎ type -- retiring any earlier message for that fork. Prints the
+        message_id.
 
 docs/plan-notify-telegram.md §3, §3b. NO DAEMON, NO WEBHOOK, NO PORT: the
 watchdog calls `poll` with timeout=0, so latency is one pass.
@@ -28,11 +32,14 @@ ONE per-machine folder, $XDG_STATE_HOME/muxtopus-notify/:
     offset               the next update_id, written BEFORE an update is acted
                          on -- a crash loses a press rather than typing twice
     pending/<id>.json    one per BUTTON: {id, group, kind, action, target,
-                         profile, pane, prompt_sha, path, fork_id, option,
+                         profile, pane, prompt_sha, path, fork_id,
                          message_id, created}. The id is the callback data
                          (Telegram caps that at 64 bytes, so it is opaque).
     groups/<gid>.json    one per MESSAGE: {gid, target, message_id, text,
-                         created}. A press consumes its whole group.
+                         created} plus the issuer's fields -- a fork's path,
+                         fork_id, file_sha and reply_mids (its ✎ prompts), which
+                         is how a TYPED reply finds its fork. A press consumes
+                         its whole group.
 
 RE-ISSUE SUPERSEDES. Every group names its TARGET -- `prompt:<pane>`,
 `fork:<path>#<fork_id>` -- and issuing a new group for a target retires the old
@@ -284,7 +291,7 @@ def issue(target: str, kind: str, profile: str, actions: list[tuple[str, str]],
         row.append({"text": label, "callback_data": pid})
     write_json(groups_dir() / (gid + ".json"), {
         "gid": gid, "target": target, "kind": kind, "profile": profile,
-        "message_id": None, "text": text, "created": now})
+        "message_id": None, "text": text, "created": now, **extra})
     return gid, [row]
 
 
@@ -302,10 +309,13 @@ def bind(gid: str, mid: int) -> None:
             write_json(p, d)
 
 
-def send(text: str, keyboard: list | None = None, reply_to: int | None = None) -> int | None:
+def send(text: str, keyboard: list | None = None, reply_to: int | None = None,
+         markup: dict | None = None) -> int | None:
+    """KEYBOARD is inline buttons; MARKUP any other reply_markup (the ✎ type
+    ForceReply)."""
     c = read_conf()
     r = api("sendMessage", chat_id=c.get("TELEGRAM_CHAT"), text=clip(text),
-            reply_markup={"inline_keyboard": keyboard} if keyboard else None,
+            reply_markup={"inline_keyboard": keyboard} if keyboard else markup,
             reply_to_message_id=reply_to)
     first = text.split("\n", 1)[0]
     if r.get("ok"):
@@ -461,8 +471,7 @@ def handle_callback(q: dict) -> None:
     elif d.get("kind") == "cmd":
         handle_cmd_button(q, d)
     elif d.get("kind") == "fork":
-        answer_cb(q["id"], "answering a fork from the phone is not here yet -- use the dashboard")
-        log("fork callback for %s: not yet (notify-dash phase 4)" % d.get("target"))
+        handle_fork(q, d)
     else:
         answer_cb(q["id"], "unknown action")
 
@@ -477,7 +486,10 @@ def handle_message(m: dict, profile: str = "") -> None:
     if text.startswith("/"):
         handle_command(text, profile)
         return
-    log("a typed message is not acted on yet (fork replies: notify-dash phase 4): %s" % text[:40])
+    if text and handle_fork_reply(m, text):
+        return
+    log("a typed message that answers nothing: %s" % text[:40])
+    send("to answer a fork, reply to its message (or press ✎ type on it) -- /questions lists them")
 
 
 def poll(profile: str = "") -> int:
@@ -535,7 +547,8 @@ COMMANDS = [
 ]
 HELP = """/status -- per account: sessions by state, budget, schedule, handovers, questions, heartbeat
 /pending -- everything that needs you, RE-ISSUED with fresh buttons (old ones stop working)
-/questions -- unanswered QUESTIONS files
+A fork: press (a) (b) … (★ is the recommended one), or ✎ type / reply to its message.
+/questions -- unanswered QUESTIONS files as buttons; press one for its forks
 /blocked -- each entry that is not launching, with the scheduler's why
 /windows -- one line per session; a needs-you row brings its buttons
 /stats -- the usage ledger's totals; the buttons switch week / month / all
@@ -734,13 +747,10 @@ def cmd_pending(profiles_: list[str], note: str = "", only: str = "") -> None:
                     said += 1
         if only:
             continue
-        files = unanswered_files(p)
-        if files:
-            n = sum(len(f["forks"]) for f in files)
-            send("%s · questions\n%d unanswered fork(s) in %d file(s). Answering a fork from the phone: "
-                 "not yet -- open the dashboard.%s" % (label(p), n, len(files), note))
-            note = ""
-            said += 1
+        for f in unanswered_files(p):
+            if send_file_forks(p, f["path"], note):
+                note = ""
+                said += 1
         items = ["stalled: %s -- %s" % (v["file"], v["why"]) for v in verdicts(p) if v["verdict"] == "stalled"]
         items += ["blocked: %s -- %s" % (v["file"], v["why"]) for v in long_blocked(p)]
         items += ["stranded: %s" % s.get("name") for s in sessions(p) if s.get("state") == "stranded"]
@@ -753,16 +763,31 @@ def cmd_pending(profiles_: list[str], note: str = "", only: str = "") -> None:
 
 
 def cmd_questions(profiles_: list[str], note: str = "") -> None:
-    lines = []
+    """The unanswered files as BUTTONS, one per row: select WHAT to answer,
+    then answer it. A press sends that file's forks (handle_cmd_button)."""
+    said = False
     for p in profiles_:
-        for f in unanswered_files(p):
-            lines.append("%s · %s · %d fork(s)%s" % (label(p), f["slug"], len(f["forks"]),
-                                                     " (legacy folder)" if f["legacy"] else ""))
-    if not lines:
+        files = unanswered_files(p)
+        if not files:
+            continue
+        lines = ["%s · %s · %d fork%s%s" % (label(p), f["slug"], len(f["forks"]),
+                                             "" if len(f["forks"]) == 1 else "s",
+                                             " (legacy folder)" if f["legacy"] else "")
+                 for f in files]
+        gid, kb = issue("cmd:" + secrets.token_hex(4), "cmd", p,
+                        [("%s · %d fork%s" % (f["slug"], len(f["forks"]),
+                                              "" if len(f["forks"]) == 1 else "s"),
+                          "qfile:" + f["path"]) for f in files], {}, "")
+        mid = send("unanswered QUESTIONS files -- press one for its forks:\n%s%s"
+                   % ("\n".join(lines), note), [[b] for b in kb[0]])
+        note = ""
+        said = True
+        if mid is None:
+            drop_group(gid)
+        else:
+            bind(gid, mid)
+    if not said:
         send("no unanswered questions" + note)
-        return
-    send("unanswered QUESTIONS files:\n%s\n\nChoosing one to answer from the phone: not yet -- "
-         "open the dashboard.%s" % ("\n".join(lines), note))
 
 
 def cmd_blocked(profiles_: list[str], note: str = "") -> None:
@@ -938,6 +963,8 @@ def handle_cmd_button(q: dict, d: dict) -> None:
             cmd_pending([p], only="needs")
     elif action == "questions":
         cmd_questions([p])
+    elif action.startswith("qfile:"):
+        send_file_forks(p, action[len("qfile:"):])
     elif action == "blocked":
         cmd_blocked([p])
     elif action.startswith("stats-"):
@@ -990,7 +1017,7 @@ def forks_fallback(text: str) -> list[dict]:
             if ANSWER_RE.match(line):
                 cur["answered"] = True
     return [{"id": fork_id(f["title"]), "title": f["title"],
-             "text": "\n".join(f["lines"]).strip()[:FORK_TEXT_MAX]}
+             "text": "\n".join(f["lines"]).strip()[:FORK_TEXT_MAX], "options": []}
             for f in forks if not f["answered"]]
 
 
@@ -1010,7 +1037,8 @@ def unanswered_forks(text: str) -> list[dict]:
         title = str(_get(f, "title", "") or "")
         fid = _get(f, "id")
         out.append({"id": str(fid) if fid is not None else fork_id(title), "title": title,
-                    "text": str(_get(f, "text", "") or title)[:FORK_TEXT_MAX]})
+                    "text": str(_get(f, "text", "") or title)[:FORK_TEXT_MAX],
+                    "options": list(_get(f, "options", []) or [])})
     return out
 
 
@@ -1046,6 +1074,289 @@ def unanswered_files(profile: str) -> list[dict]:
     return rows
 
 
+# ---------------------------------------------------------------- forks
+# §2, §3 "A fork answer", §3b. A fork goes to the phone as ONE message: its
+# text, a button per option -- ★ on the recommended one -- and ✎ type, a
+# ForceReply; a plain Telegram reply to the fork message answers it too. The
+# answer is written by muxhandovers.write_answer and nothing else, the same
+# function the dashboard's answer flow uses, so the line is spelled once.
+FORK_CAP = 8
+FORK_SOURCE = "user via telegram"
+
+
+def file_sha(text: str) -> str:
+    return hashlib.sha1(text.encode()).hexdigest()[:12]
+
+
+def _slug(path: pathlib.Path) -> tuple[str, str]:
+    """(slug, stamp) of a QUESTIONS file name -- muxhandovers' reading of it."""
+    if muxhandovers is not None:
+        _kind, slug, stamp = muxhandovers.slug_of(path.name)
+        if slug:
+            return slug, stamp or ""
+    return path.name[len("QUESTIONS-"):-len(".md")], ""
+
+
+def _is_legacy(profile: str, path: pathlib.Path) -> bool:
+    for d, legacy in question_dirs(profile):
+        with contextlib.suppress(OSError):
+            if path.parent.resolve() == d.resolve():
+                return legacy
+    return True                                  # not the handovers folder: nobody's
+
+
+def fork_actions(fork: dict) -> list[tuple[str, str]]:
+    acts = [("%s(%s)" % ("★ " if o.get("rec") else "", o["key"]), "opt-" + o["key"])
+            for o in fork.get("options") or [] if o.get("key")]
+    return acts + [("✎ type", "type")]
+
+
+def send_fork_message(profile: str, path: str, fork: dict, title: str,
+                      push: bool = False) -> int | None:
+    """One fork, with its buttons, superseding any earlier message for the
+    same fork. push=True is the watchdog telling (a /mute holds it back)."""
+    if push and muted_until() > time.time():
+        log("muted: %s" % title)
+        return None
+    try:
+        sha = file_sha(pathlib.Path(path).read_text(errors="replace"))
+    except OSError:
+        sha = ""
+    text = "%s\n\n%s" % (title, fork["text"])
+    with locked(15):
+        gid, kb = issue("fork:%s#%s" % (path, fork["id"]), "fork", profile, fork_actions(fork),
+                        {"path": path, "fork_id": fork["id"], "fork_title": fork.get("title", ""),
+                         "file_sha": sha, "reply_mids": []}, text)
+        row = kb[0]
+        kb = [row[:-1], row[-1:]] if len(row) > 1 else [row]      # options, then ✎ type
+        mid = send(text, kb)
+        if mid is None:
+            drop_group(gid)
+            return None
+        bind(gid, mid)
+    return mid
+
+
+def send_file_forks(profile: str, path: str, note: str = "") -> int:
+    """Every unanswered fork of one file, one message each, capped. Returns
+    how many were sent."""
+    p = pathlib.Path(path)
+    try:
+        text = p.read_text(errors="replace")
+    except OSError:
+        send("%s is gone%s" % (p.name, note))
+        return 0
+    slug, _ = _slug(p)
+    forks_ = unanswered_forks(text)
+    if not forks_:
+        send("%s · %s: no unanswered fork could be read -- open it at the machine: %s%s"
+             % (label(profile), slug, path, note))
+        return 0
+    n = len(forks_)
+    for i, f in enumerate(forks_[:FORK_CAP], 1):
+        send_fork_message(profile, path, f, "%s · %s · fork %d/%d%s"
+                          % (label(profile), slug, i, n, note if i == 1 else ""))
+    if n > FORK_CAP:
+        send("%s · %s: showing %d; %d more -- open the dashboard"
+             % (label(profile), slug, FORK_CAP, n - FORK_CAP))
+    return min(n, FORK_CAP)
+
+
+def _write_atomic(path: pathlib.Path, text: str, before) -> bool:
+    """Replace PATH with TEXT, and only if it is still the file that was
+    read (mtime and size of BEFORE). False: it changed -- read it again."""
+    tmp = path.with_name(".%s.tg.%d" % (path.name, os.getpid()))
+    try:
+        tmp.write_text(text)
+        now = path.stat()
+        if (now.st_mtime_ns, now.st_size) != (before.st_mtime_ns, before.st_size):
+            tmp.unlink(missing_ok=True)
+            return False
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def apply_fork_answer(path: str, fid: str, answer: str) -> tuple[str, str, bool]:
+    """write_answer onto the file AS IT IS NOW. Returns (outcome, new_sha,
+    all_answered); outcome is "ok", "gone" (no such fork any more), "taken"
+    (answered meanwhile, at the machine), "marked" (the file is ANSWERED), or
+    "error: ...". A live lane rewrites its own QUESTIONS file whenever it likes:
+    the fork is found by its ID, a function of its title, not its position."""
+    p = pathlib.Path(path)
+    date = time.strftime("%Y-%m-%d")
+    for _ in range(5):
+        try:
+            before = p.stat()
+            text = p.read_text(errors="replace")
+        except OSError as exc:
+            return "error: %s" % exc.strerror, "", False
+        if muxhandovers.ANSWERED_RE.search(text):
+            return "marked", file_sha(text), False
+        fork = next((f for f in muxhandovers.parse_forks(text) if f["id"] == fid), None)
+        if fork is None:
+            return "gone", file_sha(text), False
+        if fork["answer"]:
+            return "taken:" + fork["answer"], file_sha(text), False
+        new = muxhandovers.write_answer(text, fid, answer, date, source=FORK_SOURCE)
+        try:
+            if _write_atomic(p, new, before):
+                return "ok", file_sha(new), muxhandovers.all_answered(muxhandovers.parse_forks(new))
+        except OSError as exc:
+            return "error: %s" % exc.strerror, "", False
+        time.sleep(0.05)                          # it moved between read and write: again
+    return "error: the file kept changing", "", False
+
+
+def mark_file(profile: str, path: str) -> str:
+    """The ANSWERED marker, the way the dashboard does it: handover.sh owns
+    the handovers folder (so a finished lane's file follows it into done/);
+    the legacy folder is nobody's, and muxhandovers.mark_answered writes it."""
+    p = pathlib.Path(path)
+    if not _is_legacy(profile, p):
+        slug, stamp = _slug(p)
+        cmd = [str(HERE / "handover.sh")] + (["--profile", profile] if profile else [])
+        r = subprocess.run(cmd + ["answered", slug + ("-" + stamp if stamp else "")],
+                           capture_output=True, text=True, timeout=15)
+        return "marked ANSWERED" if r.returncode == 0 else "could not mark it: %s" % r.stderr.strip()[:80]
+    for _ in range(5):
+        try:
+            before = p.stat()
+            text = p.read_text(errors="replace")
+            if _write_atomic(p, muxhandovers.mark_answered(text, time.strftime("%Y-%m-%d")), before):
+                return "marked ANSWERED"
+        except OSError as exc:
+            return "could not mark it: %s" % exc.strerror
+    return "could not mark it: the file kept changing"
+
+
+def tell_lane(profile: str, path: str) -> str:
+    """`Your questions are answered in <path>` into the lane's pane -- ONLY
+    when that pane is live and idle. A busy pane is left alone: typing into
+    a turn is how a sentence ends up in the middle of somebody's prompt."""
+    slug, _ = _slug(pathlib.Path(path))
+    node = next((r for r in tsv(wd_dir(profile) / "tree.tsv") if r and r[0] == slug), None)
+    if not node or len(node) < 4 or not node[3]:
+        return ""
+    wid, pane = node[2], node[3]
+    live = tmux("list-windows", "-a", "-F", "#{window_id}")
+    if live.returncode != 0 or wid not in live.stdout.split():
+        return ""
+    st = next((s for s in sessions(profile) if s.get("pane") == pane), None)
+    if not st or st.get("state") != "idle":
+        return "➥%s is not idle -- not told" % slug
+    line = "Your questions are answered in %s -- read it and continue." % path
+    if tmux("send-keys", "-t", pane, "-l", line).returncode != 0:
+        return "could not reach ➥%s" % slug
+    time.sleep(0.6)
+    tmux("send-keys", "-t", pane, "Enter")
+    log("told %s (%s): questions answered" % (slug, pane))
+    return "told ➥%s" % slug
+
+
+def answer_fork(group: dict, answer: str, said: str) -> tuple[str, str]:
+    """Write ANSWER for the fork GROUP names, retire the group, edit its
+    message. Returns (short text for the callback, the note written)."""
+    profile, path, fid = group.get("profile", ""), group.get("path", ""), group.get("fork_id", "")
+    stamp = time.strftime("%H:%M")
+    if knob("MUXTOPUS_NOTIFY_INBOUND", profile) == "off":
+        log("refused a fork answer for %s: inbound is off for %s" % (path, label(profile)))
+        return "the phone may not answer for this account (Settings ▸ Notifications)", ""
+    try:
+        before = file_sha(pathlib.Path(path).read_text(errors="replace"))
+    except OSError:
+        before = ""
+    outcome, new_sha, done = apply_fork_answer(path, fid, answer)
+    if outcome.startswith("taken:"):
+        drop_group(group["gid"])
+        note = "✓ already answered at the machine (%s): %s" % (stamp, outcome[6:])
+        edit_note(group, note)
+        log("stale fork answer for %s#%s: already answered" % (path, fid))
+        return "already answered at the machine", note
+    if outcome in ("gone", "marked"):
+        drop_group(group["gid"])
+        note = ("✗ this fork is not in the file any more (%s)" % stamp if outcome == "gone"
+                else "✓ the file is already marked ANSWERED (%s)" % stamp)
+        edit_note(group, note)
+        log("fork answer for %s#%s not written: %s" % (path, fid, outcome))
+        return note[2:], note
+    if outcome != "ok":
+        log("fork answer for %s#%s FAILED: %s" % (path, fid, outcome))
+        return "not written -- %s" % outcome[7:], ""
+    moved = bool(group.get("file_sha")) and before != group.get("file_sha")
+    # Our own write is not "underneath": the other messages for this file
+    # learn its new shape, so their answers do not claim a rewrite.
+    for p in groups_dir().glob("*.json"):
+        g = read_json(p)
+        if g and g.get("path") == path and g.get("gid") != group["gid"]:
+            g["file_sha"] = new_sha
+            write_json(p, g)
+    drop_group(group["gid"])
+    parts = ["✓ %s written from the phone at %s" % (said, stamp)]
+    if moved:
+        parts.append("the file had changed since this was sent; applied to the same fork")
+    if done:
+        parts.append(mark_file(profile, path))
+        told = tell_lane(profile, path)
+        if told:
+            parts.append(told)
+    note = " · ".join(parts)
+    edit_note(group, note)
+    log("fork answered from the phone: %s#%s = %s%s%s" % (
+        path, fid, answer[:60], " (re-applied)" if moved else "", " · file done" if done else ""))
+    return "written" + (" -- all answered" if done else ""), note
+
+
+def handle_fork(q: dict, d: dict) -> None:
+    qid, action = q["id"], d.get("action", "")
+    group = read_json(groups_dir() / (d["group"] + ".json"))
+    if group is None:
+        answer_cb(qid, "expired or already used")
+        return
+    if action == "type":
+        if knob("MUXTOPUS_NOTIFY_INBOUND", group.get("profile", "")) == "off":
+            answer_cb(qid, "the phone may not answer for this account (Settings ▸ Notifications)")
+            return
+        mid = send("✎ your answer to: %s\n(reply to this message -- what you type is written as the answer)"
+                   % (group.get("fork_title") or "this fork"),
+                   reply_to=group.get("message_id"),
+                   markup={"force_reply": True, "input_field_placeholder": "your answer"})
+        if mid is not None:
+            group.setdefault("reply_mids", []).append(mid)
+            write_json(groups_dir() / (group["gid"] + ".json"), group)
+        answer_cb(qid, "type it as a reply")
+        return
+    if action.startswith("opt-"):
+        key = action[4:]
+        said, _ = answer_fork(group, "(%s)" % key, "(%s)" % key)
+        answer_cb(qid, said)
+        return
+    answer_cb(qid, "unknown action")
+
+
+def fork_group_for_reply(mid) -> dict | None:
+    """The fork a reply belongs to: the fork message itself, or a ✎ prompt."""
+    if not mid:
+        return None
+    for p in groups_dir().glob("*.json"):
+        g = read_json(p)
+        if g and g.get("kind") == "fork" and (g.get("message_id") == mid or mid in (g.get("reply_mids") or [])):
+            return g
+    return None
+
+
+def handle_fork_reply(m: dict, text: str) -> bool:
+    mid = (m.get("reply_to_message") or {}).get("message_id")
+    group = fork_group_for_reply(mid)
+    if group is None:
+        return False
+    said, note = answer_fork(group, text, "your answer")
+    send(note or said, reply_to=m.get("message_id"))
+    return True
+
+
 # ------------------------------------------------------------------ main
 def _opt(rest: list[str], name: str, default: str = "") -> str:
     if name in rest:
@@ -1074,6 +1385,22 @@ def main(argv: list[str]) -> int:
         mid = send_prompt_message(profile, _opt(rest, "--pane"), _opt(rest, "--sha"),
                                   _opt(rest, "--yes", "0") == "1", _opt(rest, "--more", "0") == "1",
                                   _opt(rest, "--title"), _opt(rest, "--body"))
+        if mid is None:
+            return 1
+        print(mid)
+        return 0
+    if cmd == "fork-message":               # the watchdog's questions push, with buttons
+        if not telegram_ready():
+            return 1
+        path, fid = _opt(rest, "--path"), _opt(rest, "--fork")
+        try:
+            text = pathlib.Path(path).read_text(errors="replace")
+        except OSError:
+            return 1
+        fork = next((f for f in unanswered_forks(text) if f["id"] == fid), None)
+        if fork is None:
+            return 1
+        mid = send_fork_message(profile, path, fork, _opt(rest, "--title"), push=True)
         if mid is None:
             return 1
         print(mid)

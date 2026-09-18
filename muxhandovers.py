@@ -25,7 +25,7 @@ and, for answering a fork without leaving the dashboard (and for the phone,
 which imports these three by name):
 
     parse_forks(text)                       -> [Fork]
-    write_answer(text, fork_id, answer, date) -> text
+    write_answer(text, fork_id, answer, date[, source]) -> text
     all_answered(forks)                     -> bool
 
 THE ORDER IN lane_state IS NOT AN IMPLEMENTATION DETAIL. It mirrors
@@ -489,11 +489,16 @@ def all_answered(forks_: list[dict]) -> bool:
     return bool(forks_) and all(f.get("answer") for f in forks_)
 
 
-def answer_line(answer: str, date: str) -> str:
-    return "**Answer (user, %s):** %s" % (date, answer.strip())
+def answer_line(answer: str, date: str, source: str = "user") -> str:
+    """THE ONE PLACE this line is spelled. SOURCE says where the answer came
+    from -- `user` at the dashboard, `user via telegram` from the phone --
+    and whatever it says, the line still starts `**Answer (`, which is what
+    OURS_RE matches and what keeps a second answer from stacking."""
+    return "**Answer (%s, %s):** %s" % (source, date, answer.strip())
 
 
-def write_answer(text: str, fork_id_: str, answer: str, date: str) -> str:
+def write_answer(text: str, fork_id_: str, answer: str, date: str,
+                 source: str = "user") -> str:
     """One fork answered, and NOTHING ELSE IN THE FILE TOUCHED.
 
     The line goes at the end of the fork, above the blank lines that separate
@@ -513,7 +518,7 @@ def write_answer(text: str, fork_id_: str, answer: str, date: str) -> str:
     lines = text.splitlines()
     keepends = text.endswith("\n")
     start, end = fork["span"]
-    line = answer_line(answer, date)
+    line = answer_line(answer, date, source)
 
     for i in range(start, min(end, len(lines))):
         if OURS_RE.match(lines[i]):
