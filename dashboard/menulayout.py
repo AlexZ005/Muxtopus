@@ -14,6 +14,15 @@ no dashboard state, no I/O, only Rich.
     menu_panel(items, cur, title, rows)    -> Panel, exactly `rows` lines tall
     rendered_height(console, renderable)   -> int, what Rich will really draw
 
+AND THE SAME ARITHMETIC FOR A TABLE on a short terminal, so there is one
+scrolling rule on the screen and not one per table:
+
+    TABLE_MIN                              3: ▲, one row, ▼ (MENU_MIN less chrome)
+    table_window(n, cur, lines)   -> (top, span, show_up, show_down)
+    share_rows(room, needs)       -> [lines per table] or None: no room
+    fit_columns(cols, width)      -> the columns a narrow terminal keeps
+    make_table(cols, keep, rows, cur, marker, lines) -> Table, windowed
+
 Items are the dicts Dashboard.menu_entries() builds: label, and optionally
 sep, disabled (the reason, shown in brackets), danger, on, key. The styling is
 the one build() used for the footer menu, unchanged.
@@ -33,6 +42,7 @@ backstop is never what saved it (the hint is still the second-to-last line).
 from rich import box
 from rich.console import Console, ConsoleRenderable, Group
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 # The dashboard's palette (deck_status.py), copied rather than imported:
@@ -135,3 +145,99 @@ def rendered_height(console: Console, renderable: ConsoleRenderable) -> int:
     One place, so the room under the panels is measured the same way
     everywhere. render_lines does not crop to the console's height."""
     return len(console.render_lines(renderable, console.options))
+
+
+# ------------------------------------------------------------ tables
+# A table on a short terminal gets a measured number of ROW LINES and scrolls
+# inside them with the menus' own centred-cursor rule and their own
+# "▲ N more" / "▼ N more" markers, which take a row line rather than being
+# drawn on one. TABLE_MIN is MENU_MIN without the menu's chrome (the table's
+# chrome is measured by the caller, because it is the table's own): below it
+# a table cannot show a row and both markers, and the caller DEGRADES --
+# drops a panel that matters less -- exactly as place_menu degrades a menu
+# with less than MENU_MIN lines to modal.
+TABLE_MIN = MENU_MIN - CHROME
+
+
+def table_window(n_rows: int, cur: int, lines: int) -> tuple[int, int, bool, bool]:
+    """(first row drawn, rows drawn, ▲ marker, ▼ marker) for a table given
+    `lines` row lines. `cur` < 0 means the cursor is not in this table: the
+    window then sits at the top."""
+    if n_rows <= lines:
+        return 0, n_rows, False, False
+    top, up, down = menu_viewport(n_rows, max(0, cur), max(lines, TABLE_MIN) + CHROME)
+    return top, max(lines, TABLE_MIN) - up - down, up, down
+
+
+def share_rows(room: int, needs: list[int]) -> list[int] | None:
+    """Split `room` row lines between tables that want `needs` of them.
+
+    Every table first gets what it needs up to TABLE_MIN -- enough to show a
+    row and say how many more there are -- and then the rest goes to the
+    LAST table first, then the one before it: on the main view that is the
+    claude table before the lanes table, because the sessions are what the
+    screen is for. None when not even the minimums fit: the caller must drop
+    something else first."""
+    base = [min(n, TABLE_MIN) for n in needs]
+    left = room - sum(base)
+    if left < 0:
+        return None
+    out = list(base)
+    for i in range(len(needs) - 1, -1, -1):
+        more = min(left, needs[i] - out[i])
+        out[i] += more
+        left -= more
+    return out
+
+
+def fit_columns(cols: list, width: int, want: int = 20) -> list[int]:
+    """The columns a table keeps at this width: (header, kwargs, rank)
+    specs, and the ones with the lowest rank go first until the one
+    flexible column (ratio=1) has `want` characters. At 160 columns nothing
+    goes; at 80 the claude table keeps its window names instead of drawing
+    them zero wide, which is what Rich does when it runs out."""
+    avail = width - 4          # the panel's two borders and their padding
+    keep = list(range(len(cols)))
+
+    def need() -> int:
+        return sum(cols[i][1].get("width", 0) + 2 for i in keep) + want
+
+    # Past the last rank Rich shrinks what is left, ellipsised (every column
+    # is no_wrap), and the flexible column keeps its min_width -- without
+    # which Rich gives it NOTHING, and the table loses the one column that
+    # names its rows.
+
+    for rank in sorted({c[2] for c in cols if c[2] is not None}):
+        if need() <= avail:
+            break
+        keep = [i for i in keep if cols[i][2] != rank]
+    return keep
+
+
+def make_table(cols: list, keep: list, rows: list, cur: int, marker: int,
+               lines: int | None) -> Table:
+    """A SIMPLE_HEAD table of the kept columns, holding `lines` row lines --
+    every row when None -- scrolled with menulayout's rule, and the
+    "▲ N more" / "▼ N more" markers drawn in column `marker` (a wide one
+    that is never dropped: a marker that wraps is a frame one line too tall,
+    which is how the handovers tab once lost its footer)."""
+    t = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
+              header_style=DIM, border_style=FRAME)
+    for i in keep:
+        header, kw, _rank = cols[i]
+        t.add_column(header, **dict({"no_wrap": True, "overflow": "ellipsis"}, **kw))
+    n = len(rows)
+    top, span, up, down = table_window(n, cur, n if lines is None else lines)
+
+    def mark(text: str) -> None:
+        cells = [""] * len(keep)
+        cells[keep.index(marker)] = Text(text, style=DIM)
+        t.add_row(*cells)
+
+    if up:
+        mark("▲ %d more" % top)
+    for r in rows[top:top + span]:
+        t.add_row(*[r[i] for i in keep])
+    if down:
+        mark("▼ %d more" % (n - top - span))
+    return t

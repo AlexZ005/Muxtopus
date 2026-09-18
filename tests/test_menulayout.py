@@ -205,6 +205,47 @@ def main():
           "rendered_height measures past the console height (18 on a 5-row console)")
     check(menulayout.ACCENT == "#c9a0dc", "border is the dashboard's #c9a0dc")
 
+    # ------------------------------------------------ tables on a short screen
+    from rich.panel import Panel
+    from dashboard.menulayout import (TABLE_MIN, fit_columns, make_table,
+                                      share_rows, table_window)
+    check(TABLE_MIN == MENU_MIN - 3, "TABLE_MIN is MENU_MIN without the menu's chrome")
+    for n in range(0, 30):
+        for lines in range(TABLE_MIN, 25):
+            for cur in range(-1, n):
+                top, span, up, down = table_window(n, cur, lines)
+                drawn = span + up + down
+                check(drawn <= max(lines, n if n <= lines else 0) and
+                      (n <= lines or drawn == lines),
+                      "n=%d lines=%d cur=%d draws %d lines" % (n, lines, cur, drawn), quiet=True)
+                check(cur < 0 or top <= cur < top + span,
+                      "n=%d lines=%d cur=%d cursor inside" % (n, lines, cur), quiet=True)
+                check(up == (top > 0) and down == (top + span < n),
+                      "n=%d lines=%d cur=%d markers say the truth" % (n, lines, cur), quiet=True)
+    section("table_window: exact height, cursor inside, markers true")
+    check(share_rows(20, [1, 6]) == [1, 6], "room for both: everything")
+    check(share_rows(6, [4, 10]) == [3, 3], "tight: each its minimum")
+    check(share_rows(9, [4, 10]) == [3, 6], "the rest goes to the LAST table first")
+    check(share_rows(13, [4, 6]) == [4, 6], "...and then to the one before it")
+    check(share_rows(5, [4, 10]) is None, "no room for both minimums: None, drop something")
+    check(share_rows(2, [1, 1]) == [1, 1], "a one-row table needs one line, not three")
+    cols = [("", {"width": 3}, None), ("A", {"width": 20}, 2),
+            ("NAME", {"ratio": 1, "min_width": 12}, None), ("B", {"width": 20}, 1)]
+    check(fit_columns(cols, 160) == [0, 1, 2, 3], "wide: every column")
+    check(fit_columns(cols, 60) == [0, 1, 2], "narrower: rank 1 goes first")
+    check(fit_columns(cols, 40) == [0, 2], "narrower still: then rank 2; None never goes")
+    rows = [["", "a%d" % i, "row %d" % i, "b"] for i in range(12)]
+    for width in (40, 80, 160):
+        con = Console(width=width)
+        for lines in (TABLE_MIN, 5, 8, None):
+            for cur in (-1, 0, 6, 11):
+                t = make_table(cols, fit_columns(cols, width), rows, cur, 2, lines)
+                h = rendered_height(con, Panel(t))
+                want = 6 + (12 if lines is None else lines)
+                check(h == want, "w=%d lines=%s cur=%d: %d lines, want %d"
+                      % (width, lines, cur, h, want), quiet=True)
+    section("make_table: the height is the chrome plus the lines given, at every width")
+
     print()
     if fails:
         print("%d of %d checks FAILED" % (len(fails), count))
