@@ -6,6 +6,8 @@
 #   ./install.sh --home DIR      where schedules/backups/handovers live
 #   ./install.sh --bin DIR       where the `muxtopus` link goes (default ~/.local/bin)
 #   ./install.sh --no-watchdog   skip the watchdog service
+#   ./install.sh --no-venv       do not build .venv (the dashboard then runs its
+#                                plain bash renderer unless python3 has rich)
 #
 # ONE NAME ON PATH: muxtopus. Not `mux`, which is already several other tools,
 # and never `cc`, which on any machine with a C toolchain is the C compiler --
@@ -14,9 +16,12 @@
 # prints them. A link named muxtopus-<account> opens that account.
 #
 # NOTHING IS WRITTEN OUTSIDE YOUR HOME DIRECTORY, and every path is printed
-# before it is touched. There is no curl-pipe-sh here on purpose: this thing
-# installs a background daemon that types into your terminals, and that is not
-# something anybody should run without having read it first.
+# before it is touched. This script is never piped from the network: it
+# installs a background daemon that types into your terminals. get.sh, the
+# one-line installer attached to each GitHub release, is the curl-able part,
+# and all it does is fetch that release's tarball, check its sha256 against
+# the sum baked into it, unpack it and run THIS file from it -- so what runs
+# is exactly what that tag is, and it can be read before it is run.
 set -uo pipefail
 
 SRC="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -29,6 +34,7 @@ DRY=0
 BIN="$HOME/.local/bin"
 HOME_DIR=""
 WATCHDOG=1
+VENV=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -38,7 +44,8 @@ while [ $# -gt 0 ]; do
     --bin)         [ -n "${2:-}" ] || { echo "--bin needs a directory" >&2; exit 2; }
                    BIN="$2"; shift 2 ;;
     --no-watchdog) WATCHDOG=0; shift ;;
-    -h|--help)     sed -n '2,8p' "$0"; exit 0 ;;
+    --no-venv)     VENV=0; shift ;;
+    -h|--help)     sed -n '2,10p' "$0"; exit 0 ;;
     *)             echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -71,7 +78,7 @@ echo "  config     $CFG"
 [ "$DRY" = 1 ] && echo "  MODE       dry run, nothing will be written"
 
 # ------------------------------------------------------------- 1. what we need
-step "1/5  Checking what is here"
+step "1/6  Checking what is here"
 missing=0
 for c in bash tmux git; do
   if command -v "$c" >/dev/null 2>&1; then ok "$c"; else warn "$c MISSING (required)"; missing=1; fi
@@ -85,27 +92,40 @@ if command -v tmux >/dev/null 2>&1; then
   awk -v v="$tv" 'BEGIN{exit !(v+0 >= 3.2)}' && ok "tmux $tv" \
     || warn "tmux $tv is older than 3.2 -- per-window env (-e) will not work"
 fi
-# The dashboard prefers a venv beside the checkout (deck-status.sh builds one,
-# because a system python can be replaced wholesale by an OS update) and only
-# falls back to the system interpreter -- so check both before complaining.
-if [ -x "$SRC/.venv/bin/python" ] && "$SRC/.venv/bin/python" -c 'import rich' 2>/dev/null; then
-  ok "python rich (dashboard venv)"
-elif command -v python3 >/dev/null 2>&1 && python3 -c 'import rich' 2>/dev/null; then
-  ok "python rich (system)"
-else
-  warn "python 'rich' missing -- the dashboard falls back to a plain text view"
-  warn "  python3 -m venv \"$SRC/.venv\" && \"$SRC/.venv/bin/pip\" install rich"
+# 3.10: the Python half is written with `X | None`, which 3.9 cannot evaluate.
+# Measured, not guessed: the unit tests pass on 3.10 through 3.13 and fail on
+# 3.9 at the first import.
+if command -v python3 >/dev/null 2>&1; then
+  pv="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
+  if python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+    ok "python $pv"
+  else
+    warn "python $pv is older than 3.10 -- the dashboard, stats and notifications need 3.10"
+    missing=1
+  fi
 fi
 [ "$missing" = 1 ] && warn "install the missing tools, then run this again to get a clean report"
 
+# A config that pins another checkout wins over this one: `muxtopus` reads
+# MUXTOPUS_DIR from it and runs THAT code, whatever the link points at. Say so,
+# rather than let an upgrade quietly keep running the old tree.
+if [ -f "$CFG" ]; then
+  pinned="$(sed -n 's/^MUXTOPUS_DIR=["'"'"']\{0,1\}\(.*[^"'"'"']\)["'"'"']\{0,1\}$/\1/p' "$CFG" | tail -1)"
+  pinned="${pinned/\$HOME/$HOME}"
+  if [ -n "$pinned" ] && [ "$(cd "$pinned" 2>/dev/null && pwd -P)" != "$SRC" ]; then
+    warn "$CFG pins MUXTOPUS_DIR=$pinned, so muxtopus will keep running THAT code"
+    warn "  to run this one, set MUXTOPUS_DIR=$SRC there (or delete the line)"
+  fi
+fi
+
 # ------------------------------------------------------------------ 2. folders
-step "2/5  Folders"
+step "2/6  Folders"
 run mkdir -p "$HOME_DIR" "$BIN" "$CFG_DIR/profiles"
 ok "$HOME_DIR"
 ok "$BIN"
 
 # ------------------------------------------------------------------- 3. config
-step "3/5  Config"
+step "3/6  Config"
 if [ -f "$CFG" ]; then
   skip "$CFG already exists, leaving it alone"
 else
@@ -155,7 +175,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 4. the link
-step "4/5  muxtopus"
+step "4/6  muxtopus"
 run chmod +x "$SRC/muxtopus" "$SRC"/*.sh
 run ln -sfn "$SRC/muxtopus" "$BIN/muxtopus"
 ok "$BIN/muxtopus -> $SRC/muxtopus"
@@ -182,8 +202,31 @@ if [ "$DRY" = 0 ] && command -v python3 >/dev/null 2>&1; then
     && ok "schedules/, backups/, handovers/ seeded under $HOME_DIR"
 fi
 
-# --------------------------------------------------------------- 5. watchdog
-step "5/5  Watchdog"
+# ------------------------------------------------------- 5. dashboard runtime
+# The dashboard is Rich when $SRC/.venv/bin/python can import rich, and a plain
+# bash renderer otherwise (deck-status.sh). A venv beside the code, not a
+# system package: an OS update that replaces python3 breaks a venv, which
+# after-update.sh rebuilds, but it never breaks the fallback -- the dashboard
+# is what you open when something is broken. 27 MB, one pip download.
+step "5/6  Dashboard runtime"
+if [ "$VENV" = 0 ]; then
+  skip "skipped (--no-venv)"
+elif [ -x "$SRC/.venv/bin/python" ] && "$SRC/.venv/bin/python" -c 'import rich' 2>/dev/null; then
+  skip "$SRC/.venv already has rich"
+elif ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+  warn "no python3 >= 3.10 -- the dashboard will use its plain bash renderer"
+elif [ "$DRY" = 1 ]; then
+  printf '    \033[90m$ python3 -m venv %s && %s install rich\033[0m\n' "$SRC/.venv" "$SRC/.venv/bin/pip"
+elif python3 -m venv "$SRC/.venv" >/dev/null 2>&1 \
+     && "$SRC/.venv/bin/pip" install --quiet --disable-pip-version-check rich >/dev/null 2>&1; then
+  ok "$SRC/.venv with rich $("$SRC/.venv/bin/python" -c 'import importlib.metadata as m; print(m.version("rich"))')"
+else
+  warn "could not build $SRC/.venv (no network, or no python3-venv?) -- plain renderer until:"
+  warn "  python3 -m venv \"$SRC/.venv\" && \"$SRC/.venv/bin/pip\" install rich"
+fi
+
+# --------------------------------------------------------------- 6. watchdog
+step "6/6  Watchdog"
 if [ "$WATCHDOG" = 0 ]; then
   skip "skipped (--no-watchdog); bring it up later with: muxtopus"
 elif [ "$DRY" = 1 ]; then

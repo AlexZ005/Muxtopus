@@ -27,6 +27,13 @@ _D="$(dirname "$(readlink -f "$0")")"
 if [ -x "$_D/.venv/bin/python" ] && [ -f "$_D/deck_status.py" ]    && "$_D/.venv/bin/python" -c 'import rich' 2>/dev/null; then
   exec "$_D/.venv/bin/python" "$_D/deck_status.py" "$@"
 fi
+# No venv (install.sh --no-venv, or a distro that packages rich): a system
+# python3 will do if it is new enough and has rich. 3.10 is the floor the
+# Python half is written for; below it the import fails and so would we.
+if [ -f "$_D/deck_status.py" ] && command -v python3 >/dev/null 2>&1 \
+   && python3 -c 'import sys, rich; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+  exec python3 "$_D/deck_status.py" "$@"
+fi
 
 # The frame maths counts CHARACTERS, so a UTF-8 locale is REQUIRED. Under
 # POSIX, bash's ${#s} counts BYTES -- each sparkline glyph is three of them --
@@ -303,7 +310,7 @@ while :; do
     '?') helpscreen ;;
     p|P) printf '%s' "${E}[?1049l"; btop 2>/dev/null || htop 2>/dev/null || true; printf '%s' "${E}[?1049h" ;;
     s)   NOTICE="stopping desktop extras..."; NOTICE_AT=$(date +%s); paint
-         notice_from "$HOME/.code/scripts/deck-ram.sh" stop ;;
+         notice_from "$_D/deck-ram.sh" stop ;;
     w|W) if [ -f "${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog/enabled" ]; then
            rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog/enabled"; NOTICE="watchdog disarmed"
          else
@@ -311,6 +318,6 @@ while :; do
            : > "${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog/enabled"; NOTICE="watchdog armed"
          fi; NOTICE_AT=$(date +%s) ;;
     S)   NOTICE="starting desktop extras..."; NOTICE_AT=$(date +%s); paint
-         notice_from "$HOME/.code/scripts/deck-ram.sh" start ;;
+         notice_from "$_D/deck-ram.sh" start ;;
   esac
 done
