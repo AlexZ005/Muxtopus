@@ -94,6 +94,13 @@ MUXTOPUS_NOTIFY_INBOUND=on
 MUXTOPUS_NOTIFY_PANE_TEXT=on
 DASHBOARD_HANDOVERS_DONE=off
 DASHBOARD_HANDOVERS_QUESTIONS=on
+MUXTOPUS_NOTIFY_SESSION=on
+MUXTOPUS_NOTIFY_AUTH=on
+MUXTOPUS_NOTIFY_LIMIT=on
+MUXTOPUS_NOTIFY_LIMIT_BANDS=off
+MUXTOPUS_NOTIFY_STALLED=on
+MUXTOPUS_NOTIFY_STRANDED=on
+DASHBOARD_NEW_RC=off
 "
 
 # The checkout these scripts live in, from this file's own location, so a
@@ -214,9 +221,9 @@ mux_key_help() {
                             echo "The message carries Yes / No / More when inbound is on." ;;
     MUXTOPUS_NOTIFY_QUESTIONS) echo "on: tell the phone when a QUESTIONS file is new or has a new"
                             echo "unanswered fork. One message per fork, capped at eight." ;;
-    MUXTOPUS_NOTIFY_TROUBLE) echo "on: tell the phone when a verdict becomes stalled or an entry"
-                            echo "error, a lane becomes stranded, a launch fails, or an entry has"
-                            echo "been blocked longer than MUXTOPUS_NOTIFY_BLOCKED_AFTER." ;;
+    MUXTOPUS_NOTIFY_TROUBLE) echo "on: tell the phone when an entry is marked error (a launch failed)"
+                            echo "or has been blocked longer than MUXTOPUS_NOTIFY_BLOCKED_AFTER."
+                            echo "Stalled and stranded have switches of their own (below)." ;;
     MUXTOPUS_NOTIFY_BLOCKED_AFTER) echo "Minutes an entry may be blocked before that counts as trouble."
                             echo "Plain blocked is ordinary waiting; 0 never says it." ;;
     MUXTOPUS_NOTIFY_DONE)   echo "on: tell the phone when a handover reaches done/ -- its gist, and"
@@ -228,6 +235,28 @@ mux_key_help() {
     MUXTOPUS_NOTIFY_PANE_TEXT) echo "on: a waiting message quotes the prompt box, and More sends the"
                             echo "lines above it. That text leaves this machine for the backend's"
                             echo "servers; off, a message names the window and nothing else." ;;
+    # THE ALERTS. Each is told ONCE when it starts and once more, as
+    # "cleared", when it ends. On by default: the ones where every lane can
+    # silently stop. Off: the budget bands, which are news, not trouble.
+    MUXTOPUS_NOTIFY_SESSION) echo "on: tell the phone when a pane that carried a claude session no"
+                            echo "longer does while its window is still open (the process exited,"
+                            echo "the pane is back at a shell). Seen on two passes, not a restart." ;;
+    MUXTOPUS_NOTIFY_AUTH)   echo "on: tell the phone when the account stops being logged in: the"
+                            echo "/usage probe finds the login screen, a pane shows an auth error"
+                            echo "or a login prompt, or the credentials file is gone." ;;
+    MUXTOPUS_NOTIFY_LIMIT)  echo "on: tell the phone when a budget is at its limit -- a limit"
+                            echo "banner in a pane, or a reading at 100% -- naming the budget"
+                            echo "(session, week, the model's week) and when it resets." ;;
+    MUXTOPUS_NOTIFY_LIMIT_BANDS) echo "on: also tell the phone when a budget crosses"
+                            echo "WATCHDOG_SOFT_PCT or WATCHDOG_HARD_PCT. Off by default: a band"
+                            echo "is a forecast the watchdog already acts on, not trouble." ;;
+    MUXTOPUS_NOTIFY_STALLED) echo "on: tell the phone when a schedule entry cannot be judged at"
+                            echo "all (verdict stalled in sched-why.tsv), and when it recovers." ;;
+    MUXTOPUS_NOTIFY_STRANDED) echo "on: tell the phone when a lane is stranded -- idle with an open"
+                            echo "handover and nothing that will ever resume it -- and when not." ;;
+    DASHBOARD_NEW_RC)       echo "on: the launcher sends /rc to every new scheduled window once it"
+                            echo "is ready, unless its entry says rc: off. An entry's rc: on|off"
+                            echo "always wins; this is the default for entries that do not say." ;;
     *)                      echo "(undocumented)" ;;
   esac
 }

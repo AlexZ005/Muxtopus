@@ -72,17 +72,21 @@ check "PANE_TEXT off: the question still is" grep -q "Do you want to make this e
 setkey MUXTOPUS_NOTIFY_PANE_TEXT on
 screen; pass
 
-echo "== trouble: stalled, TROUBLE off first"
-setkey MUXTOPUS_NOTIFY_TROUBLE off
+echo "== stalled (its own switch since mux-alerts), STALLED off first"
+setkey MUXTOPUS_NOTIFY_STALLED off
 printf 'type: bogus\nat: now\ncwd: %s\nstatus: pending\n---\nbody\n' "$HOME" > "$SC/bad.md"
 pass
-check "TROUBLE off: stalled is not told" [ "$(msgs)" = 3 ]
-setkey MUXTOPUS_NOTIFY_TROUBLE on
+check "STALLED off: stalled is not told" [ "$(msgs)" = 3 ]
+setkey MUXTOPUS_NOTIFY_STALLED on
 pass
-check "TROUBLE on: one stalled message" grep -q "stalled: bad.md" <<<"$(texts)"
+check "STALLED on: one stalled message" grep -q "stalled: bad.md" <<<"$(texts)"
 n="$(msgs)"; pass
 check "stalled is told once" [ "$(msgs)" = "$n" ]
 rm -f "$SC/bad.md"
+n="$(msgs)"; pass
+check "fixed: one \"cleared\" message" grep -q "cleared: stalled: bad.md" <<<"$(texts)"
+pass
+check "cleared is told once" [ "$(msgs)" = $(( n + 1 )) ]
 
 echo "== trouble: an entry marked error"
 printf 'type: work\nat: now\ncwd: %s\nstatus: error\n---\nbody\n' "$HOME" > "$SC/broke.md"

@@ -86,6 +86,18 @@ KEYS = {
     # every R would be switched off for good.
     "DASHBOARD_HANDOVERS_DONE": "off",
     "DASHBOARD_HANDOVERS_QUESTIONS": "on",
+    # THE ALERTS (docs/plan-notify-telegram.md §1b): a session that stopped,
+    # an account that logged out, a budget at its limit (or, chattier, past a
+    # band), and the scheduler's stalled / stranded verdicts -- each on its own
+    # switch, each told once and "cleared" once.
+    "MUXTOPUS_NOTIFY_SESSION": "on",
+    "MUXTOPUS_NOTIFY_AUTH": "on",
+    "MUXTOPUS_NOTIFY_LIMIT": "on",
+    "MUXTOPUS_NOTIFY_LIMIT_BANDS": "off",
+    "MUXTOPUS_NOTIFY_STALLED": "on",
+    "MUXTOPUS_NOTIFY_STRANDED": "on",
+    # `rc:` for an entry that does not say: send /rc to every new window.
+    "DASHBOARD_NEW_RC": "off",
 }
 KINDS = ("schedules", "backups", "handovers")
 

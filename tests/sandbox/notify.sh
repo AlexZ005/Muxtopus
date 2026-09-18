@@ -67,10 +67,13 @@ down_to "Notifications ▸"
 $K Enter
 sleep 0.4
 "$C" > "${SB:?}/caps/notify-menu.txt"
-check "the seven switches are all on the screen" bash -c '
+check "the thirteen switches are all on the screen" bash -c '
   n=0; for k in "A window is waiting for you" "A lane has questions" "Trouble:" \
                 "Say an entry is blocked after" "A lane finished" \
-                "Let the phone answer" "Quote the prompt box"; do
+                "Let the phone answer" "Quote the prompt box" \
+                "A session was lost: ON" "The account logged out: ON" \
+                "A limit was hit: ON" "A budget crossed a band: off" \
+                "An entry stalled: ON" "A lane is stranded: ON"; do
     grep -qF "$k" "'"${SB:?}"'/caps/notify-menu.txt" || { echo "missing: $k"; n=1; }
   done; [ "$n" = 0 ]'
 check "..the status row says the backend is not configured" \
