@@ -54,5 +54,7 @@ jobs:
         run: bash tests/test_handover_sh.sh
       - name: the manual -- front matter, links, Liquid-safe, nothing lost from the README
         run: python3 tests/test_manual.py
+      - name: VERSION is the only place the release number is written
+        run: python3 tests/test_version.py
       - name: the dashboard package imports without a terminal
         run: python3 -c "import deck_status"
