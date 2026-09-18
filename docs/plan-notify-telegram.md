@@ -64,6 +64,34 @@ patterns (`Do you want to proceed?`, `❯ 1. Yes`, the trust dialog's wording),
 in one variable, with fixture pane captures in the tests -- today's capture is
 the first fixture.
 
+## 1b. Alerts (added 2026-09-19, lane `mux-alerts`) -- IMPLEMENTED
+
+The four events above are news; these are the conditions where every lane
+stops without a word. Each is an ALERT: sent once when it starts (the same
+`notify_event` dedupe), sent once more as `cleared: <title>` when its key
+ends (`$STATE/notify/clear.tsv` remembers which keys were actually sent), and
+behind a switch of its own. Nothing re-derives a state:
+
+| alert | read from | key | switch (default) |
+|---|---|---|---|
+| session lost | a pane in `status.tsv` last pass and not this one, still alive in tmux, two passes running (`notify/panes.tsv`) | `session:<pane>` | `MUXTOPUS_NOTIFY_SESSION` (on) |
+| logged out | `usage.fail` newer than the cache and saying "not logged in"; `.credentials.json` gone from an account with a `usage.tsv`; an anchored auth error / login screen in the last 15 lines of an idle pane the loop already captured | `auth:account` | `MUXTOPUS_NOTIFY_AUTH` (on) |
+| limit hit | `usage.tsv` at 100%, or a `hit your <x> limit` banner in a pane; per budget (session, week, model week -- `model_reset` is now cached) | `limit:<budget>`, fingerprint = band | `MUXTOPUS_NOTIFY_LIMIT` (on) |
+| budget band | `usage.tsv` past `WATCHDOG_SOFT_PCT` / `HARD_PCT`; a band that only fell is recorded quietly | same key | `MUXTOPUS_NOTIFY_LIMIT_BANDS` (off) |
+| stalled | `sched-why.tsv` verdict `stalled` | `stalled:<file>` | `MUXTOPUS_NOTIFY_STALLED` (on) |
+| stranded | the loop's own `stranded` verdict | `stranded:<slug>` | `MUXTOPUS_NOTIFY_STRANDED` (on) |
+
+Stalled and stranded MOVED out of `TROUBLE`, which keeps `error` and
+long-`blocked`. A switched-off alert is recorded as `quiet`: it neither sends
+nor clears, and switching it on while the condition lasts sends it then. The
+/mute rule is unchanged: claude-notify.sh drops a muted push and the watchdog
+records it as sent, so `/unmute` is not a flood -- a muted alert's `cleared`
+is dropped the same way. A usage reading older than `WATCHDOG_USAGE_STALE`
+neither fires nor clears a limit (the family is not "looked at").
+
+Defaults: ON where lanes stop and nothing else says so; OFF for the bands,
+which the watchdog already acts on (wind-down) and which fire most days.
+
 ## 2. Outbound with buttons
 
 `claude-notify.sh` gains `--buttons 'Label=data|Label=data'` and

@@ -21,6 +21,7 @@ effort: high                  # optional: claude --effort
 permission-mode: bypassPermissions   # optional: claude --permission-mode
 watchdog: off                 # optional: never restart this session after a limit
 monitor: off                  # optional: never wind this session down
+rc: on                        # optional: send /rc once it is ready (default: Settings)
 options: questions, phases, lanes=3, model=opus[1m]   # written by the options table
 status: pending
 created: 2026-09-06 09:55
@@ -49,6 +50,7 @@ The new window opens right after its `window:` target, named with a leading `➥
 | `permission-mode` | no | `acceptEdits` · `auto` · `bypassPermissions` · `manual` · `dontAsk` · `plan` | [`claude --permission-mode`](#permission-mode-the-one-setting-that-cannot-be-fixed-after-launch); absent means absent |
 | `watchdog` | no | `off` | [never restart this session after a limit](#watchdog-off-and-monitor-off) |
 | `monitor` | no | `off` | never wind this session down |
+| `rc` | no | `on` · `off` | [send `/rc` once the window is ready](#rc-on-and-rc-off); absent is the Settings default, `DASHBOARD_NEW_RC` |
 | `options` | no | `key, key=value, …` | [what the options table ticked](#the-options-table); the executor parses nothing from it |
 | `status` | written by the executor | `pending` · `launched` · `error` · empty | empty counts as pending. `error` is a launch that failed, with the reason in the log and on the phone |
 | `created` | informational | a timestamp | |
@@ -69,6 +71,12 @@ Accepted values are whatever `claude --permission-mode` takes at the installed v
 ## `watchdog: off` and `monitor: off`
 
 The dashboard's per-session opt-outs, for a window that should start out exempt. Only `off` (any case) opts out; anything else, or no line, is the default: covered. They are header fields the **launcher** applies, not something the dashboard writes at create time, because the opt-out files are keyed by session id and a session id does not exist before launch. Once the prompt is up the launcher finds the `sessions/*.json` whose `.tmux` names its pane, appends that id exactly as `--optout` / `--monitor-optout` do, and logs it; if none turns up within ~5s the window is left watched and the log says so. `--check` prints both.
+
+## `rc: on` and `rc: off`
+
+`rc: on` sends `/rc` — remote control — to the new window once it is ready, so the session can be reached from claude.ai or a phone without anyone typing it. The same shape as the two opt-outs above, and applied by the launcher for the same reason: there is nothing to send it to before launch. It goes after the trust dialog and the readiness wait, and **before** the paste — once the body is in, the window is working, and a `/rc` typed then would be queued as a message to the model. Anything `/rc` leaves holding the keyboard is closed with Escape, and the log says so.
+
+Unlike the opt-outs, both values mean something, because there is a default: **`DASHBOARD_NEW_RC`** (`esc ▸ Settings ▸ Send /rc to a new window`, off). Switched on, *every* new scheduled window gets `/rc` — hand-written entries and `c` alike — unless its entry says `rc: off`. Any other value is ignored and the default applies. `claude-watchdog.sh --check <entry>` prints the resolved value and where it came from, and the launch line in the log ends in `rc=on`.
 
 ## `model:` and `effort:`
 

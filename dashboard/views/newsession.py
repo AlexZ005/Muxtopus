@@ -288,7 +288,9 @@ HELP_NEWSESSION = f"""
     parent:/window:, and watchdog: off / monitor: off when Settings says a
     new window is not watched or monitored (the launcher opts the session out
     once it has an id). An empty prompt writes a plan entry: the session gets
-    its identity line and nothing invented.
+    its identity line and nothing invented. `/rc` is not written into the
+    entry: the launcher sends it to every new window when Settings ▸ Send
+    /rc to a new window is on (an entry's own rc: on|off wins).
     Choosing bypassPermissions also offers "…and make it the default": a
     confirm names the exact settings.json (project or account, per Settings)
     and what changes -- EVERY future session there skips permission prompts,
