@@ -181,6 +181,17 @@ class HandoversView(View):
             label += " · %d ?" % c["unanswered"]
         return label
 
+    # THE STRIP'S NARROWER NAMES (dashboard/tabstrip.py). No scan of their
+    # own: App.tab_labels asks tab_label first, in the same frame, and the
+    # `?` survives to the initial because an unanswered fork is the one
+    # thing on this tab that is waiting on YOU.
+    def tab_short(self, app) -> str:
+        c = muxhandovers.counts(self.all)
+        return "hand %d" % c["open"] + (" %d?" % c["unanswered"] if c["unanswered"] else "")
+
+    def tab_initial(self, app) -> str:
+        return "h?" if muxhandovers.counts(self.all)["unanswered"] else "h"
+
     def build(self, app) -> list:
         return self.build_handovers()
 

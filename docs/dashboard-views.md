@@ -65,6 +65,7 @@ def register(app):
 | method | what it must do |
 |---|---|
 | `tab_label(app)` | the strip's text for this tab, **with its count** — the count is why the strip earns its line |
+| `tab_short(app)`, `tab_initial(app)` | optional: the narrower names the strip falls back to when it does not fit (`dashboard/tabstrip.py`). Left out, the label is cut to ten characters and to its first letter |
 | `build(app)` | `-> [(section name, panel)]`, top to bottom. NOT a finished Group: App places an open menu among the sections, so every view gets the placer the schedule view once needed a copy of |
 | `menu_anchor(app)` | which section index an open menu hangs under. Default 0 |
 | `footer(app)` | `-> Text`, the key line when no submode owns the footer |

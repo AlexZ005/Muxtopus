@@ -44,6 +44,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from dashboard.core import (DIM, PROFILE, RED, SCRIPTS, STATES, knob)
+from dashboard.tabstrip import fit
 from dashboard.menulayout import (MENU_MIN, menu_needed, menu_panel,
                                   rendered_height)
 
@@ -545,6 +546,33 @@ class App:
                 or self.picker is not None or self.modal is not None)
 
     # ========================================================== the frame
+    def tab_labels(self, tab) -> tuple:
+        """(full, short, initial) for one tab. A view may give `tab_short`
+        and `tab_initial`; one that gives neither is cut to ten characters
+        and to its first letter, so a tab written before this existed still
+        degrades instead of pushing the others off the strip."""
+        full = tab.tab_label(self)
+        short_fn = getattr(tab, "tab_short", None)
+        initial_fn = getattr(tab, "tab_initial", None)
+        short = short_fn(self) if short_fn else \
+            (full if len(full) <= 10 else full[:9].rstrip() + "…")
+        initial = initial_fn(self) if initial_fn else full[:1]
+        return full, short, initial
+
+    def strip_width(self) -> int:
+        """Columns a panel title may use: the console less the two corners,
+        the rule either side of the title and the space Rich pads it with."""
+        return max(10, self.console.size.width - 6)
+
+    def fit_strip(self, view):
+        """The fitted strip (dashboard.tabstrip.Strip) for the group this
+        view is in, or None when it is a screen of its own."""
+        tabs = self.tabs_of(view)
+        if len(tabs) < 2:
+            return None
+        return fit([self.tab_labels(t) for t in tabs], tabs.index(view),
+                   self.strip_width())
+
     def tab_strip(self, view) -> str | None:
         """The strip of tabs for the group this view is in, as markup, or
         None when it is a screen of its own.
@@ -552,31 +580,36 @@ class App:
         IT COSTS NO ROWS: it is drawn as the first panel's TITLE, which is a
         line that exists anyway. That is why a tab is cheap enough to be the
         answer for the handovers list and for anything else that is a second
-        table of the same kind of thing."""
-        tabs = self.tabs_of(view)
-        if len(tabs) < 2:
-            return None
-        bits = []
-        for tab in tabs:
-            label = tab.tab_label(self)
-            bits.append("[bold]▸%s[/]" % label if tab is view
-                        else "[%s]%s[/]" % (DIM, label))
-        return ("[%s] │ [/]" % DIM).join(bits)
+        table of the same kind of thing.
+
+        IT IS FITTED TO THE WIDTH (dashboard/tabstrip.py): labels go full ->
+        short -> initial before any tab leaves the strip, and then only the
+        tabs past the first six scroll, with a count of what is off each
+        side. ←→ walks every tab, drawn or not."""
+        strip = self.fit_strip(view)
+        return strip.markup if strip else None
 
     def build(self) -> Group:
         """One frame: the active view's sections, with the open menu placed
         among them or the footer under them."""
         view = self.view_of()
         sections = view.build(self)
-        strip = self.tab_strip(view)
-        if strip and sections:
+        # Fitted ONCE a frame: a tab's label may scan (the handovers tab
+        # counts its files), and the strip and its subtitle want one answer.
+        fitted = self.fit_strip(view)
+        if fitted and sections:
             # The panel is built fresh every frame, so this is a decoration
             # of this frame's copy and not a change to the view's own idea of
             # its title.
             panel = sections[0][1]
-            panel.title = strip
+            panel.title = fitted.markup
             panel.title_align = "left"
-            panel.subtitle = "[%s]←→ tab" % DIM
+            tabs = self.tabs_of(view)
+            # Scrolled, the subtitle says WHERE in the whole set you are:
+            # the strip no longer shows every tab, so it cannot.
+            panel.subtitle = "[%s]←→ tab%s" % (
+                DIM, " %d/%d" % (tabs.index(view) + 1, len(tabs))
+                if fitted.scrolled else "")
             panel.subtitle_align = "right"
         sub = self._submode_foot()
         if self.menu is not None and sub is None:

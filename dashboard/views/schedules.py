@@ -77,6 +77,12 @@ class ScheduleView(View):
         can still see how many entries are waiting over here."""
         return "schedules %d" % len(self.rows)
 
+    def tab_short(self, app) -> str:
+        return "sched %d" % len(self.rows)
+
+    def tab_initial(self, app) -> str:
+        return "s"
+
     def build(self, app) -> list:
         return self.build_sched()
 
