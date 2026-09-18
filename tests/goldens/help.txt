@@ -1,4 +1,3 @@
-    It is not on the claude table because a session's cwd here is /home/deck,
     which is not a repo -- the question is only answerable per TREE. A dirty
     repo with no dev server would then be invisible, so the system line names
     those separately. Untracked files are ignored: a scratch file is noise, a
@@ -53,4 +52,5 @@
   RAM is summed per PROCESS GROUP: `npm run dev` and the vite it spawns are
   separate processes, the port belongs to vite, and npm holds ~70 MB of its own.
 
+  The manual, with every screen and field: https://alexz005.github.io/Muxtopus/
   press any key
