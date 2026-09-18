@@ -338,6 +338,25 @@ try:
 except KeyError:
     ok(True, "an unknown fork id is refused rather than written somewhere")
 
+# THE CHANGED-UNDERNEATH RE-APPLY. A live lane rewrites its QUESTIONS file
+# whenever it likes, including inserting a fork ABOVE the one being answered.
+# The id is a function of the fork's TITLE precisely so the answer still
+# lands in the fork it was read from; a positional id would put it in the
+# lane's new one.
+grown = opened.replace(
+    "1. **What `esc` does",
+    "0. **A fork the lane added while you were reading.** (a) yes; (b) no.\n\n"
+    "1. **What `esc` does", 1)
+after_grown = mh.parse_forks(grown)
+eq(len(after_grown), 4, "the lane's file now has four forks")
+eq([f["id"] for f in after_grown][1:], [f["id"] for f in fk],
+   "and the three that were there kept their ids")
+moved = mh.write_answer(grown, fk[0]["id"], "(a)", DATE)
+target = mh.parse_forks(moved)
+eq(target[0]["answer"], "", "the fork the LANE added is not the one answered")
+eq(target[1]["answer"], "**Answer (user, 2026-09-18):** (a)",
+   "the answer landed in the fork it was read from, one row further down")
+
 nofinal = "1. A fork\n2. Another"
 got = mh.write_answer(nofinal, mh.parse_forks(nofinal)[1]["id"], "(a)", DATE)
 ok(not got.endswith("\n"), "a file with no final newline does not gain one")

@@ -24,6 +24,8 @@ that three question files are waiting on you.
 """
 from __future__ import annotations
 
+import datetime
+import os
 import subprocess
 import time
 
@@ -79,9 +81,14 @@ HELP_HANDOVERS = """
     f           show or hide everything FINISHED -- done handovers and
                 answered question files alike
     a           show or hide the question rows
-    enter       a QUESTIONS file in the editor; a handover READ-ONLY, in
-                the pager -- a live lane rewrites its handover whenever it
-                likes, and an editor saving over that is how one is lost
+    enter       on a QUESTIONS file: THE ANSWER SCREEN -- its forks one at a
+                time, the options as rows with the recommended one already
+                picked, and the editor one key away on every screen of it.
+                Each answer is written the moment you give it, as one line at
+                the end of its own fork; esc leaves and what was answered
+                stays answered. On a HANDOVER: read-only, in the pager -- a
+                live lane rewrites its handover whenever it likes, and an
+                editor saving over that is how one is lost
     e           edit (a questions file)
     E           edit a handover ANYWAY, behind a warning when its window is
                 still open and whichever of you saves last would win
@@ -132,6 +139,7 @@ class HandoversView(View):
         self._foot = None
         self._body_cache: dict = {}
         self._scanned = 0.0
+        self.flow: dict | None = None      # the answer screen, when it is up
 
     # ---------------------------------------------------------- the filters
     @staticmethod
@@ -445,7 +453,14 @@ class HandoversView(View):
         if not forks:
             body.append(row["title"] or "(no forks could be read)")
             return
+        # WHILE THE ANSWER SCREEN IS UP it shows the fork being answered, so
+        # the panel above the options is the question they belong to. Off the
+        # flow, it is the first one still owed.
         fork = next((f for f in forks if not f["answer"]), forks[0])
+        if (self.flow and self.flow["path"] == row["path"]
+                and self.flow["i"] >= 0
+                and self.flow["i"] < len(self.flow["forks"])):
+            fork = self.flow["forks"][self.flow["i"]]
         body.append(fork["title"] + "\n", style="bold")
         for line in fork["text"].splitlines()[1:BODY_MAX]:
             body.append(line.rstrip()[:160] + "\n")
@@ -487,7 +502,7 @@ class HandoversView(View):
     def foot(self) -> Text:
         keys = Text.assemble(
             (" ↑↓", DIM), " pick  ", ("←→", DIM), " tab  ",
-            ("enter", DIM), " open  ", ("e", DIM), " edit  ",
+            ("enter", DIM), " open/answer  ", ("e", DIM), " edit  ",
             ("E", DIM), " force-edit  ", ("space", DIM), " menu  ",
             ("f", DIM), " done  ", ("a", DIM), " asks  ",
             ("r", DIM), " reload  ",
@@ -499,8 +514,8 @@ class HandoversView(View):
 
     # ------------------------------------------------------------ opening
     def open_selected(self) -> None:
-        """enter. A QUESTIONS file opens in the EDITOR, because answering is
-        what you came to do; a STATUS file opens READ-ONLY.
+        """enter. A QUESTIONS file opens the ANSWER SCREEN; a STATUS file
+        opens READ-ONLY.
 
         The read-only half is fork Q5 as the user answered it, and it is not
         fussiness: a live lane rewrites its handover whenever it likes, and
@@ -513,7 +528,7 @@ class HandoversView(View):
             self.app.say("nothing to open")
             return
         if row["kind"] == "questions":
-            self.app.pending_edit = str(row["path"])
+            self.app.say(self.start_answering(row))
             return
         try:
             text = row["path"].read_text(errors="replace")
@@ -563,6 +578,248 @@ class HandoversView(View):
 
     def _do_edit(self, row) -> str:
         self.app.pending_edit = str(row["path"])
+        return ""
+
+
+    # ================================================= answering a fork (§3b)
+    # Seeing "awaiting your answers" with no way to answer is half a feature.
+    # This is the other half: the forks of one file, one at a time, with its
+    # options as rows -- and the EDITOR one key away on every screen of it,
+    # because no parser will understand every lane's prose and the file is
+    # always the escape hatch.
+    #
+    # It is a VIEW'S OWN MODAL (app.modal), not the shared picker, for exactly
+    # that reason: the picker answers UP/DOWN/enter/esc and drops everything
+    # else, so `e` could only have been another row to arrow onto. A modal
+    # owns the keyboard, and it is the mechanism the options table already
+    # uses -- App routes keys to its `key` and draws the footer with its
+    # `panel` and knows nothing else about it. A prompt opened FOR it (the
+    # note on an answer) still takes the keys while it is up, which is the
+    # documented order.
+    def start_answering(self, row) -> str:
+        try:
+            st = row["path"].stat()
+            text = row["path"].read_text(errors="replace")
+        except OSError as exc:
+            return "cannot read %s: %s" % (row["path"].name, exc)
+        forks = muxhandovers.parse_forks(text)
+        if not forks:
+            self.app.pending_edit = str(row["path"])
+            return "no forks could be read in %s — opening it" % row["path"].name
+        self.flow = {"row": row, "path": row["path"], "forks": forks,
+                     "at": (st.st_mtime, st.st_size), "i": 0, "cur": 0}
+        self._to_next_unanswered(first=True)
+        self.app.modal = {"key": self.flow_key, "panel": self.flow_panel}
+        return ""
+
+    def _to_next_unanswered(self, first: bool = False) -> None:
+        f = self.flow
+        start = f["i"] if first else f["i"] + 1
+        for i in range(start, len(f["forks"])):
+            if not f["forks"][i]["answer"]:
+                f["i"], f["cur"] = i, self._preselect(f["forks"][i])
+                return
+        # Nothing left unanswered from here on: wrap once, so a file whose
+        # first forks were answered by the lane still offers the later ones.
+        for i in range(0, len(f["forks"])):
+            if not f["forks"][i]["answer"]:
+                f["i"], f["cur"] = i, self._preselect(f["forks"][i])
+                return
+        f["i"], f["cur"] = -1, 0          # the done screen
+
+    @staticmethod
+    def _preselect(fork) -> int:
+        """The recommended option, preselected -- that is what RECOMMENDED is
+        for, and the lane wrote it down so the reader would not have to."""
+        for i, o in enumerate(fork["options"]):
+            if o["rec"]:
+                return i
+        return 0
+
+    def flow_rows(self) -> list[dict]:
+        f = self.flow
+        if f["i"] < 0:
+            rows = [{"label": "Mark the file answered", "act": self.flow_mark}]
+            if self.live_window(f["row"]["slug"]):
+                rows.append({"label": "Tell ➥%s its answers are in"
+                                      % f["row"]["slug"], "act": self.flow_tell})
+            rows.append({"label": "Open the file in the editor", "act": self.flow_edit})
+            rows.append({"label": "Close", "act": self.flow_close})
+            return rows
+        fork = f["forks"][f["i"]]
+        rows = [{"label": "(%s) %s" % (o["key"], o["text"]), "opt": o,
+                 "rec": o["rec"]} for o in fork["options"]]
+        if not rows:
+            # A fork with no options the parser could see. Accepting it "as
+            # written" is still an answer, and it is the one the lane asked
+            # for when it wrote its own recommendation into the prose.
+            rows = [{"label": "accept it as written / as recommended",
+                     "opt": {"key": "", "text": "as written", "rec": True},
+                     "rec": True}]
+        rows += [{"label": "type an answer…", "typed": True},
+                 {"label": "skip this fork", "skip": True},
+                 {"label": "open the file in the editor  (e)", "edit": True}]
+        return rows
+
+    def flow_panel(self):
+        f = self.flow
+        rows = self.flow_rows()
+        body = Text()
+        if f["i"] < 0:
+            body.append("every fork in this file is answered\n", style=GREEN)
+        else:
+            fork = f["forks"][f["i"]]
+            n = sum(1 for k in f["forks"] if k["answer"])
+            body.append("fork %d of %d · %d answered\n"
+                        % (f["i"] + 1, len(f["forks"]), n), style=DIM)
+            body.append(fork["title"] + "\n", style="bold")
+        for i, r in enumerate(rows):
+            cur = (i == f["cur"])
+            body.append(" ▸ " if cur else "   ", style="bold #c9a0dc")
+            body.append(r["label"], style="bold" if cur else "")
+            if r.get("rec"):
+                body.append("   ← recommended", style=GREEN)
+            body.append("\n")
+        # THE NOTICE HAS TO LIVE HERE. A modal owns the footer, which is
+        # where a notice is normally drawn -- the same hole the menus and the
+        # options table each had -- so "answered: (a)" and "the lane rewrote
+        # the file" would be said to nobody while this screen is the screen.
+        hint = "↑↓ pick · enter answer · e the file · esc leave"
+        if self.app.showing_notice():
+            hint = "%s   ·   %s" % (self.app.notice, hint)
+        else:
+            hint += "   (what is answered stays answered)"
+        body.append("   " + hint, style=DIM)
+        return Panel(body, title="[bold]answer[/] [%s]· %s" % (DIM, f["path"].name),
+                     title_align="left", border_style="#c9a0dc", box=box.ROUNDED)
+
+    def flow_key(self, key: str) -> None:
+        f = self.flow
+        rows = self.flow_rows()
+        if key == "UP":
+            f["cur"] = (f["cur"] - 1) % len(rows)
+        elif key == "DOWN":
+            f["cur"] = (f["cur"] + 1) % len(rows)
+        elif key == "e":
+            self.flow_edit()
+        elif key == "\x1b":
+            self.flow_close()
+        elif key in ("\r", "\n"):
+            self.flow_activate(rows[f["cur"]])
+
+    def flow_activate(self, row: dict) -> None:
+        if row.get("act"):
+            msg = row["act"]()
+            if msg:
+                self.app.say(msg)
+            return
+        if row.get("edit"):
+            self.flow_edit()
+        elif row.get("skip"):
+            self._to_next_unanswered()
+        elif row.get("typed"):
+            self.app.prompt = {"title": "your answer", "buf": "",
+                               "keep_menu": True, "fn": self._typed}
+        else:
+            # A CHOSEN OPTION MAY TAKE A NOTE, and enter with nothing typed
+            # means no note: the letter alone is a complete answer, and being
+            # made to explain it would be a reason not to answer at all.
+            opt = row["opt"]
+            self.app.prompt = {
+                "title": "(%s) — a note, or enter for none" % opt["key"],
+                "buf": "", "keep_menu": True,
+                "fn": lambda note: self._answer(opt, note)}
+
+    def _typed(self, text: str) -> str:
+        if not text.strip():
+            return "nothing typed — the fork is still open"
+        return self._answer(None, text)
+
+    def _answer(self, opt, note: str) -> str:
+        f = self.flow
+        if f is None:
+            return ""
+        fork = f["forks"][f["i"]]
+        note = note.strip()
+        if opt is None:
+            answer = note
+        elif opt["key"]:
+            answer = "(%s)%s" % (opt["key"], " — " + note if note else "")
+        else:
+            answer = "as recommended%s" % (" — " + note if note else "")
+        msg = self._write_answer(fork["id"], answer)
+        self._to_next_unanswered()
+        return msg
+
+    def _write_answer(self, fork_id: str, answer: str) -> str:
+        """One fork, written AT ONCE, atomically, and only onto the file that
+        was parsed.
+
+        A live lane rewrites its QUESTIONS file whenever it likes. If it did
+        so since this screen opened, the answer is re-applied to the same
+        FORK ID in the new text -- which is why the id is a function of the
+        fork's title and not of its position -- and the screen says so."""
+        f = self.flow
+        path = f["path"]
+        note = ""
+        try:
+            st = path.stat()
+            text = path.read_text(errors="replace")
+        except OSError as exc:
+            return "cannot read %s: %s" % (path.name, exc)
+        if (st.st_mtime, st.st_size) != f["at"]:
+            note = " (the lane rewrote the file; re-applied to the same fork)"
+        try:
+            new = muxhandovers.write_answer(
+                text, fork_id, answer, datetime.date.today().isoformat())
+        except KeyError:
+            return "that fork is not in the file any more — nothing written"
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            tmp.write_text(new)
+            os.replace(tmp, path)
+        except OSError as exc:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return "could not write %s: %s" % (path, exc)
+        try:
+            st = path.stat()
+            f["at"] = (st.st_mtime, st.st_size)
+        except OSError:
+            pass
+        f["forks"] = muxhandovers.parse_forks(new)
+        self.cache.clear()
+        self.scan(force=True)
+        return "answered: %s%s" % (answer, note)
+
+    def flow_edit(self) -> str:
+        self.app.pending_edit = str(self.flow["path"])
+        self.flow_close()
+        return ""
+
+    def flow_mark(self) -> str:
+        row = self.flow["row"]
+        self.flow_close()
+        for i, r in enumerate(self.rows):
+            if r["path"] == row["path"]:
+                self.i = i
+                break
+        return self.mark_answered()
+
+    def flow_tell(self) -> str:
+        row = self.flow["row"]
+        for i, r in enumerate(self.rows):
+            if r["path"] == row["path"]:
+                self.i = i
+                break
+        self.flow_close()
+        return self.ask_tell()
+
+    def flow_close(self) -> str:
+        self.flow = None
+        self.app.modal = None
         return ""
 
     # ------------------------------------------------------- the state changes
@@ -727,7 +984,8 @@ class HandoversView(View):
             return [{"label": "nothing selected", "disabled": "no rows"}]
         wid = self.live_window(row["slug"])
         if row["kind"] == "questions":
-            rows = [{"label": "Edit the file", "act": self._act_edit}]
+            rows = [{"label": "Answer…", "act": self._act_answer},
+                    {"label": "Edit the file", "act": self._act_edit}]
             if row["state"] == "unanswered":
                 rows.append({"label": "Mark answered", "act": self.mark_answered})
             else:
@@ -758,6 +1016,9 @@ class HandoversView(View):
     def _act_view(self) -> str:
         self.open_selected()
         return ""
+
+    def _act_answer(self) -> str:
+        return self.start_answering(self.sel())
 
     def _act_edit(self) -> str:
         self.app.pending_edit = str(self.sel()["path"])

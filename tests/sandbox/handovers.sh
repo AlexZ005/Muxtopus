@@ -191,7 +191,13 @@ $K s; $K Right
 : > "$EDLOG"
 $K Enter
 sleep 1.5
-check "enter on a QUESTIONS row hands the file to the editor" \
+has "enter on a QUESTIONS row opens the ANSWER screen"  "answer · QUESTIONS-root-lane.md"
+check "...and hands nothing to an editor" \
+  bash -c '! [ -s "'"$EDLOG"'" ]'
+$K Escape
+$K e
+sleep 1.5
+check "e is what opens a questions file for editing" \
   grep -q "QUESTIONS-root-lane.md" "$EDLOG"
 $K Down; $K Down
 : > "$EDLOG"
@@ -206,9 +212,119 @@ $K q
 sleep 1
 has "q comes back to the tab"                "▸handovers"
 
+echo "== answering a fork without leaving the dashboard"
+"$HERE/clean.sh"
+"$HERE/stop.sh" >/dev/null
+"$HERE/start.sh" 40 >/dev/null
+Q="${H:?}/QUESTIONS-root-lane.md"
+$K s; $K Right
+$K Enter
+has "the screen names the file"              "answer · QUESTIONS-root-lane.md"
+has "...and says where it is in it"          "fork 1 of 2 · 0 answered"
+has "the fork's options are the rows"        "(a) RECOMMENDED: schedules first, handovers second."
+has "...with the recommended one marked"     "← recommended"
+has "...and the editor is on every screen"   "open the file in the editor  (e)"
+snap
+check "the recommended option is PRESELECTED" \
+  grep -qE "▸ \(a\) RECOMMENDED" "$NOW"
+check "and the detail panel above shows that fork in full" \
+  grep -qF -- "- (b) whichever was open last, first." "$NOW"
+
+$K Enter
+has "choosing an option offers a note first" "a note, or enter for none"
+"$HERE/type.sh" "because it reads left to right"
+$K Enter
+sleep 1.5
+check "the answer is in the file, one line, inside its own fork" \
+  grep -q '^\*\*Answer (user, [0-9-]*):\*\* (a) — because it reads left to right$' "$Q"
+check "...and it is the SEVENTH line, not appended to the file" \
+  bash -c 'sed -n 7p "'"$Q"'" | grep -q "because it reads left to right"'
+has "and the screen has moved on"            "fork 2 of 2 · 1 answered"
+
+# A TYPED ANSWER, for the fork whose options nobody wants.
+$K Down; $K Down
+snap
+check "type an answer… is a row"             grep -qE "▸ type an answer" "$NOW"
+$K Enter
+has "it asks for the words"                  "your answer"
+# ASCII only: type.sh sends one character per send-keys -l, and a
+# multi-byte one does not survive that intact.
+"$HERE/type.sh" "neither - count them in the strip"
+$K Enter
+sleep 1.5
+check "a typed answer is written as itself" \
+  grep -q "neither - count them in the strip" "$Q"
+has "every fork is answered now"             "every fork in this file is answered"
+has "...and it offers the marker"            "Mark the file answered"
+
+$K Enter
+sleep 2
+has "marking it drops the strip count"       "handovers 3 open · 1 ?"
+# root-lane's handover is already in done/, so handover.sh takes the
+# answered questions file along with it -- which is §2.2's rule and is what
+# tests/test_handover_sh.sh proves on its own.
+check "and the ANSWERED marker is in the file, which moved with its lane" \
+  grep -q "^\*\*ANSWERED" "${H:?}/done/QUESTIONS-root-lane.md"
+
+echo "== skip, esc, and the editor, from inside the flow"
+"$HERE/clean.sh"
+"$HERE/stop.sh" >/dev/null
+"$HERE/start.sh" 40 >/dev/null
+$K s; $K Right
+$K Enter
+$K Down; $K Down; $K Down
+snap
+check "skip this fork is a row"              grep -qE "▸ skip this fork" "$NOW"
+$K Enter
+has "skip moves to the next fork and writes nothing" "fork 2 of 2 · 0 answered"
+check "...nothing at all"                    bash -c '! grep -q "Answer (user" "'"$Q"'"'
+: > "$EDLOG"
+$K e
+sleep 1.5
+check "e from INSIDE the flow reaches the editor with that file" \
+  grep -q "QUESTIONS-root-lane.md" "$EDLOG"
+has "...and the flow is closed behind it"    "▸handovers"
+
+$K Enter
+$K Enter
+$K Enter
+sleep 1.5
+check "one fork answered" grep -c "Answer (user" "$Q" >/dev/null
+$K Escape
+has "esc leaves the flow"                    "▸handovers"
+check "and what was answered stays answered" grep -q "Answer (user" "$Q"
+
+echo "== the lane rewrote the file underneath, and the answer still lands"
+"$HERE/clean.sh"
+"$HERE/stop.sh" >/dev/null
+"$HERE/start.sh" 40 >/dev/null
+$K s; $K Right
+$K Enter
+has "the flow is open on fork 1"             "fork 1 of 2 · 0 answered"
+# The lane adds a fork ABOVE the one being answered, which is exactly the
+# case a position-based id would get wrong.
+printf '\n0. **A fork the lane added while you were reading.** (a) yes; (b) no.\n' \
+  > "${SB:?}/insert.txt"
+sed -i '3r '"${SB:?}/insert.txt" "$Q"
+sleep 1
+$K Enter
+$K Enter
+sleep 1.5
+has "the screen says the file changed under it" "the lane rewrote the file"
+check "and the answer landed in the fork it was READ from, not the new one" \
+  bash -c 'awk "/Which way round should the strip read/,/^2\./" "'"$Q"'" |
+           grep -q "Answer (user"'
+check "...and the lane's new fork is untouched" \
+  bash -c '! awk "/A fork the lane added/,/^1\./" "'"$Q"'" | grep -q "Answer (user"'
+
 echo "== E edits a handover anyway, behind a warning that names the risk"
 # launched-lane's window is @0 in the fixture tree, which IS the sandbox
 # dashboard's own window, so the tree says that lane is still running.
+"$HERE/clean.sh"
+"$HERE/stop.sh" >/dev/null
+"$HERE/start.sh" 40 >/dev/null
+$K s; $K Right
+$K Down; $K Down                 # onto STATUS-launched-lane
 : > "$EDLOG"
 $K E
 has "E on a lane whose window is open asks first" "may rewrite this file while you edit"
