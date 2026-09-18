@@ -181,6 +181,17 @@ class HandoversView(View):
             label += " · %d ?" % c["unanswered"]
         return label
 
+    # THE STRIP'S NARROWER NAMES (dashboard/tabstrip.py). No scan of their
+    # own: App.tab_labels asks tab_label first, in the same frame, and the
+    # `?` survives to the initial because an unanswered fork is the one
+    # thing on this tab that is waiting on YOU.
+    def tab_short(self, app) -> str:
+        c = muxhandovers.counts(self.all)
+        return "hand %d" % c["open"] + (" %d?" % c["unanswered"] if c["unanswered"] else "")
+
+    def tab_initial(self, app) -> str:
+        return "h?" if muxhandovers.counts(self.all)["unanswered"] else "h"
+
     def build(self, app) -> list:
         return self.build_handovers()
 
@@ -316,6 +327,14 @@ class HandoversView(View):
         # and a terminal that short has bigger problems than this tab.
         chrome = rendered_height(console, self.table_panel(self.table(), ""))
         budget = max(3, height - below - chrome)
+        # THE TABLE AT ITS FLOOR AND STILL NO ROOM: the detail panel gives
+        # the lines up, from its bottom (Panel(height=) crops), rather than
+        # the frame growing past the terminal and Live cropping the FOOTER
+        # instead -- found by prove.sh at 24x60, where the question text
+        # wraps. `e` still opens the whole file.
+        short = 3 - (height - below - chrome)
+        if short > 0:
+            detail.height = max(3, rendered_height(console, detail) - short)
 
         n = len(self.rows)
         if n <= budget:
@@ -365,12 +384,14 @@ class HandoversView(View):
     def table(self) -> Table:
         t = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
                   header_style=DIM, border_style=FRAME)
-        t.add_column("", width=3)
-        t.add_column("STATE", width=8)
-        t.add_column("AGE", width=5)
+        # EVERY column no_wrap: the viewport below counts one line per row,
+        # and at 40 columns "? ask" wrapped onto two and the footer went.
+        t.add_column("", width=3, no_wrap=True)
+        t.add_column("STATE", width=8, overflow="ellipsis", no_wrap=True)
+        t.add_column("AGE", width=5, overflow="ellipsis", no_wrap=True)
         t.add_column("LANE", width=24, overflow="ellipsis", no_wrap=True)
-        t.add_column("WINDOW", width=8)
-        t.add_column("HOLDS", width=6)
+        t.add_column("WINDOW", width=8, overflow="ellipsis", no_wrap=True)
+        t.add_column("HOLDS", width=6, overflow="ellipsis", no_wrap=True)
         t.add_column("SAID", ratio=1, overflow="ellipsis", no_wrap=True)
         return t
 

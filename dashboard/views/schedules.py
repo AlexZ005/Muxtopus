@@ -36,6 +36,8 @@ from rich.text import Text
 import muxhandovers
 import muxsettings
 from dashboard.app import View
+from dashboard.menulayout import (TABLE_MIN, fit_columns, make_table,
+                                  rendered_height, share_rows)
 from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, HOME, PROFILE,
                             QUESTIONS_DIR, RED, SCHEDULES_DIR, SCHED_TEMPLATES,
                             SCRIPTS, YELLOW, human_age, options_paths,
@@ -76,6 +78,12 @@ class ScheduleView(View):
         reason a strip is worth the line: from the tab beside this one you
         can still see how many entries are waiting over here."""
         return "schedules %d" % len(self.rows)
+
+    def tab_short(self, app) -> str:
+        return "sched %d" % len(self.rows)
+
+    def tab_initial(self, app) -> str:
+        return "s"
 
     def build(self, app) -> list:
         return self.build_sched()
@@ -736,15 +744,20 @@ class ScheduleView(View):
             except (ValueError, OverflowError):
                 pass
 
-        st = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
-                   header_style=DIM, border_style=FRAME)
-        st.add_column("", width=3)
-        st.add_column("STATUS", width=10)
-        st.add_column("TYPE", width=6)
-        st.add_column("FOR", width=18)
-        st.add_column("AT", width=17)
-        st.add_column("TITLE", ratio=1, overflow="ellipsis", no_wrap=True)
-        st.add_column("SLUG", width=24, overflow="ellipsis", no_wrap=True)
+        # Columns as data, made into the table at the end once the frame
+        # knows its size (menulayout.fit_columns / make_table, the ones the
+        # main view uses): the number is the order a narrow terminal gives a
+        # column up in, and TITLE carries the "▼ N more" marker.
+        st_cols = [
+            ("", {"width": 3}, None),
+            ("STATUS", {"width": 10}, None),
+            ("TYPE", {"width": 6}, 3),
+            ("FOR", {"width": 18}, 4),
+            ("AT", {"width": 17}, 1),
+            ("TITLE", {"ratio": 1, "min_width": 12}, None),
+            ("SLUG", {"width": 24}, 2),
+        ]
+        st_rows: list[list] = []
         why = sched_why()
         for i, r in enumerate(rows):
             mark = Text("▸" if i == self.i else " ", style="bold #c9a0dc")
@@ -781,16 +794,22 @@ class ScheduleView(View):
                 ttx = Text("%s — launched %s" % (title, r["launched"]))
             else:
                 ttx = Text(title)
-            st.add_row(mark, stx, Text(r["type"] or "?", style=DIM),
-                       Text(when_for), Text(r["created"] or "—", style=DIM),
-                       ttx, Text(r["resolved"] or r["file"].name, style=DIM))
+            st_rows.append([mark, stx, Text(r["type"] or "?", style=DIM),
+                            Text(when_for), Text(r["created"] or "—", style=DIM),
+                            ttx, Text(r["resolved"] or r["file"].name, style=DIM)])
         if not rows:
-            st.add_row("", Text("—", style=DIM), "",
-                       Text("nothing scheduled — press c", style=DIM), "", "", "")
+            st_rows.append(["", Text("—", style=DIM), "",
+                            Text("nothing scheduled — press c", style=DIM), "", "", ""])
+        st_keep = fit_columns(st_cols, self.app.console.size.width)
 
-        parts = [Panel(st, title="[bold]scheduled windows[/] "
-                           f"[{DIM}]· {SCHEDULES_DIR} · templates in templates/",
-                       title_align="left", border_style=FRAME, box=box.ROUNDED)]
+        def table_panel(lines):
+            return Panel(make_table(st_cols, st_keep, [] if lines == "chrome" else st_rows,
+                                    self.i, 5, None if lines == "chrome" else lines),
+                         title="[bold]scheduled windows[/] "
+                         f"[{DIM}]· {SCHEDULES_DIR} · templates in templates/",
+                         title_align="left", border_style=FRAME, box=box.ROUNDED)
+
+        parts = [table_panel(None)]
 
         # WHY THE SELECTED ENTRY IS NOT RUNNING, in the executor's own words.
         # One line under the table rather than a column: the sentence is long
@@ -861,7 +880,10 @@ class ScheduleView(View):
             parts.append(Panel(
                 Text.assemble(
                     ("awaiting your answers: %d" % len(asking), "bold " + YELLOW),
-                    ("   → to answer", DIM)),
+                    # → skips a hidden tab, so the pointer must not lie.
+                    ("   → to answer", DIM) if "handovers" not in self.app.hidden_tabs()
+                    else ("   the handovers tab is hidden: esc ▸ Settings ▸ Tabs ▸ Open handovers once",
+                          DIM)),
                 border_style=FRAME, box=box.ROUNDED))
 
         keys = Text.assemble(
@@ -875,6 +897,17 @@ class ScheduleView(View):
         if self.app.notice and time.time() - self.app.notice_at < 8:
             keys = Text.assemble((" " + self.app.notice, "#c9a0dc"), "\n", keys)
         self._foot = keys
+        # A SHORT TERMINAL: the table gets the rows that are left once the
+        # panels under it and the footer are measured, and scrolls in them
+        # with the menus' rule -- the main view's arithmetic, not a second
+        # one. Under TABLE_MIN it keeps its minimum and Live crops.
+        console = self.app.console
+        foot = self.app._submode_foot() or keys
+        if rendered_height(console, Group(*parts, foot)) > console.size.height:
+            room = (console.size.height - rendered_height(console, table_panel("chrome"))
+                    - rendered_height(console, Group(*parts[1:], foot)))
+            lines = share_rows(room, [len(st_rows)]) or [TABLE_MIN]
+            parts[0] = table_panel(lines[0])
         # The entry's menu goes under the TABLE -- the why sentence belongs
         # in the menu, not above it -- so the anchor is section 0.
         return [("sched", parts[0])] + [("more", p) for p in parts[1:]]

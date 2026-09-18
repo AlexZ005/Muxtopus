@@ -164,6 +164,12 @@ def validate(key: str, value: str) -> str:
         return "no quotes or newlines in a value"
     if meta["kind"] == "onoff":
         return "" if value in ("on", "off") else "on or off (got %r)" % value
+    # A module's own rule for its own key: `check` in the spec it registered,
+    # value -> "" or the complaint, so the rule lives beside the key.
+    if meta.get("check"):
+        why = meta["check"](value)
+        if why:
+            return why
     if key == "DASHBOARD_NEW_MODEL":
         return "" if set(value) <= MODEL_OK else "not a model alias: %r" % value
     if meta["kind"] == "choice":

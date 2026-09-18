@@ -24,6 +24,9 @@ split into a package draws the same picture: you take the picture first.
     mkledger.py     a synthetic stats ledger, anchored on TODAY
     insights.sh     the `i` view, driven: every key, at 24/40/58 rows
     handovers.sh    the handovers TAB of `s`: rows, states, viewport
+    prove.sh        a SMALL TERMINAL: 24/40/58 rows x 160..40 columns, nine
+                    tabs (tests/fixtures/many_tabs.py), every capture fits
+    assert_fit.py   a capture fits: rows, cols, the footer, every box closed
 
 ## The goldens are pictures; two things they cannot see
 
@@ -71,6 +74,7 @@ to press. Two checks cover what that leaves:
     tests/sandbox/setup.sh
     tests/sandbox/insights.sh           # the i view
     tests/sandbox/handovers.sh          # the handovers tab of s
+    tests/sandbox/prove.sh              # every screen fits a small terminal
     tests/sandbox/goldens.sh            # compare
     tests/sandbox/goldens.sh --bless    # write tests/goldens/ (phase 0 only)
 

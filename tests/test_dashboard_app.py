@@ -177,6 +177,44 @@ check(a.cycle_tab(-1) and a.view == "handovers", "← goes back")
 a.switch_to("main")
 check(a.cycle_tab(1) is False, "a view with no group has no tabs to cycle")
 
+print("== a strip that does not fit: every tab still reachable with →")
+from rich.panel import Panel               # noqa: E402
+from dashboard.tabstrip import LOCKED      # noqa: E402
+
+
+class Tab(Spy):
+    def tab_label(self, app):
+        return "%s tab with a long label" % self.name
+
+    def build(self, app):
+        return [(self.name, Panel(Text(self.name)))]
+
+
+a = App(2.0, Console(width=40, height=24, force_terminal=False))
+names = ["t%02d" % i for i in range(10)]
+for i, nm in enumerate(names):
+    a.add_view(Tab(nm, key="s" if i == 0 else None, group="s", order=i))
+a.switch_to("t00")
+seen, scrolled = [], False
+for _ in names:
+    seen.append(a.view)
+    fitted = a.fit_strip(a.view_of())
+    scrolled = scrolled or fitted.scrolled
+    check(len(Text.from_markup(fitted.markup).plain) <= a.strip_width(),
+          "%s: the strip fits 40 columns" % a.view)
+    idx = [v.name for v in a.tabs_of(a.view_of())].index(a.view)
+    check(idx in fitted.shown and all(i in fitted.shown for i in range(LOCKED)),
+          "%s: drawn, and so are the six locked tabs" % a.view)
+    a.route_key("RIGHT")
+check(seen == names and a.view == "t00", "→ walks all ten and wraps, drawn or not")
+check(scrolled, "...and at 40 columns ten tabs do scroll, so that was tested")
+a.switch_to("t09")
+top = a.console.render_lines(a.build(), a.console.options)[0]
+line = "".join(seg.text for seg in top)
+check("▸" in line and "«" in line, "the scrolled tab's frame says so: %r" % line)
+foot = "".join(seg.text for seg in a.console.render_lines(a.build(), a.console.options)[2])
+check("←→ tab 10/10" in foot, "...and the subtitle says where: %r" % foot)
+
 print("== add_rows: order places them, and import order decides nothing")
 
 

@@ -20,12 +20,15 @@ import subprocess
 import time
 
 from rich import box
+from rich.console import Group
 from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
 from dashboard.app import View
+from dashboard.menulayout import (TABLE_MIN, fit_columns, make_table,
+                                  rendered_height, share_rows)
 from dashboard.core import (CONTEXT_WINDOW, DIM, EXTRAS_SENTINEL, EXTRA_HINTS,
                             FRAME_INTERVAL, USAGE_MAX_AGE, WATCHDOG_TREE,
                             WD_INTERVAL, knob,
@@ -604,19 +607,26 @@ class MainView(View):
                  if self.lanes_all or g["acct"] == PROFILE}
         hidden = len(groups) - len(shown)
 
-        lanes = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
-                      header_style=DIM, border_style=FRAME)
-        lanes.add_column("", width=2)
-        lanes.add_column("PORT", width=6)
-        lanes.add_column("RAM", justify="right", width=10)
-        lanes.add_column("AGE", justify="right", width=6)
-        lanes.add_column("LANE", overflow="ellipsis", no_wrap=True, ratio=1)
+        # COLUMNS AS DATA, then the table is made at the end, once the frame
+        # knows how wide and how tall it may be (fit_columns, make_table).
+        # The number is the order a narrow terminal gives a column up in,
+        # lowest first; None never goes. LANE is where "▼ N more" is drawn.
+        lane_cols = [
+            ("", {"width": 2}, None),
+            ("PORT", {"width": 6}, None),
+            ("RAM", {"justify": "right", "width": 10}, 3),
+            ("AGE", {"justify": "right", "width": 6}, 2),
+            ("LANE", {"ratio": 1, "min_width": 12}, None),
+        ]
         # Only the unfiltered view needs to say whose a row is; in the
         # filtered one the answer is the panel title.
         if self.lanes_all:
-            lanes.add_column("ACCOUNT", width=10)
-        lanes.add_column("DIRTY", justify="right", width=6)
-        lanes.add_column("STATE", width=16)
+            lane_cols.append(("ACCOUNT", {"width": 10}, 4))
+        lane_cols += [
+            ("DIRTY", {"justify": "right", "width": 6}, 1),
+            ("STATE", {"width": 16}, 5),
+        ]
+        lane_rows: list[list] = []
 
         # Per LANE this has always worked, because a lane row is a working
         # tree. Per SESSION it used to be unanswerable -- the published table
@@ -653,7 +663,7 @@ class MainView(View):
                 acct = g["acct"]
                 cells.insert(5, Text("?" if acct is None else (acct or "personal"),
                                      style=DIM if acct == PROFILE else "#c9a0dc"))
-            lanes.add_row(*cells)
+            lane_rows.append(cells)
         if not shown:
             # The count and the key are in the panel title; keep the cell short
             # enough to survive a narrow column. Selected, it says what enter does.
@@ -666,7 +676,7 @@ class MainView(View):
                      Text(empty, style="#c9a0dc" if sel else DIM), "", ""]
             if self.lanes_all:
                 cells.insert(5, "")
-            lanes.add_row(*cells)
+            lane_rows.append(cells)
         if self.lanes_all:
             lane_scope = " · every account  (f: this one)"
         elif hidden or MULTI_ACCOUNT:
@@ -708,19 +718,26 @@ class MainView(View):
             self.cursor = first_session or self.sids[0]
 
         mon_all = monitor_on()
-        ct = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
-                   header_style=DIM, border_style=FRAME)
-        ct.add_column("", width=3)
-        ct.add_column("MON", width=4)
-        # no_wrap or a long background-job name wraps and breaks the row;
-        # ellipsis only applies to text that is not allowed to wrap.
-        ct.add_column("WINDOW", overflow="ellipsis", no_wrap=True, ratio=1)
-        ct.add_column("MODEL", width=11, overflow="ellipsis", no_wrap=True)
-        ct.add_column("CONTEXT", width=29)
-        ct.add_column("SPENT", justify="right", width=8)
-        ct.add_column("IDLE", justify="right", width=6)
-        ct.add_column("STATE", width=15, overflow="ellipsis", no_wrap=True)
-        ct.add_column("DIRTY", justify="right", width=6)
+        # EVERY COLUMN IS no_wrap (make_table adds it): a row that wraps is
+        # a row two lines tall, and a table whose row height depends on the
+        # terminal's width cannot be given a row budget. That was the 80x24
+        # client: CONTEXT wrapped its token count onto a second line and the
+        # footer went off the bottom.
+        # Under 100 columns the context gauge is 6 cells, not 14: the figure
+        # beside it is what is read, and the 8 cells go to STATE.
+        wide = self.app.console.size.width >= 100
+        ct_cols = [
+            ("", {"width": 3}, None),
+            ("MON", {"width": 4}, 3),
+            ("WINDOW", {"ratio": 1, "min_width": 12}, None),
+            ("MODEL", {"width": 11}, 7),
+            # Last to go, and only on a phone-width terminal: the window's
+            # name and its state are what the row is for.
+            ("CONTEXT", {"width": 29 if wide else 21}, 8),
+            ("SPENT", {"justify": "right", "width": 8}, 4),
+            ("IDLE", {"justify": "right", "width": 6}, 5),
+            ("STATE", {"width": 15}, None),
+            ("DIRTY", {"justify": "right", "width": 6}, 6),
         # 12, NOT 11, AND no_wrap. when() renders a stamp older than today as
         # "%b %-d %H:%M" -- "Sep 5 21:13" is 11 and fitted, "Sep 12 12:21" is 12
         # and did not, so every row wound or resumed on a two-digit day wrapped
@@ -728,8 +745,11 @@ class MainView(View):
         # the day of the month is a width that is wrong two thirds of the time;
         # no_wrap is the belt to that braces, because a cell that cannot wrap
         # can never take a row with it.
-        ct.add_column("WOUND", width=12, overflow="ellipsis", no_wrap=True)
-        ct.add_column("RESUMED", width=12, overflow="ellipsis", no_wrap=True)
+            ("WOUND", {"width": 12}, 2),
+            ("RESUMED", {"width": 12}, 1),
+        ]
+        ct_rows: list[list] = []
+        ct_cur = -1
 
         skipped = opted_out()
         mskipped = monitor_opted_out()
@@ -737,7 +757,7 @@ class MainView(View):
             s.optout = s.sid in skipped
             s.moptout = s.sid in mskipped
             pct = min(100.0, s.ctx * 100.0 / CONTEXT_WINDOW) if CONTEXT_WINDOW else 0.0
-            bar = Text.assemble(gauge(pct, 14), " ",
+            bar = Text.assemble(gauge(pct, 14 if wide else 6), " ",
                                 (f"{pct:3.0f}%", pressure(pct)), " ",
                                 (human_tokens(s.ctx), DIM))
             mark = Text()
@@ -791,16 +811,18 @@ class MainView(View):
             for badge in self.app.badges(s):
                 wtx.append(" ")
                 wtx.append_text(badge)
-            ct.add_row(mark, mon_txt, wtx, Text(s.model, style=DIM), bar,
+            if s.sid == self.cursor:
+                ct_cur = len(ct_rows)
+            ct_rows.append([mark, mon_txt, wtx, Text(s.model, style=DIM), bar,
                        Text(human_tokens(s.spent), style=DIM), idle_txt, st_txt,
                        dirty_txt,
                        Text(when(s.wound), style=DIM if s.wound else FRAME),
-                       Text(when(s.resumed), style=DIM if s.resumed else FRAME))
+                       Text(when(s.resumed), style=DIM if s.resumed else FRAME)])
 
         if not sessions:
-            ct.add_row("", "", Text("—", style=DIM), "",
-                       Text("no claude sessions" if not wd_stale else "watchdog not running",
-                            style=DIM), "", "", "", "", "", "")
+            ct_rows.append(["", "", Text("—", style=DIM), "",
+                            Text("no claude sessions" if not wd_stale else "watchdog not running",
+                                 style=DIM), "", "", "", "", "", ""])
 
         wd_label = ("watchdog on", GREEN) if wd_on else ("watchdog off", DIM)
         if wd_stale:
@@ -898,30 +920,101 @@ class MainView(View):
                                 f"{sum(n for _p, _n, n in dirty_list)} file(s)",
                                 title_align="left", border_style=FRAME, box=box.ROUNDED))
 
-        sections = [
-            ("deck", Panel(head, title="[bold]deck", subtitle=f"[{DIM}]{subtitle}",
-                           subtitle_align="right", border_style=FRAME, box=box.ROUNDED)),
-            ("lanes", Panel(lanes,
-                            title=f"[bold]lanes[/] [{DIM}]· {len(shown)} server(s) · {human_mb(total_mb)}{lane_scope}",
-                            title_align="left", border_style=FRAME, box=box.ROUNDED)),
-            ("claude", Panel(ct, title=ctitle, title_align="left",
-                             border_style=FRAME, box=box.ROUNDED)),
-            *[("uncommitted", p) for p in panels],
-            ("system", Panel(sysrow, title="[bold]system", title_align="left",
-                             border_style=FRAME, box=box.ROUNDED)),
-        ]
+        deck_panel = Panel(head, title="[bold]deck", subtitle=f"[{DIM}]{subtitle}",
+                           subtitle_align="right", border_style=FRAME, box=box.ROUNDED)
+        system_panel = Panel(sysrow, title="[bold]system", title_align="left",
+                             border_style=FRAME, box=box.ROUNDED)
+        lane_title = f"[bold]lanes[/] [{DIM}]· {len(shown)} server(s) · {human_mb(total_mb)}{lane_scope}"
+        lane_cur = self.lane_keys.index(self.cursor) if self.cursor in self.lane_keys else -1
+        sections = self.fit_height(
+            deck_panel, panels, system_panel,
+            (lane_cols, lane_rows, lane_cur, 4, lane_title),
+            (ct_cols, ct_rows, ct_cur, 2, ctitle))
         # WHICH PANEL THE CURSOR IS IN, for an open menu to hang under: a
         # lane row, the extras row on the system line, or a session. The
         # muxtopus and settings menus follow the cursor too -- there is no
         # better anchor. Worked out here, where the sections exist, and read
         # back by MainView.menu_anchor.
+        names = [n for n, _p in sections]
         if self.cursor.startswith(LANE_PREFIX):
-            self._anchor = 1
+            self._anchor = names.index("lanes")
         elif self.cursor == EXTRAS_SENTINEL:
             self._anchor = len(sections) - 1
         else:
-            self._anchor = 2
+            self._anchor = names.index("claude")
         return sections
+
+    # ================================================= a short terminal
+    def fit_height(self, deck_panel, dirty_panels, system_panel, lanes, claude) -> list:
+        """The sections, with the lanes and claude tables given the rows the
+        terminal HAS -- measured, the way App.place_menu measures a menu.
+
+        What is left for the two tables is the height less what Rich will
+        really draw for everything else (the footer included) and less each
+        table's own chrome, which is measured by drawing it empty. The rows
+        are split by menulayout.share_rows -- the sessions first -- and each
+        table scrolls inside its share with the menus' rule and markers.
+
+        THE DEGRADE RULE IS place_menu's: with less than TABLE_MIN row lines
+        for a table (a row and both markers) the frame gives something up
+        rather than cut a table -- the uncommitted panel first, then the
+        deck header, then the system line (not while the cursor is on it)
+        -- and the claude title says what went. Below even
+        that the tables get their minimum and Live crops what is left,
+        which is a terminal this screen does not claim to fit."""
+        console = self.app.console
+        height = console.size.height
+        width = console.size.width
+        specs = []
+        for cols, rows, cur, marker, title in (lanes, claude):
+            keep = fit_columns(cols, width)
+            specs.append((cols, keep, rows, cur, marker, title))
+
+        def tables(lines, note=""):
+            out = []
+            for k, (cols, keep, rows, cur, marker, title) in enumerate(specs):
+                if note and k == 1:
+                    title = title.copy() if isinstance(title, Text) else Text.from_markup(title)
+                    title.append(note, style=DIM)
+                # lines == "chrome": the table drawn EMPTY, which is what
+                # its borders, header and rule cost with no rows at all.
+                empty = lines == "chrome"
+                out.append(Panel(make_table(cols, keep, [] if empty else rows, cur, marker,
+                                            None if lines in (None, "chrome") else lines[k]),
+                                 title=title, title_align="left",
+                                 border_style=FRAME, box=box.ROUNDED))
+            return out
+
+        def assemble(lines, drop, note=""):
+            lane_p, ct_p = tables(lines, note)
+            return ([] if "deck" in drop else [("deck", deck_panel)]) + [
+                ("lanes", lane_p), ("claude", ct_p),
+                *([] if "uncommitted" in drop else [("uncommitted", p) for p in dirty_panels]),
+                *([] if "system" in drop else [("system", system_panel)])]
+
+        foot = self.app._submode_foot() or self._foot
+        full = assemble(None, ())
+        if rendered_height(console, Group(*[p for _n, p in full], foot)) <= height:
+            return full
+        chrome = sum(rendered_height(console, p) for p in tables("chrome"))
+        drop: list[str] = []
+        steps = [[], ["uncommitted"], ["uncommitted", "deck"]]
+        if self.cursor != EXTRAS_SENTINEL:
+            steps.append(["uncommitted", "deck", "system"])
+        for step in steps:
+            drop = step
+            if step == ["uncommitted"] and not dirty_panels:
+                continue
+            others = [p for n, p in assemble("chrome", drop) if n not in ("lanes", "claude")]
+            room = height - chrome - rendered_height(console, Group(*others, foot))
+            lines = share_rows(room, [len(sp[2]) for sp in specs])
+            if lines is not None:
+                break
+        else:
+            lines = [TABLE_MIN, TABLE_MIN]
+        note = (" · %s hidden: short terminal" % ", ".join(reversed(drop))) \
+            if drop else ""
+        return assemble(lines, drop, note)
 
     # ====================================================== the views' keys
     # Lifted out of main()'s one long chain, each branch under the view it
@@ -1041,6 +1134,17 @@ HELP_MENU = f"""
     Two switches at the top, then everything you can do to the window under
     the cursor: open, rename, skip it, wind it down, resume it, continue it at
     low priority, or close it. Arrows pick, enter chooses, esc closes.
+"""
+
+HELP_SMALL = f"""
+  [{DIM}]A SMALL TERMINAL[/]
+    Nothing is cut off the bottom: the footer always stays on screen. When the
+    rows run out, the lanes and claude tables give some up and scroll, showing
+    "▲ N more" / "▼ N more" the way a long menu does, with the sessions served
+    first. If that is still not enough, the uncommitted panel and then the deck
+    header go, and the claude title says which. On a narrow terminal the
+    less important columns go first (RESUMED, WOUND, DIRTY...) and the window
+    names stay. The tab strip shortens its labels before it scrolls tabs.
 """
 
 HELP_MONITORING = f"""
@@ -1207,6 +1311,7 @@ def register(app) -> None:
     app.add_help("THE WINDOW TREE", HELP_TREE, order=10)
     app.add_help("LANES AND ACCOUNTS", HELP_LANES, order=11)
     app.add_help("THE MENU (space)", HELP_MENU, order=12)
+    app.add_help("A SMALL TERMINAL", HELP_SMALL, order=13)
     app.add_help("SESSION MONITORING", HELP_MONITORING, order=40)
     app.add_help("UNCOMMITTED", HELP_UNCOMMITTED, order=41)
     app.add_help("", HELP_BACKGROUND, order=60)

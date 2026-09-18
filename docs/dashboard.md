@@ -22,6 +22,14 @@ The dashboard is one main view and three others, each a key away:
 
 The screens that share a tab strip name each tab **with its count** — `▸schedules 6 │ handovers 4 open · 3 ?` — so from the schedules you can still see how many handovers are open and how many question files are waiting on you.
 
+## Tabs and small terminals
+
+**Nothing is cut off the bottom.** On a short terminal (an 80×24 client) the lanes and claude tables give up rows and scroll, showing `▲ N more` / `▼ N more` the way a long menu does, with the sessions served first; the schedules and handovers tables do the same. If that is still not enough, the uncommitted panel, then the deck header, then the system line step aside, and the claude title says which. On a narrow one (down to 40 columns) the least important columns go first — RESUMED, WOUND, DIRTY … — and the window names stay; no row wraps onto two lines.
+
+**The tab strip shrinks before it scrolls.** Labels go full, then short, then an initial (the tab you are on keeps its name longest); only then do tabs past the first six scroll, with `«2` / `3»` counting what is off each side and the subtitle saying `←→ tab 7/9`. `←` `→` reach every tab, drawn or not.
+
+**Esc ▸ Settings ▸ Tabs** shows or hides each tab. A hidden tab leaves the strip and the `←` `→` cycle, and **hidden wins over locked**: the six that stay on a narrow strip are the first six you have *not* hidden. Nothing becomes unreachable — the tab's marks on the session rows and its note in the footer stay, a key that opens it lands on the first shown tab of its screen (or on it, if all are hidden), and the menu has an **Open … once** row for each hidden tab. The strip's subtitle counts what is hidden.
+
 ## Keys on the main view
 
 | key | |
@@ -128,7 +136,7 @@ The first switch **excludes one session from the watchdog** (the green checkmark
 
 What is not about one row: **Settings**, **Insights**, the watchdog and monitor switches by their full names (`w` and `m` stay the fast path), **Disconnect** (`tmux detach-client`; the dashboard and every window keep running, `muxtopus` attaches again), **Reload** (what `R` does) and **Quit**.
 
-Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.dashboard.conf` for a named account), a file the dashboard owns — see [Configuration](configuration.md) — and every one is read back from disk before it is reported as saved: the menu layout, the permission mode, model and effort preselected for a new window, whether such a window is watched and monitored, the working folder offered first, which `settings.json` "make it the default" writes to, the two handovers-tab filters, and under **Notifications ▸** what the phone is told.
+Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.dashboard.conf` for a named account), a file the dashboard owns — see [Configuration](configuration.md) — and every one is read back from disk before it is reported as saved: the menu layout, the permission mode, model and effort preselected for a new window, whether such a window is watched and monitored, the working folder offered first, which `settings.json` "make it the default" writes to, the two handovers-tab filters, under **Notifications ▸** what the phone is told, and under **Tabs ▸** which tabs the strip shows (see [Tabs and small terminals](#tabs-and-small-terminals)).
 
 ## A new claude session (`c`)
 

@@ -59,6 +59,7 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `DASHBOARD_NEW_RC` | `off` | `on`: the launcher sends `/rc` to every new scheduled window unless its entry says `rc: off` |
 | `DASHBOARD_HANDOVERS_DONE` | `off` | the handovers tab's `f`: show finished rows |
 | `DASHBOARD_HANDOVERS_QUESTIONS` | `on` | the handovers tab's `a`: show the question rows |
+| `DASHBOARD_TABS_HIDDEN` | | tabs hidden from the strip and from `←` `→`, by view name, comma-separated (`handovers`); written by Settings ▸ Tabs |
 
 ```sh
 # ~/.config/muxtopus/config

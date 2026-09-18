@@ -29,6 +29,7 @@
 │    Handovers: show finished rows: off  done handovers and answered question files (f on the tab)                                                             │
 │    Handovers: show question rows: ON  QUESTIONS files, answered and not (a on the tab)                                                                       │
 │    Notifications ▸  what the phone is told, and what it may answer                                                                                           │
+│    Tabs ▸  which tabs the strip shows (0 hidden)                                                                                                             │
 │    ····················································                                                                                                      │
 │    Back                                                                                                                                                      │
 │    Default working folder: not a directory: <SB>/work/repo-b/nope   ·   ↑↓ pick · enter change · esc back <pad>│

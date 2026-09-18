@@ -101,6 +101,7 @@ MUXTOPUS_NOTIFY_LIMIT_BANDS=off
 MUXTOPUS_NOTIFY_STALLED=on
 MUXTOPUS_NOTIFY_STRANDED=on
 DASHBOARD_NEW_RC=off
+DASHBOARD_TABS_HIDDEN=-
 "
 
 # The checkout these scripts live in, from this file's own location, so a
@@ -212,6 +213,8 @@ mux_key_help() {
                             echo "empty is the account default, no --effort flag." ;;
     DASHBOARD_NEW_CWD)      echo "Working folder offered first when the dashboard creates a window or"
                             echo "a schedule entry; empty falls back to the selected session's cwd." ;;
+    DASHBOARD_TABS_HIDDEN)  echo "Tabs hidden from the dashboard's strip and from ←→, by view name,"
+                            echo "comma-separated (handovers). esc > Settings > Tabs writes it." ;;
     # Phone notifications (claude-notify.sh + muxtelegram.py). These are
     # PREFERENCES and live here, per account; the backend and its token live
     # in ~/.config/claude-notify.conf, which is per machine and holds a
