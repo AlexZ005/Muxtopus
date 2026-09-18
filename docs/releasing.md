@@ -55,7 +55,7 @@ The tarball is `git archive` of the tag, compressed with `gzip -n`, so it is rep
 
 ## Why only a tarball and an installer
 
-Two other formats were considered for 5.0.0 and left out. Each can be revisited.
+Two other formats were considered for the first release and left out. Each can be revisited.
 
 - **A `pipx` package.** The Python half is a package, but muxtopus is mostly bash: `muxtopus` itself, the watchdog, `handover.sh`, the notifier. The watchdog's systemd unit points at a script path. Under pipx that path would be inside a venv that pipx rebuilds whenever Python changes. That is the exact breakage the design avoids by keeping the dashboard's venv beside the code and falling back to bash when it breaks. A pipx package would carry the shell scripts as package data and run them from site-packages. It would work, but it would be a second layout to support for no gain over `get.sh`.
 - **An AUR `PKGBUILD`.** This was built on a Steam Deck, and SteamOS's root filesystem is read-only and replaced on every OS update. A pacman package there needs the read-only bit turned off, and the next update wipes it. `get.sh` writes only to `$HOME` and survives updates. On ordinary Arch a PKGBUILD would be reasonable: install the tree to `/usr/share/muxtopus` and let each user run its `install.sh`. But it would need an AUR account to publish and a maintainer to keep it current. It is worth doing once someone other than the author asks for it.
