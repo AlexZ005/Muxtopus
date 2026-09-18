@@ -157,6 +157,7 @@ Format:
     permission-mode: bypassPermissions   (optional -> claude --permission-mode)
     watchdog: off                  (optional: opt this session out of the watchdog's restarts)
     monitor: off                   (optional: opt this session out of wind-downs)
+    rc: on                         (optional: send /rc once the window is ready; default from Settings)
     options: questions, phases     (written by the dashboard's options table; see below)
     status: pending                (the executor rewrites this)
     created: 2026-09-06 09:55
@@ -252,6 +253,26 @@ once the prompt is up it finds the session file naming its own pane, appends
 the id, and logs `session <id> opted out of the watchdog|monitor`. If no
 session file names the pane within ~5s it logs that and leaves the window
 watched. `--check` prints both as `covered (default)` or `opted out at launch`.
+
+## `rc: on` / `rc: off` -- also applied by the launcher
+
+`rc: on` sends `/rc` (remote control) to the new window once it is ready, so
+the session can be reached from claude.ai or the phone without anyone typing
+it. It is the same shape as the two opt-outs above, and applied by the
+launcher for the same reason: there is no session before launch to send
+anything to. The launcher waits for the prompt (answering the trust dialog on
+the way), sends `/rc` BEFORE pasting the body -- after the paste the window is
+working, and a `/rc` typed then is queued as a message to the model instead of
+run -- closes anything `/rc` leaves holding the keyboard with Escape (logged),
+and only then pastes.
+
+Unlike `watchdog:`/`monitor:`, BOTH values mean something, because there is a
+default to override: `DASHBOARD_NEW_RC` (esc ▸ Settings ▸ `Send /rc to a new
+window`, off unless set). With it on, EVERY new scheduled window gets `/rc`
+-- hand-written entries and the dashboard's `c` alike -- except one whose
+entry says `rc: off`. Any other value is ignored and the default applies.
+`claude-watchdog.sh --check <entry>` prints the resolved value and where it
+came from; the launch line in the log ends in `rc=on` when it was sent.
 
 ## `at: reset` is TWO gates, not one
 

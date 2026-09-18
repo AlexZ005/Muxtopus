@@ -1325,6 +1325,52 @@ sched_off() {
   [ "${v,,}" = off ]
 }
 
+# `rc: on|off` -- SEND /rc TO THE NEW WINDOW once it is ready. Unlike the
+# two opt-outs both values mean something, because there is a DEFAULT to
+# override: DASHBOARD_NEW_RC (Settings, off unless set), which is how every
+# new window gets it without an entry saying so. Prints "on" or "off", a tab,
+# and where that came from -- the launcher uses the first half, --check
+# prints both.
+sched_rc() {
+  local v d; v="$(sched_field "$1" rc)"; v="${v,,}"
+  case "$v" in
+    on|off) printf '%s\trc: %s in the entry' "$v" "$v"; return 0 ;;
+  esac
+  d="${DASHBOARD_NEW_RC:-off}"; d="${d,,}"
+  [ "$d" = on ] || d=off
+  if [ -n "$v" ]; then
+    printf '%s\trc: "%s" is not on or off -- the default applies (DASHBOARD_NEW_RC=%s)' "$d" "$v" "$d"
+  elif [ "$d" = on ]; then
+    printf 'on\tthe Settings default, DASHBOARD_NEW_RC=on'
+  else
+    printf 'off\tthe default (DASHBOARD_NEW_RC=off)'
+  fi
+}
+
+# SEND /rc AND GET OUT OF ITS WAY. Before the paste, never after it: once the
+# body is in, the window is working, and a /rc typed then is queued as a
+# MESSAGE to the model rather than run as a command. Typed literally (-l), one
+# Enter, and then a short look: if what /rc drew is a dialog or a panel that
+# holds the keyboard, Escape closes it -- the paste must land in the prompt,
+# not in an overlay. Remote control, once on, survives its panel closing.
+sched_send_rc() {
+  local pane="$1" f="$2" i txt
+  tmux send-keys -t "$pane" -l "/rc" 2>/dev/null
+  sleep 0.5
+  tmux send-keys -t "$pane" Enter 2>/dev/null
+  for i in 1 2 3 4 5 6; do
+    sleep 0.5
+    txt="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
+    if prompt_scan "$txt" || grep -qiE 'esc to (close|cancel|exit|go back)|enter to (confirm|continue)' <<<"$txt"; then
+      tmux send-keys -t "$pane" Escape 2>/dev/null
+      sleep 0.5
+      log "schedule $(basename "$f"): /rc left a dialog or panel up in $pane; closed it with Escape before the paste"
+      break
+    fi
+  done
+  log "schedule $(basename "$f"): sent /rc to $pane"
+}
+
 # THE SESSION ID BEHIND A PANE WE JUST OPENED. The opt-out files are keyed by
 # session id, and that id does not exist until claude mints it at startup and
 # publishes it in sessions/<pid>.json, whose .tmux ends in the pane id. So an
@@ -1348,7 +1394,7 @@ sched_pane_sid() {
 launch_schedule() {
   local f="$1" why="${2:-}"
   local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn model effort
-  local parent depth wid wd_off mon_off sid
+  local parent depth wid wd_off mon_off sid rc_on
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
   # (an enabled user unit) long before anyone has run muxtopus, and an item that
@@ -1391,6 +1437,8 @@ launch_schedule() {
   wd_off=""; mon_off=""
   sched_off "$f" watchdog && wd_off=1
   sched_off "$f" monitor && mon_off=1
+  rc_on=""
+  [ "$(sched_rc "$f" | cut -f1)" = on ] && rc_on=1
 
   slug="$(sched_slug "$f")"
   parent="$(sched_parent "$f")"
@@ -1491,6 +1539,10 @@ launch_schedule() {
     fi
   fi
 
+  # /rc, WHEN ASKED -- after readiness (a window at the trust dialog or still
+  # starting has nowhere to type it) and before the paste (see sched_send_rc).
+  [ -n "$rc_on" ] && sched_send_rc "$pane" "$f"
+
   # PASTE, never send-keys: a multi-line body through send-keys submits at
   # every newline. Bracketed paste (-p) hands the TUI one paste event.
   tmux load-buffer -b schedbody "$bodyf" 2>/dev/null
@@ -1504,7 +1556,7 @@ launch_schedule() {
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
-  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort}${pmode:+ perm=$pmode}${wd_off:+ watchdog=off}${mon_off:+ monitor=off} -- ${why:-due}"
+  log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort}${pmode:+ perm=$pmode}${wd_off:+ watchdog=off}${mon_off:+ monitor=off}${rc_on:+ rc=on} -- ${why:-due}"
 }
 
 # ------------------------------------------------------------- --check
@@ -1539,7 +1591,7 @@ kv() { printf '  %-14s %s\n' "$1" "$2"; }
 sched_check_one() {
   local f="$1" body="${2:-}"
   local type at title win cwd tmpl st slug wname warn now rc idx nlines nbytes rcout=0
-  local parent depth after blocked pwarn resolved model effort
+  local parent depth after blocked pwarn resolved model effort rcv
   type="$(sched_field "$f" type)"; at="$(sched_field "$f" at)"
   title="$(sched_field "$f" title)"; win="$(sched_field "$f" window)"
   cwd="$(sched_field "$f" cwd)"; tmpl="$(sched_field "$f" template)"
@@ -1577,6 +1629,9 @@ sched_check_one() {
   else kv watchdog "covered (default)"; fi
   if sched_off "$f" monitor; then kv monitor "opted out at launch"
   else kv monitor "covered (default)"; fi
+  rcv="$(sched_rc "$f")"
+  if [ "${rcv%%$'\t'*}" = on ]; then kv rc "on   -- /rc is sent once the window is ready ($(cut -f2 <<<"$rcv"))"
+  else kv rc "off   ($(cut -f2 <<<"$rcv"))"; fi
   if [ -n "$(sched_field "$f" slug)" ]; then kv slug "$slug   (pinned by slug:)"
   elif [ -n "$title" ]; then kv slug "$slug   (derived from title: \"$title\")"
   else kv slug "$slug   (derived from the filename)"; fi

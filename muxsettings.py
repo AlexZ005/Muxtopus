@@ -79,11 +79,14 @@ DASHBOARD_KEYS: dict[str, dict] = {
     "DASHBOARD_NEW_CWD": {
         "label": "Default working folder", "kind": "text",
         "hint": "offered first by c and used by the schedule create flow"},
+    "DASHBOARD_NEW_RC": {
+        "label": "Send /rc to a new window", "kind": "onoff",
+        "hint": "every scheduled window, unless its entry says rc: off"},
 }
 
 # KEYS A MODULE DECLARED AS BELONGING TO ITS OWN MENU (register(..., menu=...)).
 # A setting in every other way -- get, put and validate treat it exactly like
-# one of the core eight -- but the Settings menu does not draw it, because the
+# one of the core nine -- but the Settings menu does not draw it, because the
 # module that registered it draws it itself. Without this, Settings ▸
 # Notifications ▸ would list its seven rows AND the Settings list above it
 # would list the same seven, because that list iterates DASHBOARD_KEYS and
@@ -105,7 +108,7 @@ def keys_of(menu: str) -> dict[str, dict]:
 def register(specs: dict[str, dict], menu: str = "") -> None:
     """A dashboard module declares the settings keys it owns.
 
-    DASHBOARD_KEYS above is the CORE EIGHT -- the ones the shell and the main
+    DASHBOARD_KEYS above is the CORE NINE -- the ones the shell and the main
     screens need. A module that adds a setting (notify's seven, handover's
     two) calls this from its register(app) instead of editing that dict, and
     its rows then appear in the Settings menu in registration order after the
