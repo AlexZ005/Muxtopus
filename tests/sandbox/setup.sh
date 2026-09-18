@@ -4,7 +4,7 @@
 # and rebuilds the fixture half, and leaves nothing else on the machine.
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
-FIX="${SCRIPTS:?}/tests/fixtures/dashboard"
+FIX="${SANDBOX_FIXTURES:?}"
 
 rm -rf -- "${SB:?}"
 mkdir -p -- "${SB:?}"
@@ -15,7 +15,7 @@ grep -rIl '@SB@\|@SCRIPTS@' -- "${SB:?}" | while read -r f; do
   sed -i "s|@SB@|${SB:?}|g; s|@SCRIPTS@|${SCRIPTS:?}|g" -- "$f"
 done
 
-mkdir -p -- "${SB:?}/home/.claude-mxsplit" "${SB:?}/home/.claude/sessions" \
+mkdir -p -- "${CLAUDE_CONFIG_DIR:?}" "${SB:?}/home/.claude/sessions" \
             "${SB:?}/home/.local/bin" "${SB:?}/caps"
 # The fake claude is reached through PATH; a copy in the fake HOME as well,
 # because the launcher prefers ~/.local/bin/claude when it is there.

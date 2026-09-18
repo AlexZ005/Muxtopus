@@ -1,0 +1,4 @@
+integrate-cart.md	blocked	waiting for 2 of 3 — next: cart-api, its window @2 is still open and it has written no handover	@T-20@
+nightly-review.md	waiting	at: reset — the session budget reads 38%, not fresh yet (9m ago)	@T-20@
+resume-cart-ui.md	waiting	at: reset — the session budget reads 38%, not fresh yet (9m ago)	@T-20@
+search-reindex.md	due	at: @DATE-1800@ has passed	@T-20@

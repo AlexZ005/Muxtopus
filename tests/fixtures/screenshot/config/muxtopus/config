@@ -1,0 +1,7 @@
+# The screenshot machine's muxtopus config. @SB@ is replaced by setup.sh.
+MUXTOPUS_HOME="@SB@/home/.local/share/muxtopus"
+MUXTOPUS_DIR="@SCRIPTS@"
+MUXTOPUS_SESSION_PREFIX="claude"
+WATCHDOG_INTERVAL=30
+CLAUDE_CONTEXT_WINDOW=1000000
+CLAUDE_USAGE_MAX_AGE=20

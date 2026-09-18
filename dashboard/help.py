@@ -11,6 +11,10 @@ screen reads exactly as it did. The split moved who owns the words.
 """
 from dashboard.core import DIM
 
+# The manual is docs/ in the checkout, published by GitHub Pages; the README
+# and the repo homepage point at the same address.
+MANUAL_URL = "https://alexz005.github.io/Muxtopus/"
+
 HELP_INTRO = f"""
   [bold]deck-status[/] -- lane dashboard
 
@@ -25,6 +29,7 @@ HELP_INTRO = f"""
 """
 
 HELP_FOOT = f"""
+  [{DIM}]The manual, with every screen and field: {MANUAL_URL}[/]
   [{DIM}]press any key[/]
 """
 

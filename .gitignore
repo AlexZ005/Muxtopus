@@ -12,3 +12,4 @@
 # Bytecode: regenerated on every run, so it dirties the tree constantly.
 __pycache__/
 *.pyc
+docs/_site/

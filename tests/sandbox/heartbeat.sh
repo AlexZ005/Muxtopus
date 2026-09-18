@@ -7,7 +7,7 @@
 # through and no two runs would agree on where. This is the daemon's one
 # observable behaviour, faked at 5s -- the age itself is masked.
 . "$(dirname "$0")/env.sh"
-WD="${SB:?}/state/claude-watchdog-mxsplit"
+WD="${SB:?}/state/claude-watchdog-${SANDBOX_ACCOUNT:?}"
 while true; do
   printf '%s\t6\t3\t5\n' "$(date +%s)" > "${WD:?}/heartbeat"
   sleep 5

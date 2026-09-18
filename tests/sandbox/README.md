@@ -80,4 +80,8 @@ the goldens differ on every line that names it: `normalise.py` masks the path
 to `<SB>`, which hides its text and not its width. `SANDBOX_SOCKET` and
 `SANDBOX_SESSION` move the tmux server and session the same way, which is how
 two lanes run this harness at once without `stop.sh` killing each other's
-dashboard -- `tests/sandbox/notify.sh` runs as `mxnotifydash`.
+dashboard -- `tests/sandbox/notify.sh` runs as `mxnotifydash`. `SANDBOX_ACCOUNT`
+names the fake account (default `mxsplit`; the suffix on every path) and
+`SANDBOX_FIXTURES` the fixture set `setup.sh` copies in, which is how
+`make-screenshot.py` drives the same harness against `tests/fixtures/screenshot/`
+under an account called `work`.

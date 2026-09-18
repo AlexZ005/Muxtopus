@@ -1,0 +1,8 @@
+checkout-refactor		@1	%1	@T-7200@	checkout-refactor.md
+cart-api	checkout-refactor	@2	%2	@T-5400@	cart-api.md
+cart-qa	cart-api	@3	%3	@T-3600@	cart-qa.md
+cart-ui	checkout-refactor	@4	%4	@T-5000@	cart-ui.md
+billing-migration		@5	%5	@T-20000@	billing-migration.md
+billing-db	billing-migration	@6	%6	@T-9000@	billing-db.md
+search-index		@7	%7	@T-30000@	search-index.md
+db-migrate		@9	%9	@T-180000@	db-migrate.md
