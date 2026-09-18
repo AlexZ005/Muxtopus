@@ -582,6 +582,63 @@ check "marking it answered takes the ? off the row" \
 has "...and the count with it"               "· 1 ?"
 "$HERE/clean.sh"
 
+echo "== the questions contract, and the folder README that carries it"
+# setup-schedules.py REGENERATES <schedules>/README.md every run (it is
+# generated documentation, not a file the user owns) and seeds the templates.
+# Both are what a plan session is actually told, so this checks the text that
+# reaches a lane rather than the source string it came from.
+python3 "$SCRIPTS/setup-schedules.py" > "${SB:?}/setup1.txt" 2>&1
+RM="${SB:?}/muxhome/schedules-mxsplit/README.md"
+check "the folder README was written into the SANDBOX" [ -f "$RM" ]
+check "...and it explains the both-files trap this lane made visible" \
+  grep -q "BOTH files" "$RM"
+check "...naming the file that does the releasing" \
+  grep -q "is tested first" "$RM"
+cp -- "$RM" "${SB:?}/readme1.md"
+python3 "$SCRIPTS/setup-schedules.py" > "${SB:?}/setup2.txt" 2>&1
+check "a second run regenerates it byte for byte" cmp -s "${SB:?}/readme1.md" "$RM"
+check "...and seeds no template twice" \
+  bash -c '! grep -q "templates" "'"${SB}"'/setup2.txt" ||
+           ! grep -qE "made|wrote" "'"${SB}"'/setup2.txt"'
+
+TPL="${SB:?}/muxhome/schedules-mxsplit/templates/blank-plan.md"
+check "a plan template exists to be checked" [ -f "$TPL" ]
+check "the contract sends forks to {{QUESTIONS}}, not to a hard-coded folder" \
+  bash -c 'grep -q "{{QUESTIONS}}" "'"$TPL"'" &&
+           ! grep -q "core/plans/QUESTIONS" "'"$TPL"'"'
+check "...it shows the (a) option shape the dashboard parses" \
+  grep -q "RECOMMENDED" "$TPL"
+check "...and the **Answer line that means a fork is settled" \
+  grep -q '\*\*Answer (user' "$TPL"
+check "...and the ANSWERED marker rule" \
+  grep -q "ANSWERED" "$TPL"
+check "...including that a NEW fork means deleting the marker" \
+  grep -q "MEANS DELETING THE" "$TPL"
+# THE PLACEHOLDER HAS TO SURVIVE template -> paste, or the contract is
+# telling a lane to write into a file literally called "{{QUESTIONS}}".
+# Composed by the LAUNCHER's own substitution, and read out of the paste
+# section rather than the report above it -- the report names the unresolved
+# placeholders on purpose.
+cat > "${SB:?}/muxhome/schedules-mxsplit/h-placeholder.md" <<'ENTRY'
+type: work
+at: reset
+title: uses the questions placeholder
+slug: uses-the-placeholder
+cwd: /tmp
+status: pending
+created: 2024-01-01 09:07
+launched:
+---
+Forks you cannot decide go in {{QUESTIONS}} with your recommendation.
+ENTRY
+"$SCRIPTS/claude-watchdog.sh" --check uses-the-placeholder --body 2>&1 |
+  sed -n '/what would be pasted/,$p' > "${SB:?}/paste.txt"
+check "and the launcher resolves it to a real path in the paste" \
+  grep -q "QUESTIONS-uses-the-placeholder.md" "${SB:?}/paste.txt"
+check "...leaving no literal placeholder in what the lane is told" \
+  bash -c '! grep -q "{{QUESTIONS}}" "'"${SB}"'/paste.txt"'
+rm -f -- "${SB:?}/muxhome/schedules-mxsplit/h-placeholder.md"
+
 echo "== the WHY line on the schedules tab is unchanged"
 # handover_state is now a call to muxhandovers.lane_state, whose order is the
 # watchdog's. The one row it draws on the other tab must say what it always said.

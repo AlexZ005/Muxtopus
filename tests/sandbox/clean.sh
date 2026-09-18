@@ -12,6 +12,11 @@ WD="${SB:?}/state/claude-watchdog-mxsplit"
 
 rm -f -- "${S:?}"/*.md
 cp -- "$FIX/muxhome/schedules-mxsplit"/*.md "${S:?}/"
+# setup-schedules.py seeds templates and REGENERATES this folder's README, and
+# a test that runs it leaves three template files and a README behind.
+rm -rf -- "${S:?}/templates"
+mkdir -p -- "${S:?}/templates"
+cp -- "$FIX/muxhome/schedules-mxsplit/templates"/*.md "${S:?}/templates/"
 rm -f -- "${WD:?}/optout" "${WD:?}/monitor-optout" "${WD:?}/usage.fail" \
          "${WD:?}/usage.hooray"
 rm -f -- "${WD:?}/directives"/* 2>/dev/null || true

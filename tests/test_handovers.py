@@ -385,5 +385,31 @@ for key, default in (("DASHBOARD_HANDOVERS_DONE", "off"),
                  (ROOT / "profile.sh").read_text(), re.M),
        "%s is in profile.sh's MUX_CONFIG_KEYS with the same default" % key)
 
+# ---- 11. the tab describes itself in `?` -------------------------------
+# HELP IS NOT A GOLDEN'S JOB here: the help screen is longer than a 58-row
+# terminal and the capture keeps only the tail, so tests/goldens/help.txt has
+# never been able to see a section registered in the middle of it. This asks
+# the App for the assembled text instead. Skipped without rich, which is what
+# the headless callers of this module have.
+try:
+    from rich.console import Console                  # noqa: E402
+except ImportError:
+    print("(no rich: the help-screen check is skipped)")
+else:
+    import dashboard.help                             # noqa: E402
+    import dashboard.views.handovers as hv            # noqa: E402
+    from dashboard.app import App                     # noqa: E402
+    app = App(2.0, Console())
+    dashboard.help.register(app)
+    hv.register(app)
+    screen = app.help_screen()
+    ok("HANDOVERS AND QUESTIONS" in screen, "the tab has a section in ?")
+    for phrase in ("? ask", "open ⚠", "HOLDS", "THE ANSWER SCREEN",
+                   "one key away", "REMEMBERED"):
+        ok(phrase in screen, "?_ says %r" % phrase)
+    titles = [ti for ti, _x in app.help_sections()]
+    ok(titles[0] != "HANDOVERS AND QUESTIONS (the second tab of s)",
+       "and not before the shell's own opening section")
+
 shutil.rmtree(TMP, ignore_errors=True)
 print("muxhandovers: %d checks green" % n)
