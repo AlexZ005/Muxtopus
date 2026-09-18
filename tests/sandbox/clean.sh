@@ -41,6 +41,15 @@ age STATUS-stranded-lane.md            "2 days ago"
 age done/STATUS-root-lane.md           "1 day ago"
 age done/STATUS-shadow-lane.md         "5 days ago"
 age done/STATUS-old-lane-20260917-101500.md "6 days ago"
-touch -d "8 hours ago" -- "${SB:?}/muxhome/questions/QUESTIONS-launched-lane.md"
+# THE LEGACY QUESTIONS FOLDER IS RESTORED TOO, because the handovers tab can
+# now WRITE there: handover.sh does not own MUXTOPUS_QUESTIONS_DIR, so the
+# ANSWERED marker for a file in it is written by muxhandovers directly. A run
+# that marked one and did not put it back left the next run counting one
+# fewer unanswered file, which is how this line came to be here.
+Q="${SB:?}/muxhome/questions"
+rm -rf -- "${Q:?}"
+mkdir -p -- "${Q:?}"
+cp -- "$FIX/muxhome/questions"/*.md "${Q:?}/"
+touch -d "8 hours ago" -- "${Q:?}/QUESTIONS-launched-lane.md"
 sed -i "s|@SB@|${SB:?}|g; s|@SCRIPTS@|${SCRIPTS:?}|g" -- \
   "${S:?}"/*.md "${SB:?}/config/muxtopus/profiles/mxsplit.dashboard.conf"

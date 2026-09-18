@@ -24,6 +24,7 @@ that three question files are waiting on you.
 """
 from __future__ import annotations
 
+import subprocess
 import time
 
 from rich import box
@@ -36,7 +37,7 @@ import muxhandovers
 import muxsettings
 from dashboard.app import View
 from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, PROFILE,
-                            QUESTIONS_DIR, RED, YELLOW, human_age)
+                            QUESTIONS_DIR, RED, SCRIPTS, YELLOW, human_age)
 from dashboard.data import claude_sessions, lane_slug_of, live_windows, read_tree
 from dashboard.menulayout import menu_viewport, rendered_height
 from dashboard.schedules import read_schedules
@@ -78,6 +79,14 @@ HELP_HANDOVERS = """
     f           show or hide everything FINISHED -- done handovers and
                 answered question files alike
     a           show or hide the question rows
+    enter       a QUESTIONS file in the editor; a handover READ-ONLY, in
+                the pager -- a live lane rewrites its handover whenever it
+                likes, and an editor saving over that is how one is lost
+    e           edit (a questions file)
+    E           edit a handover ANYWAY, behind a warning when its window is
+                still open and whichever of you saves last would win
+    space       the row's menu: view, edit, mark done, mark answered,
+                open its window, tell that window its answers are in
     r           re-read the folder
     s / esc     back to the main view
 
@@ -195,6 +204,21 @@ class HandoversView(View):
         if 0 <= self.i < len(self.rows):
             return self.rows[self.i]
         return None
+
+    def follow(self, row) -> None:
+        """Keep the cursor on the row that was just acted on.
+
+        Marking a file answered changes its STATE, and the order is BY state,
+        so the row moves -- and the cursor, which is an index, would stay
+        where it was and end up on somebody else. That matters here more than
+        it looks: the row you just changed is the one you might want to change
+        back, and the menu is built from whatever is under the cursor."""
+        if row is None:
+            return
+        for i, r in enumerate(self.rows):
+            if r["path"] == row["path"]:
+                self.i = i
+                return
 
     def move(self, delta: int) -> None:
         if self.rows:
@@ -463,6 +487,8 @@ class HandoversView(View):
     def foot(self) -> Text:
         keys = Text.assemble(
             (" ↑↓", DIM), " pick  ", ("←→", DIM), " tab  ",
+            ("enter", DIM), " open  ", ("e", DIM), " edit  ",
+            ("E", DIM), " force-edit  ", ("space", DIM), " menu  ",
             ("f", DIM), " done  ", ("a", DIM), " asks  ",
             ("r", DIM), " reload  ",
             ("s", DIM), "/", ("esc", DIM), " back  ", ("q", DIM), " quit",
@@ -470,6 +496,276 @@ class HandoversView(View):
         if self.app.notice and time.time() - self.app.notice_at < 8:
             keys = Text.assemble((" " + self.app.notice, "#c9a0dc"), "\n", keys)
         return keys
+
+    # ------------------------------------------------------------ opening
+    def open_selected(self) -> None:
+        """enter. A QUESTIONS file opens in the EDITOR, because answering is
+        what you came to do; a STATUS file opens READ-ONLY.
+
+        The read-only half is fork Q5 as the user answered it, and it is not
+        fussiness: a live lane rewrites its handover whenever it likes, and
+        nano saving over that is exactly how a handover is lost. It goes
+        through the shell's pending_report, which pipes text to less -- so
+        there is nothing for the editor to save back even if it wanted to.
+        """
+        row = self.sel()
+        if row is None:
+            self.app.say("nothing to open")
+            return
+        if row["kind"] == "questions":
+            self.app.pending_edit = str(row["path"])
+            return
+        try:
+            text = row["path"].read_text(errors="replace")
+        except OSError as exc:
+            self.app.say("cannot read %s: %s" % (row["path"].name, exc))
+            return
+        self.app.pending_report = "%s\n\n%s" % (row["path"], text)
+
+    def edit_selected(self) -> None:
+        """e. The file, in the editor -- and on a STATUS row it says no and
+        names the key that means it."""
+        row = self.sel()
+        if row is None:
+            self.app.say("nothing to edit")
+        elif row["kind"] == "questions":
+            self.app.pending_edit = str(row["path"])
+        else:
+            self.app.say("a handover opens read-only — E edits it anyway")
+
+    def live_window(self, slug: str):
+        """The lane's window id if it is open right now, else ""."""
+        node = read_tree().get(slug)
+        if node and node["wid"] in live_windows():
+            return node["wid"]
+        return ""
+
+    def force_edit(self) -> str:
+        """E, and the menu's `Edit anyway…`. A confirm ONLY when something
+        could be writing the file: for a lane whose window is gone there is
+        nothing to race, and a warning nobody needs is a warning nobody
+        reads."""
+        row = self.sel()
+        if row is None:
+            return "nothing to edit"
+        if row["kind"] == "questions":
+            self.app.pending_edit = str(row["path"])
+            return ""
+        wid = self.live_window(row["slug"])
+        if not wid:
+            self.app.pending_edit = str(row["path"])
+            return ""
+        self.app.confirm = {
+            "label": "⚠ ➥%s may rewrite this file while you edit; "
+                     "whichever saves last wins." % row["slug"],
+            "fn": lambda: self._do_edit(row)}
+        return ""
+
+    def _do_edit(self, row) -> str:
+        self.app.pending_edit = str(row["path"])
+        return ""
+
+    # ------------------------------------------------------- the state changes
+    def handover_sh(self, *args: str) -> str:
+        """EVERY state change shells out to handover.sh, so never-clobber and
+        the ANSWERED marker have one implementation and not two. The legacy
+        questions folder is the one exception -- that script does not own it
+        -- and muxhandovers writes the marker there instead."""
+        cmd = [str(SCRIPTS / "handover.sh")]
+        if PROFILE:
+            cmd += ["--profile", PROFILE]
+        cmd += list(args)
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return "handover.sh failed: %s" % exc
+        was = self.sel()
+        self.cache.clear()
+        self.scan(force=True)
+        self.follow(was)
+        msg = (out.stdout + out.stderr).strip().splitlines()
+        return msg[-1] if msg else "handover.sh %s" % " ".join(args)
+
+    def ask_mark_done(self) -> str:
+        """Mark done…, and THE CONFIRM NAMES WHAT IT RELEASES. Marking a
+        handover done from a menu is launching every entry held `after:` this
+        lane within 30 seconds, and a confirm that does not say so is asking
+        the wrong question."""
+        row = self.sel()
+        if row is None:
+            return "nothing selected"
+        waiting = self.holds().get(row["slug"], [])
+        label = "Mark %s done?" % row["slug"]
+        if waiting:
+            label += "  releases: %s" % ", ".join(waiting)
+        self.app.confirm = {"label": label,
+                            "fn": lambda: self.handover_sh("done", row["slug"])}
+        return ""
+
+    def mark_answered(self) -> str:
+        """The ANSWERED marker. handover.sh owns the handovers folder; the
+        legacy folder is nobody's, so muxhandovers writes it there directly
+        -- atomically, and only if the file has not changed underneath."""
+        row = self.sel()
+        if row is None or row["kind"] != "questions":
+            return "not a questions file"
+        if not row["legacy"]:
+            return self.handover_sh("answered", row["slug"])
+        return self._legacy_marker(row, mark=True)
+
+    def mark_unanswered(self) -> str:
+        row = self.sel()
+        if row is None or row["kind"] != "questions":
+            return "not a questions file"
+        if not row["legacy"]:
+            return self.handover_sh("unanswer", row["slug"])
+        return self._legacy_marker(row, mark=False)
+
+    def _legacy_marker(self, row, mark: bool) -> str:
+        import datetime
+        import os
+        path = row["path"]
+        try:
+            before = path.stat()
+            text = path.read_text(errors="replace")
+        except OSError as exc:
+            return "cannot read %s: %s" % (path.name, exc)
+        if mark:
+            new = muxhandovers.mark_answered(
+                text, datetime.date.today().isoformat())
+        else:
+            new = "\n".join(l for l in text.splitlines()
+                             if not muxhandovers.ANSWERED_RE.match(l))
+            new += "\n" if text.endswith("\n") else ""
+        if new == text:
+            return "%s was already %s" % (path.name,
+                                          "answered" if mark else "unanswered")
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            if path.stat().st_mtime != before.st_mtime:
+                return "%s changed underneath — not written" % path.name
+            tmp.write_text(new)
+            os.replace(tmp, path)
+        except OSError as exc:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return "could not write %s: %s" % (path, exc)
+        was = self.sel()
+        self.cache.clear()
+        self.scan(force=True)
+        self.follow(was)
+        return "%s: %s (legacy folder)" % (
+            path.name, "answered" if mark else "marker removed")
+
+    def ask_tell(self) -> str:
+        """Tell ➥slug its answers are in. THE ONLY THING ON THIS TAB THAT
+        TOUCHES A LIVE WINDOW, and it is never automatic: a confirm first,
+        and it types one sentence into that pane and nothing else."""
+        row = self.sel()
+        if row is None:
+            return "nothing selected"
+        node = read_tree().get(row["slug"])
+        pane = node["pane"] if node else ""
+        if not pane or not self.live_window(row["slug"]):
+            return "➥%s has no live pane" % row["slug"]
+        line = ("Your questions are answered in %s -- read it and continue."
+                % row["path"])
+        self.app.confirm = {
+            "label": "Type that into ➥%s's pane?" % row["slug"],
+            "fn": lambda: self._send(pane, line)}
+        return ""
+
+    def _send(self, pane: str, text: str) -> str:
+        try:
+            subprocess.run(["tmux", "send-keys", "-t", pane, text],
+                           capture_output=True, timeout=5)
+            time.sleep(0.6)
+            subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"],
+                           capture_output=True, timeout=5)
+            return "told ➥%s" % pane
+        except (OSError, subprocess.SubprocessError) as exc:
+            return "send failed: %s" % exc
+
+    def goto_handover(self) -> str:
+        """Show its handover -- the cursor moves to that lane's STATUS row,
+        rather than opening anything. A question and the handover that asked
+        it are two rows of one list, and this is the shortest way to say so."""
+        row = self.sel()
+        if row is None:
+            return "nothing selected"
+        for i, r in enumerate(self.rows):
+            if r["kind"] == "status" and r["slug"] == row["slug"]:
+                self.i = i
+                return ""
+        return "no handover row for %s — f shows the finished ones" % row["slug"]
+
+    def goto_window(self) -> str:
+        """Open its window: the tmux window the lane ran in, if it is still
+        there. The schedule view's row for the same thing, reused in shape."""
+        row = self.sel()
+        if row is None:
+            return "nothing selected"
+        wid = self.live_window(row["slug"])
+        if not wid:
+            return "➥%s has no live window" % row["slug"]
+        try:
+            subprocess.run(["tmux", "select-window", "-t", wid],
+                           capture_output=True, timeout=5)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return "could not switch: %s" % exc
+        return "switched to %s" % wid
+
+    # ---------------------------------------------------------- the menu
+    def menu_entries(self) -> list[dict]:
+        """Built from the SELECTED ROW and nothing else, every frame, so a
+        row that changes state while the menu is open offers what is true
+        now rather than what was true when space was pressed."""
+        row = self.sel()
+        if row is None:
+            return [{"label": "nothing selected", "disabled": "no rows"}]
+        wid = self.live_window(row["slug"])
+        if row["kind"] == "questions":
+            rows = [{"label": "Edit the file", "act": self._act_edit}]
+            if row["state"] == "unanswered":
+                rows.append({"label": "Mark answered", "act": self.mark_answered})
+            else:
+                rows.append({"label": "Mark unanswered", "act": self.mark_unanswered})
+            rows.append({"label": "Tell ➥%s its answers are in" % row["slug"],
+                         "act": self.ask_tell} if wid else
+                        {"label": "Tell its window", "disabled": "no live window"})
+            rows.append({"label": "Show its handover", "act": self.goto_handover})
+            return rows
+        rows = [{"label": "View (read-only)", "act": self._act_view},
+                {"label": "Edit anyway…", "act": self.force_edit, "danger": True}]
+        if wid:
+            rows.append({"label": "Open its window ➥%s" % row["slug"],
+                         "act": self.goto_window})
+        if row["state"] == "open":
+            rows.append({"label": "Mark done…", "act": self.ask_mark_done})
+        elif not row["stamp"]:
+            # handover.sh reopen takes the unstamped name only, so a row it
+            # could not act on is shown as unavailable rather than offered
+            # and then refused.
+            rows.append({"label": "Reopen",
+                         "act": lambda: self.handover_sh("reopen", row["slug"])})
+        else:
+            rows.append({"label": "Reopen",
+                         "disabled": "an earlier run's stamped file"})
+        return rows
+
+    def _act_view(self) -> str:
+        self.open_selected()
+        return ""
+
+    def _act_edit(self) -> str:
+        self.app.pending_edit = str(self.sel()["path"])
+        return ""
+
+    def menu_title(self) -> str:
+        row = self.sel()
+        return "handover[/] [%s]· %s" % (DIM, row["path"].name) if row else "handover"
 
     # --------------------------------------------------------------- keys
     def handover_key(self, key: str) -> bool:
@@ -491,6 +787,14 @@ class HandoversView(View):
             self.app.say("handovers re-read")
         elif key in ("s", "\x1b"):
             self.app.switch_to("main")
+        elif key in ("\r", "\n"):
+            self.open_selected()
+        elif key == "e":
+            self.edit_selected()
+        elif key == "E":
+            self.force_edit()
+        elif key == " ":
+            self.app.open_menu("handover")
         elif key == "f":
             self.app.say(self.toggle(DONE_KEY, "show_done", "finished rows"))
         elif key == "a":
@@ -519,5 +823,6 @@ def register(app) -> None:
     })
     view = HandoversView(app)
     app.add_view(view)
+    app.add_menu("handover", view.menu_entries, title_fn=view.menu_title)
     app.add_help("HANDOVERS AND QUESTIONS (the second tab of s)",
                  HELP_HANDOVERS, order=52)

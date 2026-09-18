@@ -25,7 +25,11 @@ export XDG_CONFIG_HOME="${SB:?}/config"
 export XDG_STATE_HOME="${SB:?}/state"
 export MUXTOPUS_CONFIG="${SB:?}/config/muxtopus/config"
 export PATH="${SANDBOX_DIR}/bin:${SB:?}/home/.local/bin:$PATH"
-export EDITOR=/usr/bin/true
+# The editor the dashboard suspends into. /usr/bin/true by default -- a real
+# $EDITOR leaking in here would open nano inside a golden run and hang it --
+# and a test that wants to see WHICH FILE was opened sets SANDBOX_EDITOR to a
+# stub that records its argv. Opt-in, so nothing leaks.
+export EDITOR="${SANDBOX_EDITOR:-/usr/bin/true}"
 # A SANDBOX-ONLY ACCOUNT. Not decoration: the profile suffixes the watchdog
 # state dir and the tmux session, and it makes the lanes table -- which reads
 # the real /proc and cannot be faked -- find nothing, because every real dev

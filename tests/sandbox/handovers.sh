@@ -48,6 +48,34 @@ scap() {                        # scap [-e]  -- a settled frame, on stdout
 snap()  { scap > "$NOW"; }
 snapc() { scap -e > "$COL"; }
 has()   { snap; check "$1" grep -qF -- "$2" "$NOW"; }
+# PICK A MENU ROW BY NAME. tests/sandbox/README.md's rule, and this menu
+# needs it more than most: it is built from the selected row, so "Mark
+# answered" is the second row on one kind and absent on another, and a test
+# that counts Downs silently fires whatever happens to be there.
+pick() {
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    snap
+    grep -qF "▸ $1" "$NOW" && return 0
+    $K Down
+  done
+  bad "could not find the menu row: $1"
+  return 1
+}
+
+# A RECORDING EDITOR. env.sh points $EDITOR at /usr/bin/true unless
+# SANDBOX_EDITOR says otherwise; this one writes down which file the
+# dashboard handed it, which is the only way to tell "opened for editing"
+# from "opened read-only" out of a capture.
+mkdir -p -- "${SB:?}/bin"
+cat > "${SB:?}/bin/edstub" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >> "$(dirname "$0")/../edited.log"
+exit 0
+STUB
+chmod +x -- "${SB:?}/bin/edstub"
+export SANDBOX_EDITOR="${SB:?}/bin/edstub"
+EDLOG="${SB:?}/edited.log"
 
 "$HERE/clean.sh"
 "$HERE/start.sh" 40 >/dev/null
@@ -154,6 +182,189 @@ $K Right
 has "...and the handovers are one arrow away" "▸handovers"
 $K s
 has "s from the handovers tab leaves too"    "➥root-lane"
+
+echo "== enter opens: a questions file to edit, a handover READ-ONLY"
+# The section above left the dashboard on the MAIN view, where enter opens a
+# session's window. Back to the tab first -- a test that presses keys at the
+# wrong screen proves nothing and can do something.
+$K s; $K Right
+: > "$EDLOG"
+$K Enter
+sleep 1.5
+check "enter on a QUESTIONS row hands the file to the editor" \
+  grep -q "QUESTIONS-root-lane.md" "$EDLOG"
+$K Down; $K Down
+: > "$EDLOG"
+$K Enter
+sleep 1.5
+snap
+check "enter on a HANDOVER shows the file instead" \
+  grep -qF "Phase 1 done. Next: phase 2." "$NOW"
+check "...and never hands it to an editor -- a live lane is writing it" \
+  bash -c '! grep -q STATUS "'"$EDLOG"'"'
+$K q
+sleep 1
+has "q comes back to the tab"                "▸handovers"
+
+echo "== E edits a handover anyway, behind a warning that names the risk"
+# launched-lane's window is @0 in the fixture tree, which IS the sandbox
+# dashboard's own window, so the tree says that lane is still running.
+: > "$EDLOG"
+$K E
+has "E on a lane whose window is open asks first" "may rewrite this file while you edit"
+has "...naming the lane"                     "➥launched-lane"
+$K n
+check "n means the editor is not opened" \
+  bash -c '! grep -q STATUS "'"$EDLOG"'"'
+$K E
+$K y
+sleep 1.5
+check "y opens it"                           grep -q "STATUS-launched-lane.md" "$EDLOG"
+# shadow-lane's window is not in the tree at all, so nothing can race the edit
+# and a warning nobody needs is a warning nobody reads.
+$K Down
+: > "$EDLOG"
+$K E
+sleep 1.5
+check "E on a lane with no live window skips the warning entirely" \
+  grep -q "STATUS-shadow-lane.md" "$EDLOG"
+snap
+check "...and there was no confirm to answer" \
+  bash -c '! grep -q "may rewrite" "'"$NOW"'"'
+$K Up; $K Up; $K Up
+
+echo "== space: the menu is built from the row under the cursor"
+$K Space
+has "a QUESTIONS row offers the marker"      "Mark answered"
+has "...and a way to its handover"           "Show its handover"
+has "...and says why it cannot tell the window" "(no live window)"
+$K Escape
+$K Down; $K Down
+$K Space
+has "a HANDOVER row offers a read-only view" "View (read-only)"
+has "...the force edit"                      "Edit anyway…"
+has "...its window, because that one is open" "Open its window ➥launched-lane"
+has "...and Mark done"                       "Mark done…"
+$K Escape
+
+echo "== Mark done names what it releases, and releasing it is real"
+# An entry held `after: launched-lane`, so there is something to release.
+cat > "${SB:?}/muxhome/schedules-mxsplit/g-waits.md" <<'ENTRY'
+type: work
+at: reset
+title: waits for the launched lane
+slug: waits-for-launched
+cwd: @SB@/work/repo-a
+after: launched-lane
+status: pending
+created: 2024-01-01 09:06
+launched:
+---
+It waits.
+ENTRY
+sed -i "s|@SB@|${SB:?}|g" -- "${SB:?}/muxhome/schedules-mxsplit/g-waits.md"
+"$SCRIPTS/claude-watchdog.sh" --check waits-for-launched > "${SB:?}/check1.txt" 2>&1
+check "the executor says that entry is HELD by the lane" \
+  bash -c 'grep -q "blocked: waiting for launched-lane" "'"${SB}"'/check1.txt" &&
+           grep -q "HELD by after:" "'"${SB}"'/check1.txt"'
+sleep 2.5
+snap
+check "the tab shows the lane now holding one entry up" \
+  grep -qE "launched-lane +@0 ● +1 " "$NOW"
+$K Space
+pick "Mark done…"
+$K Enter
+has "the confirm NAMES the entry it would release" \
+     "releases: waits-for-launched"
+$K n
+has "n changes nothing"                      "cancelled"
+check "...and the handover is still open"    \
+  [ -f "${SB:?}/muxhome/handovers-mxsplit/STATUS-launched-lane.md" ]
+# The MENU is still open behind the answered confirm -- confirm_key clears
+# the confirm, not the menu -- so space here would close it, not reopen it.
+$K Escape
+$K Space
+pick "Mark done…"
+$K Enter
+$K y
+sleep 2.5
+check "y moves the file into done/" \
+  [ -f "${SB:?}/muxhome/handovers-mxsplit/done/STATUS-launched-lane.md" ]
+check "...and out of the open folder" \
+  [ ! -f "${SB:?}/muxhome/handovers-mxsplit/STATUS-launched-lane.md" ]
+"$SCRIPTS/claude-watchdog.sh" --check waits-for-launched > "${SB:?}/check2.txt" 2>&1
+check "and the EXECUTOR now says that entry is released" \
+  grep -q "after launched-lane: finished" "${SB:?}/check2.txt"
+rm -f -- "${SB:?}/muxhome/schedules-mxsplit/g-waits.md"
+
+echo "== Mark answered flips the row and the strip count with it"
+"$HERE/clean.sh"
+"$HERE/stop.sh" >/dev/null
+"$HERE/start.sh" 40 >/dev/null
+# A questions file for a lane whose handover is still OPEN, written here
+# rather than committed as a fixture: the committed set is what the goldens
+# were blessed against, and one more row would mean re-blessing fifty screens
+# to prove something about a menu. handover.sh leaves this one where it is --
+# it moves an answered file only when its lane is already finished, which is
+# the root-lane case and is covered in tests/test_handover_sh.sh.
+cp -- "$FIX/muxhome/handovers-mxsplit/QUESTIONS-root-lane.md" \
+      "${H:?}/QUESTIONS-stranded-lane.md"
+$K s; $K Right
+$K f                            # finished rows shown, or an answered one hides
+sleep 2.5
+has "three files are asking to begin with"   "· 3 ?"
+snap
+check "the new one is the top row"           grep -qE "▸ +\? ask .* stranded-lane" "$NOW"
+$K Space
+pick "Mark answered"
+$K Enter
+sleep 2
+has "the row says it is answered now"        "? done"
+has "...and the strip has one fewer"         "· 2 ?"
+check "the marker is in the file" \
+  grep -q "ANSWERED" "${H:?}/QUESTIONS-stranded-lane.md"
+check "...and the file has NOT moved: its lane is still open" \
+  [ -f "${H:?}/QUESTIONS-stranded-lane.md" ]
+$K Space
+pick "Mark unanswered"
+$K Enter
+sleep 2
+has "Mark unanswered puts it back"           "· 3 ?"
+check "...and takes the marker out again" \
+  bash -c '! grep -q ANSWERED "'"${H}"'/QUESTIONS-stranded-lane.md"'
+rm -f -- "${H:?}/QUESTIONS-stranded-lane.md"
+$K f
+
+echo "== Tell types one line into the lane's own pane, never automatically"
+"$HERE/clean.sh"
+"$HERE/stop.sh" >/dev/null
+"$HERE/start.sh" 40 >/dev/null
+WID2="$(tmux new-window -d -t "${SANDBOX_SESSION:?}" -P -F '#{window_id}' 'cat > '"${SB:?}"'/heard.txt')"
+PID2="$(tmux list-panes -a -F '#{window_id} #{pane_id}' | awk -v w="$WID2" '$1==w{print $2}')"
+printf 'root-lane\t\t%s\t%s\t1735700000\ta-pending.md\n' "$WID2" "$PID2" >> "$WD/tree.tsv"
+sleep 2.5
+$K s; $K Right
+$K Space
+snap
+check "the menu now offers to tell that window" \
+  grep -qF "Tell ➥root-lane its answers are in" "$NOW"
+pick "Tell ➥root-lane its answers are in"
+$K Enter
+has "and asks before touching a live pane"   "Type that into ➥root-lane"
+$K n
+check "n types nothing" bash -c '[ ! -s "'"${SB}"'/heard.txt" ]'
+# The menu is still open behind the answered confirm; space would close it.
+$K Escape
+$K Space
+pick "Tell ➥root-lane its answers are in"
+$K Enter
+$K y
+sleep 2
+tmux kill-window -t "$WID2" 2>/dev/null
+sleep 0.5
+check "y types the sentence, naming the file to read" \
+  grep -q "Your questions are answered in .*QUESTIONS-root-lane.md" "${SB:?}/heard.txt"
+cp -- "$FIX/state/claude-watchdog-mxsplit/tree.tsv" "$WD/tree.tsv"
 
 echo "== the two filters, and they survive an R"
 "$HERE/clean.sh"
