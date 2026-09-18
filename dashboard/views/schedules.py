@@ -752,7 +752,7 @@ class ScheduleView(View):
             ("", {"width": 3}, None),
             ("STATUS", {"width": 10}, None),
             ("TYPE", {"width": 6}, 3),
-            ("FOR", {"width": 18}, None),
+            ("FOR", {"width": 18}, 4),
             ("AT", {"width": 17}, 1),
             ("TITLE", {"ratio": 1, "min_width": 12}, None),
             ("SLUG", {"width": 24}, 2),

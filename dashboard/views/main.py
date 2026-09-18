@@ -624,7 +624,7 @@ class MainView(View):
             lane_cols.append(("ACCOUNT", {"width": 10}, 4))
         lane_cols += [
             ("DIRTY", {"justify": "right", "width": 6}, 1),
-            ("STATE", {"width": 16}, None),
+            ("STATE", {"width": 16}, 5),
         ]
         lane_rows: list[list] = []
 
@@ -731,7 +731,9 @@ class MainView(View):
             ("MON", {"width": 4}, 3),
             ("WINDOW", {"ratio": 1, "min_width": 12}, None),
             ("MODEL", {"width": 11}, 7),
-            ("CONTEXT", {"width": 29 if wide else 21}, None),
+            # Last to go, and only on a phone-width terminal: the window's
+            # name and its state are what the row is for.
+            ("CONTEXT", {"width": 29 if wide else 21}, 8),
             ("SPENT", {"justify": "right", "width": 8}, 4),
             ("IDLE", {"justify": "right", "width": 6}, 5),
             ("STATE", {"width": 15}, None),
@@ -956,7 +958,8 @@ class MainView(View):
         THE DEGRADE RULE IS place_menu's: with less than TABLE_MIN row lines
         for a table (a row and both markers) the frame gives something up
         rather than cut a table -- the uncommitted panel first, then the
-        deck header -- and the claude title says what went. Below even
+        deck header, then the system line (not while the cursor is on it)
+        -- and the claude title says what went. Below even
         that the tables get their minimum and Live crops what is left,
         which is a terminal this screen does not claim to fit."""
         console = self.app.console
@@ -987,7 +990,7 @@ class MainView(View):
             return ([] if "deck" in drop else [("deck", deck_panel)]) + [
                 ("lanes", lane_p), ("claude", ct_p),
                 *([] if "uncommitted" in drop else [("uncommitted", p) for p in dirty_panels]),
-                ("system", system_panel)]
+                *([] if "system" in drop else [("system", system_panel)])]
 
         foot = self.app._submode_foot() or self._foot
         full = assemble(None, ())
@@ -995,7 +998,10 @@ class MainView(View):
             return full
         chrome = sum(rendered_height(console, p) for p in tables("chrome"))
         drop: list[str] = []
-        for step in ([], ["uncommitted"], ["uncommitted", "deck"]):
+        steps = [[], ["uncommitted"], ["uncommitted", "deck"]]
+        if self.cursor != EXTRAS_SENTINEL:
+            steps.append(["uncommitted", "deck", "system"])
+        for step in steps:
             drop = step
             if step == ["uncommitted"] and not dirty_panels:
                 continue
@@ -1006,7 +1012,7 @@ class MainView(View):
                 break
         else:
             lines = [TABLE_MIN, TABLE_MIN]
-        note = (" · %s hidden: short terminal" % " and ".join(reversed(drop))) \
+        note = (" · %s hidden: short terminal" % ", ".join(reversed(drop))) \
             if drop else ""
         return assemble(lines, drop, note)
 

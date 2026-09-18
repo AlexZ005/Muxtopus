@@ -19,3 +19,6 @@
   the session rows stay, `s` still gets you in, and the menu has an "Open
   … once" row for each hidden tab. When you hide one of the first six, the
   next shown tab takes its place among the six that never scroll away.
+- Down to a 40-column terminal (a phone held upright): the tables keep the
+  window names and states, and the handovers tab no longer pushes its
+  footer off the screen.
