@@ -101,6 +101,9 @@ KEYS = {
     # WHICH TABS THE STRIP SHOWS (dashboard/menus/tabs.py): view names,
     # comma-separated, hidden from the strip and from ←→. Unset: all shown.
     "DASHBOARD_TABS_HIDDEN": None,
+    "WATCHDOG_RESTORE": "ask",
+    "WATCHDOG_RESTORE_MAX_AGE": "24",
+    "MUXTOPUS_TMUX_SOCKET": "default",
 }
 KINDS = ("schedules", "backups", "handovers")
 

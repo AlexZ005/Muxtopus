@@ -122,22 +122,22 @@ $K Enter
 sleep 1.2
 check "the notice says where it went" bash -c '"'"$C"'" | grep -qF "notify-setup"'
 check "a notify-setup window exists on the sandbox server" bash -c '
-  tmux list-windows -t "'"${SANDBOX_SESSION:?}"'" -F "#{window_name}" | grep -qx notify-setup'
-tmux capture-pane -p -t "${SANDBOX_SESSION:?}:notify-setup" > "${SB:?}/caps/setup-window.txt" 2>/dev/null
+  tmux -L "'"${SANDBOX_SOCKET:?}"'" list-windows -t "'"${SANDBOX_SESSION:?}"'" -F "#{window_name}" | grep -qx notify-setup'
+mux_tmux capture-pane -p -t "${SANDBOX_SESSION:?}:notify-setup" > "${SB:?}/caps/setup-window.txt" 2>/dev/null
 check "..and it is the guide, waiting for an answer" \
   grep -qiE "notification|backend|telegram" "${SB:?}/caps/setup-window.txt"
 # The guide writes a conf only at its last step, and nothing here answers it.
 # What is proven is WHICH conf it would write: the env the dashboard handed
 # the window, read back out of the window's own process.
 check "..with CLAUDE_NOTIFY_CONF pointed inside the sandbox" bash -c '
-  p=$(tmux list-panes -t "'"${SANDBOX_SESSION:?}"':notify-setup" -F "#{pane_pid}" | head -1)
+  p=$(mux_tmux list-panes -t "'"${SANDBOX_SESSION:?}"':notify-setup" -F "#{pane_pid}" | head -1)
   for pid in $p $(pgrep -P "$p" 2>/dev/null); do
     tr "\0" "\n" < "/proc/$pid/environ" 2>/dev/null |
       grep -qx "CLAUDE_NOTIFY_CONF='"${SB:?}"'/notify.conf" && exit 0
   done; exit 1'
 check "..and the real one was never opened" bash -c '
   ! grep -rqF "$HOME/.config/claude-notify.conf" "'"${SB:?}"'/caps/setup-window.txt"'
-tmux kill-window -t "${SANDBOX_SESSION:?}:notify-setup" 2>/dev/null
+mux_tmux kill-window -t "${SANDBOX_SESSION:?}:notify-setup" 2>/dev/null
 
 echo "== a waiting session is drawn yellow, as needs you"
 $K Escape; $K Escape

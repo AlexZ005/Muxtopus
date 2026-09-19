@@ -59,3 +59,12 @@ export SANDBOX_SOCKET="${SANDBOX_SOCKET:-mxsplit}"
 # were ever to leak.
 export CLAUDE_NOTIFY_CONF="${SB:?}/notify.conf"
 export SANDBOX_SESSION="${SANDBOX_SESSION:-mxsplit}"
+# THE SAME SOCKET, NAMED ON EVERY CALL. profile.sh's mux_tmux passes
+# MUXTOPUS_TMUX_SOCKET as -L on every tmux the scripts run, so a watchdog or
+# a muxtopus started from here talks to this sandbox's server and no other --
+# and the helpers of this harness use the same name through the function
+# below, never a bare tmux that would follow the $TMUX of the pane a test is
+# typed in (docs/plan-restore.md §3). bin/tmux stays for the dashboard's own
+# forks, which are not this harness's to rewrite.
+export MUXTOPUS_TMUX_SOCKET="${SANDBOX_SOCKET:?}"
+mux_tmux() { command tmux -L "${SANDBOX_SOCKET:?}" "$@"; }

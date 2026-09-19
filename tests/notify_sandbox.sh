@@ -2,7 +2,7 @@
 #
 # Sandbox discipline (docs/plan-dashboard-menus.md §5, docs/plan-notify-telegram.md §6):
 # own HOME, XDG_CONFIG_HOME, XDG_STATE_HOME, MUXTOPUS_CONFIG, CLAUDE_CONFIG_DIR;
-# a `tmux` wrapper pinned to -L mxnotify; a fake `claude`; TELEGRAM_API at
+# a `tmux` wrapper pinned to -L mxnotify (SB_SOCKET); a fake `claude`; TELEGRAM_API at
 # tests/fake_telegram.py; CLAUDE_NOTIFY_CONF at a sandbox file. Nothing here can
 # reach the real bot, the real conf, or a pane of the real tmux server.
 #
@@ -26,7 +26,9 @@ sb_init() {
   export XDG_DATA_HOME="$SB/home/.local/share" XDG_RUNTIME_DIR="$SB/run"
   export MUXTOPUS_CONFIG="$SB/home/.config/muxtopus/config"
   export CLAUDE_NOTIFY_CONF="$SB/notify.conf"
-  unset CLAUDE_CONFIG_DIR TMUX TMUX_PANE MUXTOPUS_HOME MUXTOPUS_PROFILES_DIR
+  # MUXTOPUS_DIR too: exported by profile.sh into every lane window, it would
+  # send a muxtopus run here to the MAIN checkout's profile.sh, not this one's.
+  unset CLAUDE_CONFIG_DIR TMUX TMUX_PANE MUXTOPUS_HOME MUXTOPUS_PROFILES_DIR MUXTOPUS_DIR
   for k in $(compgen -e); do
     case "$k" in WATCHDOG_*|DASHBOARD_*|MUXTOPUS_NOTIFY_*) unset "$k" ;; esac
   done
@@ -36,8 +38,14 @@ sb_init() {
 
   # tmux, pinned. Every call in the sandbox -- the watchdog's, muxtelegram's,
   # this file's -- lands on the private server.
+  # SB_SOCKET: a test that runs beside the notify suite (test_restore.sh)
+  # names a server of its own. The scripts' own calls carry the same name
+  # through profile.sh's mux_tmux (MUXTOPUS_TMUX_SOCKET), so nothing this
+  # sandbox starts can follow a pane's $TMUX to the real server.
+  SB_SOCKET="${SB_SOCKET:-mxnotify}"
+  export MUXTOPUS_TMUX_SOCKET="$SB_SOCKET"
   local real; real="$(command -v tmux)"
-  printf '#!/bin/sh\nexec %s -u -L mxnotify -f /dev/null "$@"\n' "$real" > "$SB/bin/tmux"
+  printf '#!/bin/sh\nexec %s -u -L %s -f /dev/null "$@"\n' "$real" "$SB_SOCKET" > "$SB/bin/tmux"
   chmod +x "$SB/bin/tmux"
   # The fake claude: prints a prompt (or a scripted screen), publishes its
   # session file the way the real CLI does, and sits there.
@@ -47,6 +55,8 @@ sb_init() {
 printf '%s\n' "$*" >> "$HOME/fake-claude.argv"
 cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 sid="fake-$$-$RANDOM"
+# --resume SID publishes THAT id, as the real CLI does.
+prev=""; for a in "$@"; do [ "$prev" = --resume ] && sid="$a"; prev="$a"; done
 mkdir -p "$cfg/sessions"
 printf '{"pid":%s,"sessionId":"%s","cwd":"%s","version":"0.0.0","status":"idle","kind":"interactive","tmux":"%s"}\n' \
   "$$" "$sid" "$PWD" "sandbox:@0.${TMUX_PANE:-}" > "$cfg/sessions/$$.json"
@@ -81,7 +91,7 @@ sb_update() { printf '%s\n' "$1" >> "$FAKE/updates.jsonl"; }
 sb_cleanup() {
   local p
   for p in "${SB_PIDS[@]}"; do kill "$p" 2>/dev/null; done
-  "$SB/bin/tmux" kill-server 2>/dev/null
+  command tmux -L "$SB_SOCKET" kill-server 2>/dev/null
   [ -n "${KEEP_SANDBOX:-}" ] || rm -rf "$SB"
 }
 

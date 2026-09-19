@@ -124,18 +124,18 @@ scrape() {
   [ -x "$CLAUDE" ] || { note_fail "claude not found at $CLAUDE"; return 1; }
 
   local cwd; cwd="$(probe_dir)"
-  tmux kill-session -t "$PROBE_SESSION" 2>/dev/null
+  mux_tmux kill-session -t "$PROBE_SESSION" 2>/dev/null
   # THE ACCOUNT GOES IN WITH -e. A new tmux session does NOT inherit the
   # environment of the process that created it -- it starts from the server's,
   # which is whichever account happened to start the server. Exporting
   # CLAUDE_CONFIG_DIR here is therefore not enough, and without this line every
   # account's probe read the SAME (usually personal) budget and wrote it into
   # its own cache, so the work dashboard showed the personal account's numbers.
-  tmux new-session -d -s "$PROBE_SESSION" -x 200 -y 50 -c "$cwd" \
+  mux_tmux new-session -d -s "$PROBE_SESSION" -x 200 -y 50 -c "$cwd" \
     "${MUX_TMUX_ENV[@]}" \
     "$CLAUDE" 2>/dev/null || { note_fail "could not start probe session"; return 1; }
   [ -n "$MUX_PROFILE" ] || \
-    tmux set-environment -u -t "$PROBE_SESSION" CLAUDE_CONFIG_DIR 2>/dev/null
+    mux_tmux set-environment -u -t "$PROBE_SESSION" CLAUDE_CONFIG_DIR 2>/dev/null
 
   # THREE DEAD ENDS, each named rather than waited out. All of them sit on
   # screen forever, and all of them used to end as "no usage panel appeared"
@@ -151,13 +151,13 @@ scrape() {
   local i txt="" bad=""
   for i in $(seq 1 40); do          # up to ~20s for the TUI to be ready
     sleep 0.5
-    txt="$(tmux capture-pane -p -t "$PROBE_SESSION" 2>/dev/null || true)"
+    txt="$(mux_tmux capture-pane -p -t "$PROBE_SESSION" 2>/dev/null || true)"
     bad=""
     grep -qi 'trust the files\|Do you trust'                     <<<"$txt" && bad=trust
     grep -qi 'Select login method\|Log in with your Claude'      <<<"$txt" && bad=login
     grep -qi "Let's get started\|looks best with your terminal"  <<<"$txt" && bad=setup
     if [ -n "$bad" ]; then
-      tmux kill-session -t "$PROBE_SESSION" 2>/dev/null
+      mux_tmux kill-session -t "$PROBE_SESSION" 2>/dev/null
       note_fail "$(stuck_on "$bad")"
       return 1
     fi
@@ -171,14 +171,14 @@ scrape() {
     grep -q 'shift+tab to cycle\|for shortcuts\|Try "' <<<"$txt" && break
   done
 
-  tmux send-keys -t "$PROBE_SESSION" "/usage" 2>/dev/null
+  mux_tmux send-keys -t "$PROBE_SESSION" "/usage" 2>/dev/null
   sleep 1
-  tmux send-keys -t "$PROBE_SESSION" Enter 2>/dev/null
+  mux_tmux send-keys -t "$PROBE_SESSION" Enter 2>/dev/null
 
   local seen=""
   for i in $(seq 1 30); do          # up to ~15s for the panel to render
     sleep 0.5
-    txt="$(tmux capture-pane -p -S -200 -t "$PROBE_SESSION" 2>/dev/null || true)"
+    txt="$(mux_tmux capture-pane -p -S -200 -t "$PROBE_SESSION" 2>/dev/null || true)"
     # Specifically the PANEL heading. A looser test matches the startup banner
     # ("You've used 94% of your session limit"), which is on screen before
     # /usage has rendered anything, so the capture would fire far too early.
@@ -186,13 +186,13 @@ scrape() {
       seen=1
       # one more beat so a half-drawn panel is not what gets parsed
       sleep 1.5
-      txt="$(tmux capture-pane -p -S -200 -t "$PROBE_SESSION" 2>/dev/null || true)"
+      txt="$(mux_tmux capture-pane -p -S -200 -t "$PROBE_SESSION" 2>/dev/null || true)"
       break
     fi
   done
 
   printf '%s\n' "$txt" > "$RAW"
-  tmux kill-session -t "$PROBE_SESSION" 2>/dev/null
+  mux_tmux kill-session -t "$PROBE_SESSION" 2>/dev/null
   [ -n "$seen" ] || { note_fail "no usage panel appeared (see $RAW)"; return 1; }
   parse
 }

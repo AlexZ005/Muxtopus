@@ -51,7 +51,7 @@ FAILFLAG="$SB/make-muxstats-fail"
 
 cleanup() {
   [ -n "${SLEEPER:-}" ] && kill "$SLEEPER" 2>/dev/null
-  "$SB/bin/tmux" kill-server 2>/dev/null
+  command tmux -L mxstats kill-server 2>/dev/null
   [ -n "${KEEP_SANDBOX:-}" ] || rm -rf "$SB"
 }
 trap cleanup EXIT
@@ -59,6 +59,10 @@ trap cleanup EXIT
 # tmux, pinned to a server of its own. Without this a stray send-keys reaches
 # the window you are reading this in.
 printf '#!/bin/sh\nexec %s -u -L mxstats -f /dev/null "$@"\n' "$(command -v tmux)" > "$SB/bin/tmux"
+# ...and the same name handed to profile.sh's mux_tmux, which passes -L on
+# every call: a later -L wins in tmux's own parsing, so a wrapper alone would
+# be overridden by the watchdog's `-L default` and reach the real server.
+export MUXTOPUS_TMUX_SOCKET=mxstats
 # python3, recorded -- and, with the flag file there, made to fail the way a
 # collector with a traceback in it would. The fault is injected at exactly the
 # boundary claude-watchdog.sh guards, so what is being tested is the guard.

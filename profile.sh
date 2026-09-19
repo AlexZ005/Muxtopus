@@ -102,6 +102,9 @@ MUXTOPUS_NOTIFY_STALLED=on
 MUXTOPUS_NOTIFY_STRANDED=on
 DASHBOARD_NEW_RC=off
 DASHBOARD_TABS_HIDDEN=-
+WATCHDOG_RESTORE=ask
+WATCHDOG_RESTORE_MAX_AGE=24
+MUXTOPUS_TMUX_SOCKET=default
 "
 
 # The checkout these scripts live in, from this file's own location, so a
@@ -260,6 +263,16 @@ mux_key_help() {
     DASHBOARD_NEW_RC)       echo "on: the launcher sends /rc to every new scheduled window once it"
                             echo "is ready, unless its entry says rc: off. An entry's rc: on|off"
                             echo "always wins; this is the default for entries that do not say." ;;
+    WATCHDOG_RESTORE)       echo "What muxtopus does with a frozen window snapshot (docs/restore.md)."
+                            echo "ask: offer it at a terminal when there is no session; auto: restore"
+                            echo "without asking, and the watchdog relaunches muxtopus -d when the"
+                            echo "server disappears; off: never offer (muxtopus --restore still works)." ;;
+    WATCHDOG_RESTORE_MAX_AGE) echo "Hours. A frozen snapshot older than this is not offered at start;"
+                            echo "muxtopus --restore takes it regardless." ;;
+    MUXTOPUS_TMUX_SOCKET)   echo "The tmux server every muxtopus command talks to: a name (tmux -L),"
+                            echo "or an absolute path (tmux -S). Passed EXPLICITLY on every call, so a"
+                            echo "command run from inside a pane never follows that pane's \$TMUX to"
+                            echo "some other server. default = what a bare tmux uses outside tmux." ;;
     *)                      echo "(undocumented)" ;;
   esac
 }
@@ -384,6 +397,7 @@ mux_use_profile() {
     p="$(mux_profile_of_dir "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")"
   fi
   mux_load_config "$p"
+  mux_tmux_socket
   MUX_PROFILE="$p"
   MUX_SUFFIX="$(mux_suffix_of "$p")"
   MUX_CONFIG_DIR="$(mux_config_of "$p")"
@@ -444,6 +458,34 @@ mux_tmux_env() {
   [ -n "${MUX_PROFILE:-}" ] && MUX_TMUX_ENV=(-e "CLAUDE_CONFIG_DIR=$MUX_CONFIG_DIR")
   return 0
 }
+
+# THE ONE WAY TO TALK TO TMUX. Every tmux call in muxtopus, the watchdog, the
+# usage probe and the test sandbox goes through here, and the socket is named
+# on every call: -L <name> or -S <path> from MUXTOPUS_TMUX_SOCKET.
+#
+# WHY IT MUST BE EXPLICIT. tmux picks its server in this order: -S, -L, then
+# $TMUX, then TMUX_TMPDIR/tmux-<uid>/default. Inside a pane $TMUX is always
+# set, so a bare `tmux` there reaches the server of THAT pane whatever
+# TMUX_TMPDIR says -- and on 2026-09-19 a `TMUX_TMPDIR=$SB/sock tmux
+# kill-server` meant to clean a test sandbox killed the real server, with the
+# dashboard, every lane window and five Claude sessions in it. With -L or -S
+# given, $TMUX is not consulted at all: the sandbox's server and the real one
+# are two different ARGUMENTS rather than two different environments, and a
+# command cannot land on a server it did not name.
+#
+# The default name is `default`, which resolves to exactly the socket a bare
+# tmux uses outside tmux (TMUX_TMPDIR/tmux-<uid>/default), so nothing changes
+# for anyone who never set the key.
+mux_tmux_socket() {
+  local s="${MUXTOPUS_TMUX_SOCKET:-default}"
+  case "$s" in
+    /*) MUX_TMUX_SOCK=(-S "$s") ;;
+    *)  MUX_TMUX_SOCK=(-L "$s") ;;
+  esac
+}
+mux_tmux() { command tmux "${MUX_TMUX_SOCK[@]}" "$@"; }
+# For the two places that hand the process over to tmux (attach, switch).
+mux_tmux_exec() { exec tmux "${MUX_TMUX_SOCK[@]}" "$@"; }
 
 # Make an account's folders. Idempotent, and called on every session start:
 # the handover folder in particular is written to by a wind-down, which is the

@@ -26,7 +26,8 @@ It is a `systemd --user` unit where systemd exists (`claude-watchdog.service`, `
 2. Captures every **idle** pane once and reads the text: a usage-limit banner makes the window `limited` with its reset time; a permission or trust prompt seen on two consecutive passes makes it `waiting` (`needs you` on the dashboard, a message on the phone).
 3. When armed, prompts a `due` window — one whose reset time has passed — with the continue message, once per limit. It never types into a window that is working.
 4. Judges every pending [schedule entry](schedules.md) and launches the due ones: the trust dialog, the readiness wait, one bracketed paste, a row in the tree, a log line naming which gate fired.
-5. Publishes the rows, the verdicts, the tree and the heartbeat; refreshes the usage reading when it is older than `WATCHDOG_USAGE_EVERY` minutes; every five minutes collects into [the stats ledger](stats.md); and sends what changed to [the phone](notifications.md).
+5. Writes the **window snapshot** — one row per window of the session, with its Claude session id, cwd, parent and launch flags — or, when the session is gone, freezes the last one instead of overwriting it, and says so once (log and phone). [Restore after a lost server](restore.md) is what that buys.
+6. Publishes the rows, the verdicts, the tree and the heartbeat; refreshes the usage reading when it is older than `WATCHDOG_USAGE_EVERY` minutes; every five minutes collects into [the stats ledger](stats.md); and sends what changed to [the phone](notifications.md).
 
 Every action is logged with the reading that decided it. Disarmed, the panel still reports; nothing is sent to any pane.
 
@@ -79,6 +80,12 @@ Not a field: a **state** the watchdog publishes for a window, beside `working`, 
 
 **It is a fact shown to a human, never a trigger.** It is derived only from `idle`, and the restart path only ever acts on `due`, so a stranded window is never prompted by it; the cure is to write an entry for it (or mark the handover done). `WATCHDOG_STRANDED=0` turns it off. One log line when a window becomes stranded and one when it stops being stranded — not one per pass. It is also one of the things [the phone is told](notifications.md).
 
+## The window snapshot
+
+Every pass the session is there, `windows.tsv` is rewritten: one row per window of the account's tmux session, in index order, with the window's name, cwd, pane, the Claude session id in it, its parent slug from the tree, and the model, effort and permission mode it was launched with (read from the claude process's own command line, else from the schedule entry that opened it).
+
+A pass that finds **no session** never writes an empty snapshot. The live file becomes `windows.last.tsv`, headed with the time the loss was noticed and the time the session was last seen; one log line says so; one alert goes to the phone under `MUXTOPUS_NOTIFY_SESSION`, keyed on the last-seen time so it is said once per loss and "cleared" when a session is back. `WATCHDOG_RESTORE=auto` makes the daemon run `muxtopus -d` there and then, which restores the windows. Everything else — the offer at start, `muxtopus --restore`, what a window comes back as — is on [Restore after a lost server](restore.md).
+
 ## The usage probe
 
 Claude Code has no usage subcommand and no file holding live limit state, so `claude-usage.sh` starts a throwaway session on the account, sends `/usage`, scrapes the pane and kills it — about four seconds, no turn taken, no completion tokens. The watchdog runs it every `WATCHDOG_USAGE_EVERY` minutes (60) and on a `stalled` verdict; the dashboard's `u` runs it when the reading is older than `CLAUDE_USAGE_MAX_AGE` (20). Every reading is stamped with the time it was taken and appended to `usage.log`, and a failed read leaves the last good numbers alone and says `stale`.
@@ -94,6 +101,7 @@ All of it in `~/.local/state/claude-watchdog[-<account>]/`, read by the dashboar
 | `status.tsv` | one row per session: id, window, pane, context, state, reset, what was spent, model, idle seconds, cwd, wound-at, opt-outs, pid |
 | `sched-why.tsv` | one verdict per pending entry: `due` · `waiting` · `blocked` · `stalled`, with its sentence |
 | `tree.tsv` | the window tree: slug, parent, window id, pane id, launched-at, entry file |
+| `windows.tsv` | the window snapshot, rewritten every pass the session is there; `windows.last.tsv` is the frozen one after a loss, `windows.restored.tsv` / `windows.declined.tsv` what became of it |
 | `usage.tsv` | the last usage reading and when it was taken |
 | `repos.tsv` | the dirty working trees it swept |
 | `heartbeat` | proof of life; the dashboard calls it "watchdog not running" past 75 s |

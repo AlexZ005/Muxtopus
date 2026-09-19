@@ -533,6 +533,26 @@ def lane_name(pid: int) -> str:
 # `w` and `m` keys reach them from every view, and a key should not have to
 # import a menu.
 # --------------------------------------------------------------------------
+def frozen_snapshot() -> tuple[Path, int, float] | None:
+    """The watchdog's FROZEN window snapshot (docs/restore.md): the file, how
+    many windows it holds, and when the session was last seen -- or None
+    while there is nothing to restore. One small read, no fork."""
+    f = WATCHDOG_DIR / "windows.last.tsv"
+    try:
+        lines = f.read_text().split("\n")
+    except OSError:
+        return None
+    seen = 0.0
+    head = lines[0].split("\t") if lines else []
+    if head and head[0] == "#lost" and len(head) >= 3:
+        try:
+            seen = float(head[2])
+        except ValueError:
+            seen = 0.0
+    rows = sum(1 for l in lines if l and not l.startswith("#"))
+    return (f, rows, seen)
+
+
 def toggle_watchdog() -> str:
     """Arm or disarm the re-prompt. The watchdog keeps polling and publishing
     either way -- the flag only decides whether it is allowed to TYPE into a
