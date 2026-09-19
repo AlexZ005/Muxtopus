@@ -8,6 +8,8 @@
 #   muxtopus infra ~/src/infra        a named session in a directory
 #   muxtopus -w infra ~/src/infra     both
 #   muxtopus -r                       start Claude with the resume picker
+#   muxtopus --restore[=FILE]         rebuild the windows a dead server took
+#                                     (docs/restore.md); plain muxtopus offers it
 #   muxtopus --create --profile=acme  a NEW account, without being asked first
 #   muxtopus -d --profile=acme        create it and return (for scripts)
 #   muxtopus -l                       list accounts, sessions and watchdogs
@@ -71,10 +73,12 @@ case "$_argv0" in
 esac
 case "$NAME_PROFILE" in *[!a-zA-Z0-9_-]*) NAME_PROFILE="" ;; esac
 
-RESUME=""; PROFILE=""; DETACH=0; NOWD=0; LIST=0; SHOWCFG=0; CREATE=0
+RESUME=""; PROFILE=""; DETACH=0; NOWD=0; LIST=0; SHOWCFG=0; CREATE=0; RESTORE=0; RESTORE_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -r|--resume)       RESUME="--resume"; shift ;;
+    --restore)         RESTORE=1; shift ;;
+    --restore=*)       RESTORE=1; RESTORE_FILE="${1#--restore=}"; shift ;;
     -w|--work)         PROFILE="work"; shift ;;
     --profile=*)       PROFILE="${1#--profile=}"; shift ;;
     -P|--profile)      [ -n "${2:-}" ] || { echo "muxtopus: --profile needs a name" >&2; exit 2; }
@@ -85,7 +89,7 @@ while [ $# -gt 0 ]; do
     -l|--list)         LIST=1; shift ;;
     -c|--config)       SHOWCFG=1; shift ;;
     -V|--version)      cat "$_dir/VERSION" 2>/dev/null || echo "?"; exit 0 ;;
-    -h|--help)         sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help)         sed -n '2,25p' "$0"; exit 0 ;;
     --)                shift; break ;;
     -*)                echo "muxtopus: unknown option: $1" >&2; exit 2 ;;
     *)                 break ;;
@@ -96,6 +100,31 @@ done
 # A profile name becomes a path segment (~/.claude-<name>, profiles/<name>.conf)
 # and a tmux session name, so it is letters, digits, - and _ or nothing.
 case "$PROFILE" in *[!a-zA-Z0-9_-]*) echo "muxtopus: bad profile name: $PROFILE" >&2; exit 2 ;; esac
+
+# --------------------------------------------------------------- snapshot
+# THE WINDOWS A DEAD SERVER TOOK (docs/restore.md). The watchdog freezes its
+# last window snapshot as $MUX_STATE/windows.last.tsv when the session is
+# gone; these read it, and `claude-watchdog.sh --restore` rebuilds from it.
+mux_snapshot_rows() { grep -vc '^#' "$1" 2>/dev/null || echo 0; }
+mux_snapshot_seen() {  # the epoch the session was last seen, from the header
+  awk -F'\t' 'NR==1{ if ($1=="#lost") print $3; else if ($1=="#seen") print $2; exit }' "$1" 2>/dev/null
+}
+mux_snapshot_when() { date -d "@$(mux_snapshot_seen "$1")" '+%Y-%m-%d %H:%M' 2>/dev/null || echo '?'; }
+# One phrase for `muxtopus -l`: what snapshot this account has, if any.
+mux_snapshot_line() {
+  local f
+  if [ -f "$MUX_STATE/windows.last.tsv" ]; then
+    f="$MUX_STATE/windows.last.tsv"
+    printf '%s windows, frozen at %s' "$(mux_snapshot_rows "$f")" "$(mux_snapshot_when "$f")"
+  elif [ -f "$MUX_STATE/windows.declined.tsv" ]; then
+    f="$MUX_STATE/windows.declined.tsv"
+    printf '%s windows, declined (%s)' "$(mux_snapshot_rows "$f")" "$(mux_snapshot_when "$f")"
+  elif [ -f "$MUX_STATE/windows.tsv" ]; then
+    printf '%s windows, live' "$(mux_snapshot_rows "$MUX_STATE/windows.tsv")"
+  else
+    printf -- '-'
+  fi
+}
 
 # ------------------------------------------------------------------ stats
 # The insights report on the command line: muxstats.py reads the account's
@@ -116,7 +145,7 @@ fi
 
 # ------------------------------------------------------------------- list
 if [ "$LIST" = 1 ]; then
-  printf '%-12s %-24s %-10s %s\n' ACCOUNT SESSION LOGGED-IN WATCHDOG
+  printf '%-12s %-24s %-10s %-22s %s\n' ACCOUNT SESSION LOGGED-IN WATCHDOG SNAPSHOT
   while IFS= read -r p; do
     mux_use_profile "$p"
     sess="-"
@@ -129,7 +158,7 @@ if [ "$LIST" = 1 ]; then
     elif [ -f "${XDG_RUNTIME_DIR:-/tmp}/muxtopus-wd$MUX_SUFFIX.pid" ]; then
       wd="running (no systemd)"
     fi
-    printf '%-12s %-24s %-10s %s\n' "$MUX_LABEL" "$sess" "$login" "$wd"
+    printf '%-12s %-24s %-10s %-22s %s\n' "$MUX_LABEL" "$sess" "$login" "$wd" "$(mux_snapshot_line)"
   done < <(mux_profiles)
   exit 0
 fi
@@ -228,6 +257,42 @@ DIR="${2:-$HOME}"
 STATUS="$_dir/deck-status.sh"
 STATUS_CMD="if [ -x \"$STATUS\" ]; then \"$STATUS\"; else echo 'dashboard not found'; exec bash; fi; exec bash"
 
+# WHAT TO REBUILD, if anything (docs/restore.md). --restore names it outright.
+# Otherwise: no session, a frozen snapshot younger than WATCHDOG_RESTORE_MAX_AGE
+# hours, and WATCHDOG_RESTORE decides -- `ask` at a terminal (never under -d:
+# a script cannot answer), `auto` without asking, `off` never. A declined
+# snapshot is renamed so it is not asked about again; --restore=<path> still
+# takes it. The check comes AFTER the watchdog is up, because the daemon is
+# what keeps the record and what will rebuild it.
+RESTORE_FROM=""
+_snap="$MUX_STATE/windows.last.tsv"
+if [ "$RESTORE" = 1 ]; then
+  RESTORE_FROM="${RESTORE_FILE:-$_snap}"
+  [ -f "$RESTORE_FROM" ] || { echo "muxtopus: no snapshot at $RESTORE_FROM" >&2; exit 1; }
+elif ! mux_tmux has-session -t "=$SESSION" 2>/dev/null && [ -f "$_snap" ] \
+     && [ "$SESSION" = "$MUX_TMUX" ]; then
+  _age=$(( $(date +%s) - $(mux_snapshot_seen "$_snap" || echo 0) ))
+  _k="$(mux_snapshot_rows "$_snap")"; _when="$(mux_snapshot_when "$_snap")"
+  if [ "$_age" -le $(( ${WATCHDOG_RESTORE_MAX_AGE:-24} * 3600 )) ] && [ "$_k" -gt 0 ]; then
+    case "${WATCHDOG_RESTORE:-ask}" in
+      auto) RESTORE_FROM="$_snap"
+            echo "muxtopus: WATCHDOG_RESTORE=auto -- restoring $_k windows frozen at $_when" >&2 ;;
+      off)  ;;
+      *)    if [ "$DETACH" != 1 ] && [ -t 0 ] && [ -t 2 ]; then
+              printf 'muxtopus: the tmux session is gone but the watchdog kept its windows.\n' >&2
+              printf '          restore %s windows from %s? [Y/n] ' "$_k" "$_when" >&2
+              read -r ans
+              case "$ans" in n|N|no|NO) mv "$_snap" "$MUX_STATE/windows.declined.tsv"
+                                        echo "muxtopus: not restored; kept as windows.declined.tsv (muxtopus --restore=<path> takes it)" >&2 ;;
+                             *) RESTORE_FROM="$_snap" ;;
+              esac
+            else
+              echo "muxtopus: a frozen snapshot of $_k windows ($_when) is waiting -- muxtopus --restore puts them back" >&2
+            fi ;;
+    esac
+  fi
+fi
+
 if ! mux_tmux has-session -t "=$SESSION" 2>/dev/null; then
   # A NEW session gets two windows: 0 = the live dashboard (the landing page),
   # 1 = Claude. Attaching lands on 0, so the state of the machine is the first
@@ -243,7 +308,9 @@ if ! mux_tmux has-session -t "=$SESSION" 2>/dev/null; then
   # The server's environment outlives any one session, so a variable left there
   # by an earlier account would be handed to every window opened here.
   [ -n "$MUX_PROFILE" ] || mux_tmux set-environment -u -t "=$SESSION" CLAUDE_CONFIG_DIR 2>/dev/null
-  mux_tmux new-window -t "=$SESSION" -c "$DIR" -n claude \
+  # A RESTORE brings the claude windows itself, the real ones with their
+  # sessions; only a fresh start gets the default one.
+  [ -n "$RESTORE_FROM" ] || mux_tmux new-window -t "=$SESSION" -c "$DIR" -n claude \
     "${MUX_TMUX_ENV[@]}" \
     "claude $RESUME; exec bash"
   mux_tmux select-window -t "=$SESSION:0"
@@ -263,6 +330,16 @@ else
         mux_tmux respawn-pane -k -t "=$SESSION:status" -c "$DIR" "${MUX_TMUX_ENV[@]}" "$STATUS_CMD" 2>/dev/null ;;
     esac
   fi
+fi
+
+# THE REBUILD, into the session that now exists: the watchdog's own recipe,
+# window by window (claude-watchdog.sh --restore). Its summary is printed
+# here; the detail is in the watchdog's log.
+if [ -n "$RESTORE_FROM" ]; then
+  if [ -n "$MUX_PROFILE" ]; then "$_dir/claude-watchdog.sh" --profile "$MUX_PROFILE" --restore "$RESTORE_FROM"
+  else "$_dir/claude-watchdog.sh" --restore "$RESTORE_FROM"; fi
+  _rrc=$?
+  [ "$_rrc" = 0 ] || echo "muxtopus: the restore had trouble (exit $_rrc); see $MUX_STATE/log" >&2
 fi
 
 if [ "$DETACH" = 1 ]; then

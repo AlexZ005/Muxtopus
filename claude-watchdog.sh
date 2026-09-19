@@ -7,6 +7,8 @@
 #   claude-watchdog.sh --daemon      poll forever (the systemd unit uses this)
 #   claude-watchdog.sh --status      print the state table it publishes
 #   claude-watchdog.sh --tree        the window tree this scheduler keeps
+#   claude-watchdog.sh --restore [F] rebuild the windows of a frozen snapshot
+#                                    (windows.last.tsv, or F) in the session
 #   claude-watchdog.sh --check [NAME] resolve schedule entries; launch nothing
 #                                    (NAME is a file, a basename or a slug;
 #                                     add --body to see the exact paste)
@@ -330,6 +332,7 @@ case "${1:---once}" in
              printf 'sha\t%s\nyes\t%s\nquestion\t%s\n%s\n' "$PROMPT_SHA" "$PROMPT_YES" "$PROMPT_Q" "$PROMPT_BOX"
              exit 0 ;;
   --tree)    MODE=tree ;;
+  --restore) MODE=restore; RESTORE_FILE="${2:-}" ;;
   --check)   MODE=check; CHECK_ARG="${2:-}"; CHECK_BODY=""
              case "${2:-}" in --body) CHECK_ARG=""; CHECK_BODY=1 ;; esac
              case "${3:-}" in --body) CHECK_BODY=1 ;; esac ;;
@@ -1398,6 +1401,45 @@ sched_send_rc() {
   log "schedule $(basename "$f"): sent /rc to $pane"
 }
 
+# ------------------------------------------------------------ the recipe
+# GETTING A WINDOW TO A PROMPT AND HANDING IT TEXT, in one place. The
+# scheduler's launcher and the restore both open a window running claude and
+# then need exactly this; two copies would drift the moment the TUI changes
+# what it draws.
+#
+# pane_ready PANE [TRIES]: 0 once ❯ is on screen, polling every half second
+# for TRIES (60: thirty seconds). The TRUST DIALOG is answered once on the
+# way -- trust is per exact path in ~/.claude.json and none of the lane
+# worktrees carry it, so the dialog is the common case, not an edge.
+# PANE_TRUSTED is left set when it was.
+pane_ready() {
+  local pane="$1" tries="${2:-60}" i txt
+  PANE_TRUSTED=""
+  for i in $(seq 1 "$tries"); do
+    sleep 0.5
+    txt="$(mux_tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
+    if [ -z "$PANE_TRUSTED" ] && grep -q "trust this folder" <<<"$txt"; then
+      PANE_TRUSTED=1
+      mux_tmux send-keys -t "$pane" Down 2>/dev/null; sleep 0.4
+      mux_tmux send-keys -t "$pane" Enter 2>/dev/null; sleep 1
+      continue
+    fi
+    grep -q '❯' <<<"$txt" && return 0
+  done
+  return 1
+}
+
+# pane_paste PANE FILE: PASTE, never send-keys -- a multi-line body through
+# send-keys submits at every newline. Bracketed paste (-p) hands the TUI one
+# paste event; one Enter sends it.
+pane_paste() {
+  local pane="$1" f="$2"
+  mux_tmux load-buffer -b schedbody "$f" 2>/dev/null
+  mux_tmux paste-buffer -d -b schedbody -p -t "$pane" 2>/dev/null
+  sleep 1
+  mux_tmux send-keys -t "$pane" Enter 2>/dev/null
+}
+
 # THE SESSION ID BEHIND A PANE WE JUST OPENED. The opt-out files are keyed by
 # session id, and that id does not exist until claude mints it at startup and
 # publishes it in sessions/<pid>.json, whose .tmux ends in the pane id. So an
@@ -1420,7 +1462,7 @@ sched_pane_sid() {
 
 launch_schedule() {
   local f="$1" why="${2:-}"
-  local type at title win cwd tmpl slug wname idx pane bodyf txt i ready did_trust warn model effort
+  local type at title win cwd tmpl slug wname idx pane bodyf warn model effort
   local parent depth wid wd_off mon_off sid rc_on
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
@@ -1525,22 +1567,8 @@ launch_schedule() {
     rm -f "$bodyf"; return 1
   fi
 
-  # Wait for a prompt, answering the TRUST DIALOG on the way: trust is per
-  # exact path in ~/.claude.json and none of the lane worktrees carry it, so
-  # the dialog is the common case here, not an edge.
-  ready=""; did_trust=""
-  for i in $(seq 1 60); do
-    sleep 0.5
-    txt="$(mux_tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
-    if [ -z "$did_trust" ] && grep -q "trust this folder" <<<"$txt"; then
-      did_trust=1
-      mux_tmux send-keys -t "$pane" Down 2>/dev/null; sleep 0.4
-      mux_tmux send-keys -t "$pane" Enter 2>/dev/null; sleep 1
-      continue
-    fi
-    grep -q '❯' <<<"$txt" && { ready=1; break; }
-  done
-  if [ -z "$ready" ]; then
+  # Wait for a prompt, answering the trust dialog on the way (pane_ready).
+  if ! pane_ready "$pane"; then
     sched_mark "$f" error
     log "schedule $(basename "$f"): claude never reached a prompt in $wname"
     rm -f "$bodyf"; return 1
@@ -1570,12 +1598,7 @@ launch_schedule() {
   # starting has nowhere to type it) and before the paste (see sched_send_rc).
   [ -n "$rc_on" ] && sched_send_rc "$pane" "$f"
 
-  # PASTE, never send-keys: a multi-line body through send-keys submits at
-  # every newline. Bracketed paste (-p) hands the TUI one paste event.
-  mux_tmux load-buffer -b schedbody "$bodyf" 2>/dev/null
-  mux_tmux paste-buffer -d -b schedbody -p -t "$pane" 2>/dev/null
-  sleep 1
-  mux_tmux send-keys -t "$pane" Enter 2>/dev/null
+  pane_paste "$pane" "$bodyf"
   rm -f "$bodyf"
 
   tree_record "$slug" "$parent" "$wid" "$pane" "$f"
@@ -1584,6 +1607,141 @@ launch_schedule() {
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
   log "schedule $(basename "$f"): launched $wname (win $wid pane $pane) type=$type slug=$slug${parent:+ parent=$parent}${model:+ model=$model}${effort:+ effort=$effort}${pmode:+ perm=$pmode}${wd_off:+ watchdog=off}${mon_off:+ monitor=off}${rc_on:+ rc=on} -- ${why:-due}"
+}
+
+# ------------------------------------------------------------ --restore
+# REBUILD THE WINDOWS OF A SNAPSHOT (docs/restore.md) into $MUX_TMUX, which
+# must exist -- muxtopus makes it, and `muxtopus --restore` does both.
+#
+# Each row, in file order: a window at its saved index when that index is
+# free, else appended, so the order holds either way and a subtree stays
+# contiguous; the saved name; the saved cwd, or $HOME when the folder is
+# gone. A row whose session has a transcript runs `claude --resume <sid>`
+# with the saved model, effort and permission mode, then `exec bash` so a
+# claude that exits leaves a shell in the right place; a row with no
+# session, or one whose transcript is gone, is a plain shell there and the
+# log says which. Every ➥ window goes back into the tree with its saved
+# parent. `status` is skipped (muxtopus draws the dashboard itself), and so
+# is a session already live in this account: running this twice cannot
+# resume a session twice.
+#
+# THE WINDOWS ARE OPENED FIRST AND WAITED FOR SECOND, so K claudes start
+# side by side and the wait is the slowest one rather than the sum. Each
+# ready pane is handed one line by the launcher's own recipe (pane_ready,
+# pane_paste), so what a restored window sees is what a scheduled one does.
+restore_live_sids() {
+  local f pid
+  for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
+    [ -f "$f" ] || continue
+    pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || continue
+    jq -r '.sessionId // empty' "$f" 2>/dev/null
+  done
+}
+
+restore_windows() {
+  local f="$1" tag a b seen lost ts live idxs
+  local wid idx name cwd pane sid parent model effort pmode src pid
+  local -a R_NAME=() R_PANE=() R_WID=() R_SID=() R_PARENT=() R_KIND=()
+  local n=0 i k=0 plain=0 skipped=0 cmd newpane newwid newidx notef slug rc=0
+  [ -f "$f" ] || { echo "restore: no snapshot at $f" >&2; return 1; }
+  if ! mux_tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
+    echo "restore: no tmux session '$MUX_TMUX' -- run muxtopus first (muxtopus --restore does both)" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r tag a b < "$f"
+  case "$tag" in
+    '#lost') lost="$a"; seen="$b" ;;
+    '#seen') seen="$a"; lost="" ;;
+    *) seen=""; lost="" ;;
+  esac
+  ts="$(date -d "@${seen:-$(date +%s)}" '+%Y-%m-%d %H:%M' 2>/dev/null)"
+  live="$(restore_live_sids | paste -sd, -)"
+  idxs=",$(mux_tmux list-windows -t "=$MUX_TMUX" -F '#{window_index}' 2>/dev/null | paste -sd, -),"
+  log "restore: rebuilding the windows of $(basename "$f") (last seen $ts) in '$MUX_TMUX'"
+
+  # 1. Open every window, in file order.
+  while IFS=$'\t' read -r wid idx name cwd pane sid parent model effort pmode src pid; do
+    case "$wid" in ''|'#'*) continue ;; esac
+    [ "$name" = status ] && continue
+    n=$(( n + 1 ))
+    [ "$sid" = - ] && sid=""
+    [ "$parent" = - ] && parent=""
+    [ "$model" = - ] && model=""
+    [ "$effort" = - ] && effort=""
+    [ "$pmode" = - ] && pmode=""
+    [ "$cwd" = - ] && cwd="$HOME"
+    if [ -n "$sid" ] && [[ ",$live," == *",$sid,"* ]]; then
+      skipped=$(( skipped + 1 ))
+      log "restore: $name: session ${sid:0:8} is already live here; skipped"
+      continue
+    fi
+    if [ ! -d "$cwd" ]; then
+      log "restore: $name: $cwd is gone; opening in $HOME"
+      cwd="$HOME"
+    fi
+    # The same sanity the launcher applies: an odd flag is dropped, not passed.
+    case "$model" in *[!a-zA-Z0-9._\[\]-]*) model="" ;; esac
+    [ -z "$effort" ] || sched_effort_ok "$effort" || effort=""
+    if [ -n "$pmode" ]; then pmode="$(sched_perm_canon "$pmode")" || pmode=""; fi
+    case "$sid" in *[!a-zA-Z0-9-]*) sid="" ;; esac
+    local -a targs=()
+    if [ -n "$idx" ] && [ "$idx" != - ] && [[ "$idxs" != *",$idx,"* ]]; then
+      targs=(-t "$MUX_TMUX:$idx"); idxs="$idxs$idx,"
+    else
+      targs=(-t "$MUX_TMUX:")
+    fi
+    cmd=""
+    if [ -n "$sid" ] && transcript_of "$sid" >/dev/null; then
+      cmd="$HOME/.local/bin/claude --resume $sid${model:+ --model $model}${effort:+ --effort $effort}${pmode:+ --permission-mode $pmode}; exec bash"
+    elif [ -n "$sid" ]; then
+      log "restore: $name: no transcript for session $sid; a plain window in $cwd"
+    fi
+    # The index it actually got is read back: an appended window takes the
+    # lowest free index, which may be the one the next row would ask for.
+    if [ -n "$cmd" ]; then
+      read -r newpane newwid newidx < <(mux_tmux new-window -d -P -F '#{pane_id} #{window_id} #{window_index}' \
+        "${targs[@]}" -n "$name" -c "$cwd" "${MUX_TMUX_ENV[@]}" "$cmd" 2>/dev/null)
+    else
+      read -r newpane newwid newidx < <(mux_tmux new-window -d -P -F '#{pane_id} #{window_id} #{window_index}' \
+        "${targs[@]}" -n "$name" -c "$cwd" "${MUX_TMUX_ENV[@]}" 2>/dev/null)
+    fi
+    if [ -z "$newpane" ]; then
+      log "restore: $name: could not open a tmux window"; rc=1
+      continue
+    fi
+    idxs="$idxs${newidx:--},"
+    R_NAME+=("$name"); R_PANE+=("$newpane"); R_WID+=("$newwid"); R_SID+=("$sid")
+    R_PARENT+=("$parent")
+    if [ -n "$cmd" ]; then R_KIND+=(claude); else R_KIND+=(plain); plain=$(( plain + 1 )); fi
+  done < "$f"
+
+  # 2. The tree, in the same order, so a parent's row exists before its child's.
+  for i in "${!R_NAME[@]}"; do
+    case "${R_NAME[$i]}" in ➥*) ;; *) continue ;; esac
+    slug="${R_NAME[$i]//➥/}"
+    [ -n "$slug" ] && tree_record "$slug" "${R_PARENT[$i]}" "${R_WID[$i]}" "${R_PANE[$i]}" "(restored)"
+  done
+
+  # 3. Wait for each claude, hand it the note.
+  notef="$STATE_DIR/restore-note.$$"
+  printf '[muxtopus] restored after the tmux server was lost at %s; carry on\n' "$ts" > "$notef"
+  for i in "${!R_NAME[@]}"; do
+    [ "${R_KIND[$i]}" = claude ] || continue
+    if pane_ready "${R_PANE[$i]}"; then
+      pane_paste "${R_PANE[$i]}" "$notef"
+      k=$(( k + 1 ))
+      log "restore: ${R_NAME[$i]}: resumed ${R_SID[$i]:0:8} in win ${R_WID[$i]} pane ${R_PANE[$i]}${PANE_TRUSTED:+ (trusted the folder)}"
+    else
+      log "restore: ${R_NAME[$i]}: claude never reached a prompt in win ${R_WID[$i]}; left as it is"
+      rc=1
+    fi
+  done
+  rm -f "$notef"
+  log "restore: done -- $k resumed, $plain plain, $skipped skipped, of $n row(s) from $(basename "$f")"
+  echo "restored $k window(s) with their sessions, $plain plain, $skipped already live (of $n, last seen $ts)"
+  [ "$f" = "$SNAPSHOT_LAST" ] && mv "$f" "$STATE_DIR/windows.restored.tsv"
+  return "$rc"
 }
 
 # ------------------------------------------------------------- --check
@@ -2830,6 +2988,11 @@ fi
 
 if [ "$MODE" = check ]; then
   sched_check "${CHECK_ARG:-}" "${CHECK_BODY:-}"
+  exit $?
+fi
+
+if [ "$MODE" = restore ]; then
+  restore_windows "${RESTORE_FILE:-$SNAPSHOT_LAST}"
   exit $?
 fi
 

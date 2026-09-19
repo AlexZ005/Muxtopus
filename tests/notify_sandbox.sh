@@ -26,7 +26,9 @@ sb_init() {
   export XDG_DATA_HOME="$SB/home/.local/share" XDG_RUNTIME_DIR="$SB/run"
   export MUXTOPUS_CONFIG="$SB/home/.config/muxtopus/config"
   export CLAUDE_NOTIFY_CONF="$SB/notify.conf"
-  unset CLAUDE_CONFIG_DIR TMUX TMUX_PANE MUXTOPUS_HOME MUXTOPUS_PROFILES_DIR
+  # MUXTOPUS_DIR too: exported by profile.sh into every lane window, it would
+  # send a muxtopus run here to the MAIN checkout's profile.sh, not this one's.
+  unset CLAUDE_CONFIG_DIR TMUX TMUX_PANE MUXTOPUS_HOME MUXTOPUS_PROFILES_DIR MUXTOPUS_DIR
   for k in $(compgen -e); do
     case "$k" in WATCHDOG_*|DASHBOARD_*|MUXTOPUS_NOTIFY_*) unset "$k" ;; esac
   done
@@ -53,6 +55,8 @@ sb_init() {
 printf '%s\n' "$*" >> "$HOME/fake-claude.argv"
 cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 sid="fake-$$-$RANDOM"
+# --resume SID publishes THAT id, as the real CLI does.
+prev=""; for a in "$@"; do [ "$prev" = --resume ] && sid="$a"; prev="$a"; done
 mkdir -p "$cfg/sessions"
 printf '{"pid":%s,"sessionId":"%s","cwd":"%s","version":"0.0.0","status":"idle","kind":"interactive","tmux":"%s"}\n' \
   "$$" "$sid" "$PWD" "sandbox:@0.${TMUX_PANE:-}" > "$cfg/sessions/$$.json"
