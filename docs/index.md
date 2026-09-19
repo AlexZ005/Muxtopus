@@ -33,6 +33,7 @@ The second half of the problem is accounts. A personal and a work account on one
 | open a window later, or under another one, or after another lane finishes | [Scheduled windows](schedules.md) |
 | hand work from one window to the next, and answer a lane's questions | [Handovers and questions](handovers.md) |
 | know what the daemon does and when it types into a pane | [The watchdog](watchdog.md) |
+| get the windows back after the tmux server died | [Restore after a lost server](restore.md) |
 | be told on your phone, and answer from it | [Notifications](notifications.md) |
 | see what was used and what it would have cost | [Insights and `muxtopus stats`](stats.md) |
 | change a default | [Configuration](configuration.md) |

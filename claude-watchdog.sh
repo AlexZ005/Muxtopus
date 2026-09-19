@@ -140,6 +140,19 @@ TREE="$STATE_DIR/tree.tsv"
 # of files it happens to rewrite. So it says so directly, and the dashboard
 # renders it as "scanned 12s ago".
 HEARTBEAT="$STATE_DIR/heartbeat"
+# THE WINDOW SNAPSHOT (docs/restore.md), rewritten every pass the session is
+# there, one row per window of $MUX_TMUX in index order:
+#   #seen <TAB> epoch
+#   window-id  index  name  cwd  pane-id  session-id  parent  model  effort
+#   permission-mode  source  claude-pid
+# A pass that finds NO session does not write an empty one: the live file is
+# FROZEN as windows.last.tsv (header `#lost <noticed> <last-seen>`), which is
+# what `muxtopus --restore` rebuilds the windows from. This daemon outlives
+# the server -- a unit, or a nohup -- so it is the thing that remembers; on
+# 2026-09-19 a kill-server typed into the wrong socket took every lane
+# window and nothing could say what had been open.
+SNAPSHOT="$STATE_DIR/windows.tsv"
+SNAPSHOT_LAST="$STATE_DIR/windows.last.tsv"
 # ...and the log gets one line an hour anyway, because the file above is the
 # CURRENT answer and a log is the only thing that can answer "was it running at
 # 4am". 0 turns it off.
@@ -1887,6 +1900,119 @@ heartbeat() {
   return 0
 }
 
+# ---------------------------------------------------------- the snapshot
+# The launch flags a claude process was started with, from its own command
+# line: model <TAB> effort <TAB> permission-mode, each empty when absent.
+# /proc is the truth about what RAN -- a scheduled window's `--model fable
+# --effort high --permission-mode bypassPermissions` sits there verbatim --
+# and the schedule entry is the fallback for a process whose argv was
+# rewritten. Empty for a window opened by hand as bare `claude`, which is
+# right: it comes back the same way.
+snap_flags_of_pid() {
+  local pid="$1" a prev="" model="" effort="" pmode=""
+  if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ]; then
+    while IFS= read -r -d '' a; do
+      case "$prev" in
+        --model) model="$a" ;;
+        --effort) effort="$a" ;;
+        --permission-mode) pmode="$a" ;;
+      esac
+      case "$a" in
+        --model=*) model="${a#*=}" ;;
+        --effort=*) effort="${a#*=}" ;;
+        --permission-mode=*) pmode="${a#*=}" ;;
+      esac
+      prev="$a"
+    done < "/proc/$pid/cmdline"
+  fi
+  printf '%s\t%s\t%s' "$model" "$effort" "$pmode"
+}
+
+# One field, tabs and newlines out, `-` for nothing: a row is one line.
+snap_cell() {
+  local v="${1//$'\t'/ }"; v="${v//$'\n'/ }"
+  printf '%s' "${v:--}"
+}
+
+# Write the snapshot, or freeze it. Called once per pass after the session
+# loop (which filled SNAP_SID / SNAP_PID / SNAP_CWD by pane) and after the
+# tree was brought up to date, so parents are current. One tmux fork.
+declare -A SNAP_SID=() SNAP_PID=() SNAP_CWD=()
+snapshot_windows() {
+  local now="$1" wid idx name path pane sid pid cwd parent src model effort pmode f
+  if ! mux_tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
+    snapshot_freeze "$now"
+    return 0
+  fi
+  # The loss alert's family was looked at this pass: with the session here
+  # the key is not raised, so a frozen loss is "cleared" on the phone.
+  NOTIFY_FAM[server]=1
+  printf '#seen\t%s\n' "$now" > "$SNAPSHOT.tmp"
+  while IFS=$'\t' read -r wid idx name path pane; do
+    [ -n "$wid" ] || continue
+    sid="${SNAP_SID[$pane]-}"; pid="${SNAP_PID[$pane]-}"; cwd="${SNAP_CWD[$pane]-}"
+    [ -n "$cwd" ] || cwd="$path"
+    parent=""; src=""
+    if [ -f "$TREE" ]; then
+      parent="$(awk -F'\t' -v w="$wid" '$3==w{print $2; exit}' "$TREE")"
+      src="$(awk -F'\t' -v w="$wid" '$3==w{print $6; exit}' "$TREE")"
+    fi
+    model=""; effort=""; pmode=""
+    if [ -n "$pid" ]; then
+      IFS=$'\t' read -r model effort pmode < <(snap_flags_of_pid "$pid"; printf '\n')
+    fi
+    f="$SCHEDULES/$src"
+    if [ -n "$src" ] && [ -f "$f" ]; then
+      [ -n "$model" ] || model="$(sched_field "$f" model)"
+      [ -n "$effort" ] || effort="$(sched_field "$f" effort)"
+      [ -n "$pmode" ] || pmode="$(sched_perm_canon "$(sched_field "$f" permission-mode)" 2>/dev/null)"
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$wid" "$idx" "$(snap_cell "$name")" "$(snap_cell "$cwd")" "$pane" \
+      "$(snap_cell "$sid")" "$(snap_cell "$parent")" "$(snap_cell "$model")" \
+      "$(snap_cell "$effort")" "$(snap_cell "$pmode")" "$(snap_cell "$src")" \
+      "$(snap_cell "$pid")" >> "$SNAPSHOT.tmp"
+  done < <(mux_tmux list-windows -t "=$MUX_TMUX" \
+             -F $'#{window_id}\t#{window_index}\t#{window_name}\t#{pane_current_path}\t#{pane_id}' 2>/dev/null)
+  mv "$SNAPSHOT.tmp" "$SNAPSHOT"
+  return 0
+}
+
+# THE CRUX. No session: the live snapshot becomes windows.last.tsv, once,
+# with the time it was noticed and the time the session was last seen; one
+# log line; one alert through the ordinary path, keyed on the last-seen
+# time, so the phone hears it once per loss and not every thirty seconds
+# (and hears "cleared" when a session is back). A daemon restart re-sends
+# nothing: sent.tsv remembers the key. Under WATCHDOG_RESTORE=auto the
+# daemon also brings the session back itself, through muxtopus -d, which
+# restores under the same setting. A dry run freezes nothing.
+snapshot_freeze() {
+  local now="$1" seen="" lost="" k
+  NOTIFY_FAM[server]=1
+  [ "$DRY" = 1 ] && return 0
+  if [ -f "$SNAPSHOT" ]; then
+    seen="$(awk -F'\t' '$1=="#seen"{print $2; exit}' "$SNAPSHOT")"
+    { printf '#lost\t%s\t%s\n' "$now" "${seen:-$now}"; grep -v '^#' "$SNAPSHOT"; } > "$SNAPSHOT_LAST.tmp"
+    mv "$SNAPSHOT_LAST.tmp" "$SNAPSHOT_LAST"
+    rm -f "$SNAPSHOT"
+    k="$(grep -vc '^#' "$SNAPSHOT_LAST")"
+    log "tmux session '$MUX_TMUX' is gone: froze $k window(s) last seen $(date -d "@${seen:-$now}" '+%Y-%m-%d %H:%M:%S') into windows.last.tsv -- \`muxtopus --restore\` puts them back"
+    if [ "${WATCHDOG_RESTORE:-ask}" = auto ]; then
+      log "WATCHDOG_RESTORE=auto: relaunching muxtopus -d for $MUX_LABEL"
+      "$WD_SRC/muxtopus" ${MUX_PROFILE:+--profile "$MUX_PROFILE"} -d -n >> "$LOG" 2>&1 \
+        || log "muxtopus -d failed (exit $?); restore by hand: muxtopus --restore"
+    fi
+  fi
+  if [ -f "$SNAPSHOT_LAST" ]; then
+    IFS=$'\t' read -r _ lost seen < "$SNAPSHOT_LAST"
+    k="$(grep -vc '^#' "$SNAPSHOT_LAST")"
+    notify_alert "server:lost" "${seen:-0}" "${MUXTOPUS_NOTIFY_SESSION:-on}" \
+      "tmux session '$MUX_TMUX' lost" \
+      "$k window(s) last seen $(date -d "@${seen:-0}" '+%H:%M'); frozen at $(date -d "@${lost:-0}" '+%H:%M'). \`muxtopus\` offers to restore them; \`muxtopus --restore\` does it."
+  fi
+  return 0
+}
+
 # ----------------------------------------------------------- notifications
 # TELL THE PHONE, ONCE PER CHANGE. docs/plan-notify-telegram.md §1.
 #
@@ -2447,6 +2573,7 @@ pass() {
   local prev lane stranded pprev since
   # Rebuilt lazily, once per pass at most, by the stranded test below.
   SCHED_NAMED=""
+  SNAP_SID=(); SNAP_PID=(); SNAP_CWD=()
   notify_begin
   # Read once per pass, not once per session: every session is judged against
   # the same account-wide figures.
@@ -2471,6 +2598,9 @@ pass() {
     case "$pane" in cc-usage:*|cc-usage-*:*) continue ;; esac
 
     paneid="${pane##*.}"                            # claude:@1.%1 -> %1
+    if [ -n "$paneid" ]; then
+      SNAP_SID[$paneid]="$sid"; SNAP_PID[$paneid]="$pid"; SNAP_CWD[$paneid]="$cwd"
+    fi
     ctx=0; spent=0; rd=0; model="-"
     if tr="$(transcript_of "$sid")"; then
       ctx="$(context_tokens "$tr")"
@@ -2646,6 +2776,7 @@ pass() {
   sweep_repos
   tree_adopt
   tree_reparent
+  snapshot_windows "$now"
   check_schedules
   NOTIFY_FAM[waiting]=1; NOTIFY_FAM[stranded]=1
   if [ "$NOTIFY_READY" = 1 ]; then
