@@ -4,6 +4,40 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.1.0 — 2026-09-19
+
+A minor release: window restore adds a command-line flag (`--restore`) and two
+settings (`WATCHDOG_RESTORE`, `WATCHDOG_RESTORE_MAX_AGE`), and nothing a user
+touches was renamed or moved. The rest are fixes found by installing v5.0.0 on
+a fresh Ubuntu 25.04 machine.
+
+Upgrade by running the new release's `get.sh`, or `git pull && ./install.sh`
+in a checkout.
+
+### Restore
+
+#### muxtopus: the windows survive the tmux server dying
+
+- the watchdog keeps a snapshot of every window in the session (name, folder, Claude session id, parent, model/effort/permission mode) and freezes the last one when the session disappears, saying so once in the log and on the phone
+- `muxtopus` with no session and a fresh snapshot asks `restore K windows from <ts>? [Y/n]`; `muxtopus --restore` rebuilds them without asking, each running `claude --resume` on its session, in the saved order, names, folders and tree; `muxtopus -l` shows what is frozen; the dashboard's `esc` menu has the same action
+- `WATCHDOG_RESTORE=auto|ask|off` and `WATCHDOG_RESTORE_MAX_AGE` (hours) decide what is offered; `auto` also has the watchdog relaunch `muxtopus -d` the moment the server is gone
+- every tmux call names its server (`MUXTOPUS_TMUX_SOCKET`, default `default`), so a command typed inside a pane can no longer follow that pane's `$TMUX` to a server it did not mean; the identity lines every scheduled window is pasted say so too, and a repository test forbids a bare `tmux kill-server`
+
+### Install
+
+#### install: muxtopus is on PATH after install, and works under `su`
+
+- the installer adds `~/.local/bin` to `PATH` in `~/.profile` and `~/.bashrc` (or `~/.zshrc`) when it is missing, so `muxtopus` is found in the next shell; `--no-rc` skips it
+- under `su user`, which keeps root's `XDG_RUNTIME_DIR`, running `muxtopus` again no longer fails with "Permission denied" on the watchdog's pid file, and no longer starts a second watchdog each time
+- the background watchdog started without systemd no longer inherits the `$TMUX` of the pane it was started from
+
+### Relaunch
+
+#### muxtopus: relaunching from inside tmux works
+
+- after Quit, typing `muxtopus` at the prompt the dashboard window drops to starts the dashboard again, instead of failing with "sessions should be nested with care"
+- `muxtopus` run from a window of another tmux session switches that client over rather than refusing to nest
+
 ## v5.0.0 — 2026-09-19
 
 The first public release: the first tag, the first tarball, and the first
