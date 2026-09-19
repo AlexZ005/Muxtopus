@@ -155,7 +155,7 @@ if [ "$LIST" = 1 ]; then
     wd="off"
     if systemctl --user is-active --quiet "$MUX_UNIT" 2>/dev/null; then
       wd="running"; [ -f "$MUX_STATE/enabled" ] || wd="running (disarmed)"
-    elif [ -f "${XDG_RUNTIME_DIR:-/tmp}/muxtopus-wd$MUX_SUFFIX.pid" ]; then
+    elif kill -0 "$(cat "$(mux_run_dir)/muxtopus-wd$MUX_SUFFIX.pid" 2>/dev/null)" 2>/dev/null; then
       wd="running (no systemd)"
     fi
     printf '%-12s %-24s %-10s %-22s %s\n' "$MUX_LABEL" "$sess" "$login" "$wd" "$(mux_snapshot_line)"
@@ -231,17 +231,28 @@ watchdog_up() {
   # ordinary background process instead of doing nothing: the whole promise of
   # this tool is that a limited window comes back, and that must not depend on
   # which init the machine happens to use.
-  local pidf="${XDG_RUNTIME_DIR:-/tmp}/muxtopus-wd$MUX_SUFFIX.pid"
-  if [ -f "$pidf" ] && kill -0 "$(cat "$pidf" 2>/dev/null)" 2>/dev/null; then
+  # The pid file lives where mux_run_dir says (profile.sh: not root's runtime
+  # dir after `su`, not a shared /tmp). A pid in it counts only while it is a
+  # watchdog: after a reboot the same number is whatever got it next.
+  local pidf pid
+  pidf="$(mux_run_dir)/muxtopus-wd$MUX_SUFFIX.pid"
+  pid="$(cat "$pidf" 2>/dev/null)"
+  if [ -n "$pid" ] && ps -o args= -p "$pid" 2>/dev/null | grep -q 'claude-watchdog'; then
     return 0
   fi
+  # WITHOUT $TMUX, as systemd would start it. Run from inside a pane,
+  # muxtopus has the $TMUX of whatever server that pane is on -- a sandbox's,
+  # a nested one's -- and tmux follows $TMUX before TMUX_TMPDIR or the default
+  # socket, so a daemon that inherited it would drive that server for good.
   if [ -n "$MUX_PROFILE" ]; then
-    nohup "$wd" --profile "$MUX_PROFILE" --daemon >/dev/null 2>&1 &
+    nohup env -u TMUX -u TMUX_PANE "$wd" --profile "$MUX_PROFILE" --daemon >/dev/null 2>&1 &
   else
-    nohup "$wd" --daemon >/dev/null 2>&1 &
+    nohup env -u TMUX -u TMUX_PANE "$wd" --daemon >/dev/null 2>&1 &
   fi
-  echo $! > "$pidf"
-  echo "muxtopus: watchdog started in the background (no systemd here); pid $(cat "$pidf")" >&2
+  pid=$!
+  echo "$pid" > "$pidf" 2>/dev/null \
+    || echo "muxtopus: cannot write $pidf; the next run will start a second watchdog" >&2
+  echo "muxtopus: watchdog started in the background (no systemd here); pid $pid" >&2
 }
 [ "$NOWD" = 1 ] || watchdog_up
 
