@@ -225,6 +225,9 @@ SESSION="${1:-${MUXTOPUS_SESSION_PREFIX:-claude}}"
 [ -n "$MUX_SUFFIX" ] && SESSION="$SESSION$MUX_SUFFIX"
 DIR="${2:-$HOME}"
 
+STATUS="$_dir/deck-status.sh"
+STATUS_CMD="if [ -x \"$STATUS\" ]; then \"$STATUS\"; else echo 'dashboard not found'; exec bash; fi; exec bash"
+
 if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
   # A NEW session gets two windows: 0 = the live dashboard (the landing page),
   # 1 = Claude. Attaching lands on 0, so the state of the machine is the first
@@ -233,10 +236,9 @@ if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
   #
   # 'exec bash' keeps each window alive if its program exits, so a stray Ctrl-C
   # never destroys the session.
-  STATUS="$_dir/deck-status.sh"
   tmux new-session -d -s "$SESSION" -c "$DIR" -n status \
     "${MUX_TMUX_ENV[@]}" \
-    "if [ -x \"$STATUS\" ]; then \"$STATUS\"; else echo 'dashboard not found'; exec bash; fi; exec bash"
+    "$STATUS_CMD"
   # The DEFAULT account must find no CLAUDE_CONFIG_DIR in the session either.
   # The server's environment outlives any one session, so a variable left there
   # by an earlier account would be handed to every window opened here.
@@ -245,10 +247,33 @@ if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
     "${MUX_TMUX_ENV[@]}" \
     "claude $RESUME; exec bash"
   tmux select-window -t "=$SESSION:0"
+else
+  # The dashboard was QUIT: its window fell through to the 'exec bash' above
+  # and sits at a bare prompt. Running muxtopus again is the way back, so
+  # bring the dashboard up in that window again. Only a shell is replaced --
+  # anything else running there was put there on purpose.
+  # The dashboard is looked for by name, not by pane_current_command: its bash
+  # renderer (no venv) is a "bash" too, as is the muxtopus typed at the prompt.
+  _pp="$(tmux display-message -p -t "=$SESSION:status" '#{pane_pid}' 2>/dev/null)"
+  _pc="$(tmux display-message -p -t "=$SESSION:status" '#{pane_current_command}' 2>/dev/null)"
+  if [ -n "$_pp" ] && ! ps -o args= -p "$_pp" 2>/dev/null | grep -q 'deck[-_]status' \
+     && ! pgrep -P "$_pp" -f 'deck[-_]status' >/dev/null 2>&1; then
+    case "$_pc" in
+      bash|sh|zsh|fish|dash|muxtopus*)
+        tmux respawn-pane -k -t "=$SESSION:status" -c "$DIR" "${MUX_TMUX_ENV[@]}" "$STATUS_CMD" 2>/dev/null ;;
+    esac
+  fi
 fi
 
 if [ "$DETACH" = 1 ]; then
   echo "$SESSION"
   exit 0
+fi
+# INSIDE tmux already -- typed at the prompt Quit leaves behind, or from
+# another session's window -- attaching would nest a client in a pane and tmux
+# refuses ("sessions should be nested with care"). Move this client instead.
+if [ -n "${TMUX:-}" ]; then
+  tmux select-window -t "=$SESSION:status" 2>/dev/null
+  exec tmux switch-client -t "=$SESSION"
 fi
 exec tmux attach-session -t "=$SESSION"

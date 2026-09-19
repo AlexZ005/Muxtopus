@@ -134,7 +134,7 @@ The first switch **excludes one session from the watchdog** (the green checkmark
 
 ## The muxtopus menu (`esc`) and Settings
 
-What is not about one row: **Settings**, **Insights**, the watchdog and monitor switches by their full names (`w` and `m` stay the fast path), **Disconnect** (`tmux detach-client`; the dashboard and every window keep running, `muxtopus` attaches again), **Reload** (what `R` does) and **Quit**.
+What is not about one row: **Settings**, **Insights**, the watchdog and monitor switches by their full names (`w` and `m` stay the fast path), **Disconnect** (`tmux detach-client`; the dashboard and every window keep running, `muxtopus` attaches again), **Reload** (what `R` does) and **Quit** (the window drops to a shell prompt; typing `muxtopus` there, or anywhere, brings the dashboard back).
 
 Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.dashboard.conf` for a named account), a file the dashboard owns — see [Configuration](configuration.md) — and every one is read back from disk before it is reported as saved: the menu layout, the permission mode, model and effort preselected for a new window, whether such a window is watched and monitored, the working folder offered first, which `settings.json` "make it the default" writes to, the two handovers-tab filters, under **Notifications ▸** what the phone is told, and under **Tabs ▸** which tabs the strip shows (see [Tabs and small terminals](#tabs-and-small-terminals)).
 
