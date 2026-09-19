@@ -53,6 +53,8 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | the handover reader, the states and the fork parser | `tests/test_handovers.py` | yes |
 | `handover.sh`: the marker, and what `done` carries with it | `tests/test_handover_sh.sh` | yes |
 | this manual: front matter, links, Liquid-safe bodies, nothing lost from the README | `tests/test_manual.py` | yes |
+| `install.sh`: the PATH line in the shell rc, once | `tests/test_install_path.sh` | no — local |
+| where the no-systemd watchdog's pid file goes, under `su` | `tests/test_run_dir.sh` | no — local |
 | the notify shell: setup, pull, inbound, forks, the watchdog's pushes | `tests/test_notify_*.sh`, `tests/test_stats_watchdog.sh` | no — local |
 | the picture, 148 golden screens | `tests/sandbox/goldens.sh` | no — local |
 | the rows that WRITE something | `tests/sandbox/actions.sh` | no — local |

@@ -8,6 +8,7 @@
 #   ./install.sh --no-watchdog   skip the watchdog service
 #   ./install.sh --no-venv       do not build .venv (the dashboard then runs its
 #                                plain bash renderer unless python3 has rich)
+#   ./install.sh --no-rc         do not add the bin dir to PATH in your shell rc
 #
 # ONE NAME ON PATH: muxtopus. Not `mux`, which is already several other tools,
 # and never `cc`, which on any machine with a C toolchain is the C compiler --
@@ -35,6 +36,7 @@ BIN="$HOME/.local/bin"
 HOME_DIR=""
 WATCHDOG=1
 VENV=1
+RC=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,7 +47,8 @@ while [ $# -gt 0 ]; do
                    BIN="$2"; shift 2 ;;
     --no-watchdog) WATCHDOG=0; shift ;;
     --no-venv)     VENV=0; shift ;;
-    -h|--help)     sed -n '2,10p' "$0"; exit 0 ;;
+    --no-rc)       RC=0; shift ;;
+    -h|--help)     sed -n '2,11p' "$0"; exit 0 ;;
     *)             echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -187,9 +190,46 @@ for old in mux cc cw; do
     "$SRC/mux"|"$SRC/muxtopus") run rm -f "$BIN/$old"; ok "removed the old link $BIN/$old" ;;
   esac
 done
+# ~/.local/bin IS NOT ON PATH ON EVERY MACHINE. Ubuntu's stock ~/.profile adds
+# it only if it exists at login, a user made with `useradd` and no skel has no
+# rc file at all, and a container has whatever its image had. Saying "add it"
+# and stopping made the first thing after every install a line to paste
+# (measured: a fresh Ubuntu 25.04 user), so the line goes into the shell rc
+# here, once, behind a marker. TWO FILES FOR BASH, because `ssh user@host` is
+# a login shell that reads ~/.profile and `su user` an interactive one that
+# reads only ~/.bashrc; a file that already names the directory (Ubuntu's
+# skel does) is left alone, since the next login picks it up. fish is not sh
+# and gets the line to type. The current shell cannot be changed from here --
+# least of all through `curl | bash` -- so the line is printed for it too.
+# This is the one write outside ~/.config and ~/.local; --no-rc skips it.
+path_into_rc() {
+  local short="$BIN" tilde="$BIN" line f
+  case "$BIN" in
+    "$HOME"/*) short="\$HOME${BIN#"$HOME"}"; tilde="~${BIN#"$HOME"}" ;;
+  esac
+  line="export PATH=\"$short:\$PATH\""
+  local files=()
+  case "$(basename -- "${SHELL:-sh}")" in
+    fish) warn "$BIN is NOT on PATH; for fish:  fish_add_path $BIN"; return 0 ;;
+    zsh)  files=("$HOME/.zshrc") ;;
+    *)    files=("$HOME/.profile" "$HOME/.bashrc") ;;
+  esac
+  for f in "${files[@]}"; do
+    if [ -f "$f" ] && grep -Fq -e "$BIN" -e "$short" -e "$tilde" "$f"; then
+      skip "$f already mentions $BIN"
+    elif [ "$DRY" = 1 ]; then
+      printf '    \033[90m$ echo %s >> %s\033[0m\n' "'$line'" "$f"
+    else
+      printf '\n# muxtopus (install.sh): the muxtopus link lives here\n%s\n' "$line" >> "$f"
+      ok "$f: $line"
+    fi
+  done
+  warn "PATH changes at your next login; for this shell:  $line"
+}
 case ":$PATH:" in
   *":$BIN:"*) ok "$BIN is on PATH" ;;
-  *) warn "$BIN is NOT on PATH -- add it:  export PATH=\"$BIN:\$PATH\"" ;;
+  *) if [ "$RC" = 1 ]; then path_into_rc
+     else warn "$BIN is NOT on PATH -- add it:  export PATH=\"$BIN:\$PATH\""; fi ;;
 esac
 echo "    shorthands, if you want them, go in your shell rc (interactive only):"
 echo "      alias cc='muxtopus'"

@@ -18,7 +18,7 @@ claude-watchdog.sh --on | --off        # arm / disarm (or `w` on the dashboard)
 claude-watchdog.sh --reload            # re-read the config now
 ```
 
-It is a `systemd --user` unit where systemd exists (`claude-watchdog.service`, `claude-watchdog-work.service`), otherwise a plain background process. With lingering on it starts at boot; see [After a reboot](install.md#after-a-reboot).
+It is a `systemd --user` unit where systemd exists (`claude-watchdog.service`, `claude-watchdog-work.service`), otherwise a plain background process. That process's pid file is `muxtopus-wd.pid` in `$XDG_RUNTIME_DIR` when that directory is yours, and in a private `/tmp/muxtopus-<uid>/` otherwise, which is what `su user` needs, since it keeps root's runtime dir. With lingering on it starts at boot; see [After a reboot](install.md#after-a-reboot).
 
 ## What a pass does
 

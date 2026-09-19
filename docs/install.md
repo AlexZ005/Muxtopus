@@ -37,7 +37,10 @@ Either way, `install.sh` does the same things. It symlinks `muxtopus` into `~/.l
 ./install.sh --bin DIR        # where the `muxtopus` link goes (default ~/.local/bin)
 ./install.sh --no-watchdog    # skip the watchdog service
 ./install.sh --no-venv        # do not build .venv; the dashboard then uses a system python3 with rich, or its bash renderer
+./install.sh --no-rc          # do not add the bin dir to PATH in your shell rc
 ```
+
+If `~/.local/bin` is not on your `PATH`, the installer appends one line to `~/.profile` and `~/.bashrc`, or `~/.zshrc` under zsh, so the next shell finds `muxtopus`. A file that already mentions the directory is left alone, and a second install adds nothing. Under fish it prints the `fish_add_path` line instead. The shell you ran it from keeps its old `PATH`, so the installer prints the `export` line to paste there once.
 
 **Requirements:** `bash`, `tmux` ≥ 3.2 (for `new-window -e`), `git`, `jq`, `python3` ≥ 3.10 with its `venv` module (on Debian and Ubuntu that is the `python3-venv` package), `curl` or `wget`, and the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code). The installer builds the dashboard's [`rich`](https://github.com/Textualize/rich) venv itself. If it cannot, the dashboard falls back to a plain bash renderer instead of failing. `systemd --user` runs the watchdog where it is available; without it, the daemon is started as a plain background process.
 

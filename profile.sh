@@ -487,6 +487,30 @@ mux_tmux() { command tmux "${MUX_TMUX_SOCK[@]}" "$@"; }
 # For the two places that hand the process over to tmux (attach, switch).
 mux_tmux_exec() { exec tmux "${MUX_TMUX_SOCK[@]}" "$@"; }
 
+# WHERE A WATCHDOG STARTED WITHOUT SYSTEMD LEAVES ITS PID FILE. XDG_RUNTIME_DIR
+# when it is OURS: `su user` (no dash) hands the new user root's environment,
+# XDG_RUNTIME_DIR=/run/user/0 included, and every write there is "Permission
+# denied" -- measured on a fresh Ubuntu 25.04 box. Unset (`su - user`, a
+# container, cron) this used to fall back to /tmp itself, where the second
+# user's pid file is the first user's and the sticky bit makes it unwritable.
+# So: a directory of our own under /tmp, per uid and 0700. The state dir is the
+# last resort, because a pid file that survives a reboot can name a process
+# that is now something else; the caller checks what the pid IS before trusting
+# it (muxtopus, watchdog_up).
+mux_run_dir() {
+  local d="${XDG_RUNTIME_DIR:-}"
+  if [ -n "$d" ] && [ -d "$d" ] && [ -O "$d" ] && [ -w "$d" ]; then
+    printf '%s\n' "$d"; return 0
+  fi
+  d="${TMPDIR:-/tmp}/muxtopus-$(id -u)"
+  mkdir -p -m 700 "$d" 2>/dev/null
+  if [ -d "$d" ] && [ -O "$d" ] && [ -w "$d" ]; then
+    printf '%s\n' "$d"; return 0
+  fi
+  mkdir -p "$MUX_STATE" 2>/dev/null
+  printf '%s\n' "$MUX_STATE"
+}
+
 # Make an account's folders. Idempotent, and called on every session start:
 # the handover folder in particular is written to by a wind-down, which is the
 # worst possible moment to discover a missing directory.

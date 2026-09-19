@@ -299,7 +299,7 @@ case "${1:---once}" in
              # the unit's main pid directly rather than via `systemctl reload`
              # so it also works on a unit installed before ExecReload existed.
              pid="$(systemctl --user show -p MainPID --value "$MUX_UNIT" 2>/dev/null)"
-             pidf="${XDG_RUNTIME_DIR:-/tmp}/muxtopus-wd$MUX_SUFFIX.pid"
+             pidf="$(mux_run_dir)/muxtopus-wd$MUX_SUFFIX.pid"
              if [ "${pid:-0}" -gt 0 ] 2>/dev/null; then :
              elif [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; then pid="$(cat "$pidf")"
              else echo "watchdog ($MUX_LABEL) is not running" >&2; exit 1; fi
