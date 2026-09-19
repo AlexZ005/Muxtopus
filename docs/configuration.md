@@ -1,6 +1,6 @@
 ---
 title: Configuration
-nav_order: 10
+nav_order: 11
 ---
 {% raw %}
 # Configuration
@@ -32,6 +32,9 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `WATCHDOG_USAGE_STALE` | `180` | minutes after which a budget *reading* is too old to fire `at: reset`'s first gate |
 | `WATCHDOG_HEARTBEAT_LOG` | `60` | minutes between the daemon's "still here" log lines |
 | `WATCHDOG_STRANDED` | `120` | minutes a `➥` lane may sit idle with an open handover and nothing pending naming it before its state reads `stranded`; `0` turns it off |
+| `WATCHDOG_RESTORE` | `ask` | what `muxtopus` does with a [frozen window snapshot](restore.md) when there is no session: `ask` offers it at a terminal; `auto` restores without asking, and the watchdog relaunches `muxtopus -d` the moment the server disappears; `off` never offers (`muxtopus --restore` still works) |
+| `WATCHDOG_RESTORE_MAX_AGE` | `24` | hours; a frozen snapshot older than this is not offered at start (`--restore` takes it regardless) |
+| `MUXTOPUS_TMUX_SOCKET` | `default` | the tmux server every muxtopus command talks to: a name (`tmux -L`) or an absolute path (`tmux -S`), passed explicitly on every call so a command run inside a pane never follows that pane's `$TMUX` elsewhere. `default` is the socket a bare `tmux` uses outside tmux |
 | `CLAUDE_USAGE_MAX_AGE` | `20` | minutes; the dashboard's `u` and `R` refresh only past this age |
 | `CLAUDE_USAGE_MODEL` | from `settings.json` | which model's limit line the probe reads |
 | `CLAUDE_CONTEXT_WINDOW` | `1000000` | what the dashboard draws the context bar against |

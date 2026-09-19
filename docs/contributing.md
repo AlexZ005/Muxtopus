@@ -1,6 +1,6 @@
 ---
 title: For contributors
-nav_order: 11
+nav_order: 12
 has_children: true
 ---
 {% raw %}
@@ -116,7 +116,7 @@ To add a page: create `docs/<name>.md` with three lines of front matter —
 ```
 ---
 title: The words in the sidebar
-nav_order: 12
+nav_order: 13
 ---
 ```
 

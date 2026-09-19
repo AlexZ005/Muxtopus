@@ -1,6 +1,6 @@
 ---
 title: Insights and stats
-nav_order: 9
+nav_order: 10
 ---
 {% raw %}
 # Insights (`i`) and `muxtopus stats`

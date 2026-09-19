@@ -64,6 +64,12 @@ if [ "${1:-}" = "--profile" ]; then
 fi
 mux_export_config_dir
 mux_tmux_env
+# THIS DAEMON NEVER NEEDS $TMUX. Every tmux call names its socket (mux_tmux),
+# and a $TMUX inherited from whatever pane started it -- a nohup from a
+# sandbox, a hand-run --once -- would be the one thing that could point a
+# bare call at the wrong server. Dropped here, so a child (muxtelegram.py,
+# claude-usage.sh, muxtopus -d) cannot inherit it either.
+unset TMUX TMUX_PANE
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog$MUX_SUFFIX"
 ENABLED="$STATE_DIR/enabled"
@@ -306,7 +312,7 @@ case "${1:---once}" in
              #   sha <TAB> 12hex / yes <TAB> 0|1 / question <TAB> ... / the box
              [ -n "${2:-}" ] || { echo "need a pane id or a file" >&2; exit 2; }
              if [ -f "$2" ]; then _t="$(cat "$2")"
-             else _t="$(tmux capture-pane -p -t "$2" 2>/dev/null)" || { echo "no such pane: $2" >&2; exit 2; }; fi
+             else _t="$(mux_tmux capture-pane -p -t "$2" 2>/dev/null)" || { echo "no such pane: $2" >&2; exit 2; }; fi
              prompt_scan "$_t" || { echo "no prompt"; exit 1; }
              printf 'sha\t%s\nyes\t%s\nquestion\t%s\n%s\n' "$PROMPT_SHA" "$PROMPT_YES" "$PROMPT_Q" "$PROMPT_BOX"
              exit 0 ;;
@@ -961,7 +967,7 @@ tree_field() {
 # Every window id tmux currently has, one per line -- asked once per caller
 # rather than once per row, because this runs inside a 30s loop.
 tree_live_windows() {
-  tmux list-windows -a -F '#{window_id}' 2>/dev/null
+  mux_tmux list-windows -a -F '#{window_id}' 2>/dev/null
 }
 
 # Record a launch, replacing any earlier row for the same slug: a lane that is
@@ -1008,7 +1014,7 @@ tree_adopt_name() {
   local name="$1" row wid pane
   [ -n "$name" ] || return 1
   [ -n "$(tree_field "$name" 1)" ] && return 0
-  row="$(tmux list-windows -t "$MUX_TMUX" \
+  row="$(mux_tmux list-windows -t "$MUX_TMUX" \
            -F $'#{window_name}\t#{window_id}\t#{pane_id}' 2>/dev/null \
          | awk -F'\t' -v n="$name" '$1==n{print $2 "\t" $3; exit}')"
   [ -n "$row" ] || return 1
@@ -1051,7 +1057,7 @@ tree_family() {
 # part tmux itself can be made to honour.
 subtree_last_index() {
   local root="$1" map s wid idx best=""
-  map="$(tmux list-windows -t "$MUX_TMUX" -F '#{window_id} #{window_index}' 2>/dev/null)"
+  map="$(mux_tmux list-windows -t "$MUX_TMUX" -F '#{window_id} #{window_index}' 2>/dev/null)"
   [ -n "$map" ] || return 0
   while IFS= read -r s; do
     [ -n "$s" ] || continue
@@ -1071,7 +1077,7 @@ subtree_last_index() {
 # worse than saying so.
 tree_adopt() {
   local wid name pane slug known
-  tmux has-session -t "=$MUX_TMUX" 2>/dev/null || return 0
+  mux_tmux has-session -t "=$MUX_TMUX" 2>/dev/null || return 0
   while IFS=$'\t' read -r wid name pane; do
     case "$name" in ➥*) ;; *) continue ;; esac
     known="$(awk -F'\t' -v w="$wid" '$3==w{f=1} END{print f}' "$TREE" 2>/dev/null)"
@@ -1079,7 +1085,7 @@ tree_adopt() {
     slug="${name//➥/}"
     [ -n "$slug" ] || continue
     tree_record "$slug" "" "$wid" "$pane" "(adopted)"
-  done < <(tmux list-windows -t "$MUX_TMUX" \
+  done < <(mux_tmux list-windows -t "$MUX_TMUX" \
              -F $'#{window_id}\t#{window_name}\t#{pane_id}' 2>/dev/null)
   return 0
 }
@@ -1315,6 +1321,8 @@ sched_compose() {
   echo "[muxtopus] Use that slug verbatim with handover.sh (path/write/done). If anything"
   echo "[muxtopus] below names a different one, THIS one wins -- a second handover file is"
   echo "[muxtopus] not watched by anything."
+  echo "[muxtopus] Inside this window \$TMUX overrides TMUX_TMPDIR: a sandboxed tmux needs -S/-L or"
+  echo "[muxtopus] env -u TMUX, and a bare 'tmux kill-server' kills THIS server."
   echo
   # The X sentinel keeps the trailing newlines a command substitution would
   # otherwise eat, so the paste is byte-identical to what the files hold.
@@ -1361,14 +1369,14 @@ sched_rc() {
 # not in an overlay. Remote control, once on, survives its panel closing.
 sched_send_rc() {
   local pane="$1" f="$2" i txt
-  tmux send-keys -t "$pane" -l "/rc" 2>/dev/null
+  mux_tmux send-keys -t "$pane" -l "/rc" 2>/dev/null
   sleep 0.5
-  tmux send-keys -t "$pane" Enter 2>/dev/null
+  mux_tmux send-keys -t "$pane" Enter 2>/dev/null
   for i in 1 2 3 4 5 6; do
     sleep 0.5
-    txt="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
+    txt="$(mux_tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
     if prompt_scan "$txt" || grep -qiE 'esc to (close|cancel|exit|go back)|enter to (confirm|continue)' <<<"$txt"; then
-      tmux send-keys -t "$pane" Escape 2>/dev/null
+      mux_tmux send-keys -t "$pane" Escape 2>/dev/null
       sleep 0.5
       log "schedule $(basename "$f"): /rc left a dialog or panel up in $pane; closed it with Escape before the paste"
       break
@@ -1407,7 +1415,7 @@ launch_schedule() {
   # comes due then must WAIT for the session rather than be failed for a
   # condition that clears the moment someone attaches. Said once in the log,
   # not once per pass.
-  if ! tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
+  if ! mux_tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
     if [ ! -f "$STATE_DIR/sched-waiting" ]; then
       log "schedule $(basename "$f"): due, but there is no tmux session '$MUX_TMUX' -- waiting for muxtopus"
       : > "$STATE_DIR/sched-waiting"
@@ -1480,7 +1488,7 @@ launch_schedule() {
     [ -n "$idx" ] && targs=(-a -t "$MUX_TMUX:$idx")
   fi
   if [ ${#targs[@]} -eq 0 ] && [ -n "$win" ]; then
-    idx="$(tmux list-windows -t "$MUX_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
+    idx="$(mux_tmux list-windows -t "$MUX_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
            | awk -v w="$win" '$2==w{print $1; exit}')"
     [ -n "$idx" ] && targs=(-a -t "$MUX_TMUX:$idx")
   fi
@@ -1493,7 +1501,7 @@ launch_schedule() {
   # BOTH IDS. The pane is what gets typed into and sampled; the window id is
   # what the tree is keyed on, because it survives a rename and a reindex while
   # the name and the index do not.
-  read -r pane wid < <(tmux new-window -d -P -F '#{pane_id} #{window_id}' \
+  read -r pane wid < <(mux_tmux new-window -d -P -F '#{pane_id} #{window_id}' \
           "${targs[@]}" -n "$wname" -c "$cwd" \
           "${MUX_TMUX_ENV[@]}" \
           "$HOME/.local/bin/claude" ${model:+--model "$model"} ${effort:+--effort "$effort"} \
@@ -1510,11 +1518,11 @@ launch_schedule() {
   ready=""; did_trust=""
   for i in $(seq 1 60); do
     sleep 0.5
-    txt="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
+    txt="$(mux_tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
     if [ -z "$did_trust" ] && grep -q "trust this folder" <<<"$txt"; then
       did_trust=1
-      tmux send-keys -t "$pane" Down 2>/dev/null; sleep 0.4
-      tmux send-keys -t "$pane" Enter 2>/dev/null; sleep 1
+      mux_tmux send-keys -t "$pane" Down 2>/dev/null; sleep 0.4
+      mux_tmux send-keys -t "$pane" Enter 2>/dev/null; sleep 1
       continue
     fi
     grep -q '❯' <<<"$txt" && { ready=1; break; }
@@ -1551,10 +1559,10 @@ launch_schedule() {
 
   # PASTE, never send-keys: a multi-line body through send-keys submits at
   # every newline. Bracketed paste (-p) hands the TUI one paste event.
-  tmux load-buffer -b schedbody "$bodyf" 2>/dev/null
-  tmux paste-buffer -d -b schedbody -p -t "$pane" 2>/dev/null
+  mux_tmux load-buffer -b schedbody "$bodyf" 2>/dev/null
+  mux_tmux paste-buffer -d -b schedbody -p -t "$pane" 2>/dev/null
   sleep 1
-  tmux send-keys -t "$pane" Enter 2>/dev/null
+  mux_tmux send-keys -t "$pane" Enter 2>/dev/null
   rm -f "$bodyf"
 
   tree_record "$slug" "$parent" "$wid" "$pane" "$f"
@@ -1687,12 +1695,12 @@ sched_check_one() {
   # WHERE THE WINDOW LANDS, resolved against the live session exactly as the
   # launcher resolves it -- by INDEX, because -t by name errors on duplicates
   # and this session's indices are sparse.
-  if ! tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
+  if ! mux_tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
     kv "insert after" "(session '$MUX_TMUX' is not running -- the launch would WAIT for muxtopus)"
   elif [ -n "$parent" ] && [ -n "$(subtree_last_index "$parent")" ]; then
     kv "insert after" "$MUX_TMUX:$(subtree_last_index "$parent") -- the last window of $parent's subtree"
   elif [ -n "$win" ]; then
-    idx="$(tmux list-windows -t "$MUX_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
+    idx="$(mux_tmux list-windows -t "$MUX_TMUX" -F '#{window_index} #{window_name}' 2>/dev/null \
            | awk -v w="$win" '$2==w{print $1; exit}')"
     if [ -n "$idx" ]; then kv "insert after" "$win = $MUX_TMUX:$idx"
     else kv "insert after" "$win -- NO SUCH WINDOW, so it lands at the end"; fi
@@ -2252,7 +2260,7 @@ notify_sessions() {
       asked=1
       while IFS=$'\t' read -r name cmd dead; do
         [ -n "$name" ] && live[$name]="$cmd"$'\t'"$dead"
-      done < <(tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{pane_dead}' 2>/dev/null)
+      done < <(mux_tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{pane_dead}' 2>/dev/null)
     fi
     # Gone from tmux too: the window was closed, and the key (if any) ends.
     [ -n "${live[$pane]+x}" ] || continue
@@ -2484,8 +2492,8 @@ pass() {
 
     name="-"; text=""; jobid=""
     if [ -n "$paneid" ]; then
-      name="$(tmux display-message -p -t "$paneid" '#{window_name}' 2>/dev/null || echo -)"
-      text="$(tmux capture-pane -p -t "$paneid" 2>/dev/null || true)"
+      name="$(mux_tmux display-message -p -t "$paneid" '#{window_name}' 2>/dev/null || echo -)"
+      text="$(mux_tmux capture-pane -p -t "$paneid" 2>/dev/null || true)"
     elif [ "$kind" = bg ]; then
       # A background job has no terminal at all: no pane to read a limit banner
       # from and none to type into, so it can never be restarted from here. It
@@ -2548,9 +2556,9 @@ pass() {
       elif [ "$DRY" = 1 ]; then
         acted="WOULD-PROMPT"
       else
-        tmux send-keys -t "$paneid" "$msg" 2>/dev/null
+        mux_tmux send-keys -t "$paneid" "$msg" 2>/dev/null
         sleep 1
-        tmux send-keys -t "$paneid" Enter 2>/dev/null
+        mux_tmux send-keys -t "$paneid" Enter 2>/dev/null
         printf '%s\t%s\t%s\n' "$sid" "$epoch" "$now" >> "$PROMPTED"
         acted="prompted"; resumed="$now"
         log "prompted ${sid:0:8} in $name (pane $paneid) after reset $reset"

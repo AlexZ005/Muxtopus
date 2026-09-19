@@ -36,7 +36,9 @@ launch() {  # launch NAME [rc]: one entry, one pass, the keys that window got
   rm -f "$HOME/fake-claude.keys"; entry "$@"
   "$W" --once >/dev/null 2>&1
   for i in $(seq 40); do grep -q '^status: launched' "$SC/$1.md" && break; sleep 0.25; done
-  sleep 0.6
+  # The fake drains the paste one key per loop, a fork each; wait for the
+  # body to have arrived rather than guess how long the identity lines take.
+  for i in $(seq 40); do tr -d '\n' < "$HOME/fake-claude.keys" 2>/dev/null | grep -q carry && break; sleep 0.25; done
 }
 
 echo "== the launcher: rc: on sends /rc before the paste"
@@ -65,8 +67,12 @@ check "rc: off beats the default" bash -c '! tr -d "\n" < "$1" | grep -qF "/rc"'
 echo "== a panel /rc leaves up is closed before the paste"
 setkey DASHBOARD_NEW_RC off
 rm -f "$HOME/fake-claude.keys"; entry lane-panel on
-# The fake draws a panel holding the keyboard as soon as it has been typed at.
-( for i in $(seq 80); do [ -s "$HOME/fake-claude.keys" ] && break; sleep 0.1; done
+# The fake draws a panel holding the keyboard as soon as /rc has been typed at
+# it. The trigger is the /rc itself, not "any key": the previous window's fake
+# is still draining its own paste into the same keys file when this starts,
+# and a panel drawn before the new window exists is a window that never
+# shows a prompt.
+( for i in $(seq 150); do tr -d '\n' < "$HOME/fake-claude.keys" 2>/dev/null | grep -qF '/rc' && break; sleep 0.1; done
   printf 'Remote Control\n  session url ...\n  Esc to close\n' > "$HOME/fake-screen" ) &
 "$W" --once >/dev/null 2>&1
 check "the panel was seen and Escaped" grep -q "schedule lane-panel.md: /rc left a dialog or panel up" "$ST/log"

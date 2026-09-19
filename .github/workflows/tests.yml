@@ -52,6 +52,8 @@ jobs:
         run: python3 tests/test_handovers.py
       - name: handover.sh -- the marker, and what done carries with it
         run: bash tests/test_handover_sh.sh
+      - name: every tmux call names its socket; no bare kill-server anywhere
+        run: python3 tests/test_tmux_guard.py
       - name: the manual -- front matter, links, Liquid-safe, nothing lost from the README
         run: python3 tests/test_manual.py
       - name: VERSION is the only place the release number is written

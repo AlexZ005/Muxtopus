@@ -5,6 +5,6 @@
 . "$(dirname "$0")/env.sh"
 "$(dirname "$0")/stop.sh" >/dev/null 2>&1 || true
 "$(dirname "$0")/heartbeat.sh" & echo $! > "${SB:?}/heartbeat.pid"
-tmux new-session -d -s "${SANDBOX_SESSION:?}" -n dash -x "${COLS:-160}" -y "${1:-58}" \
+mux_tmux new-session -d -s "${SANDBOX_SESSION:?}" -n dash -x "${COLS:-160}" -y "${1:-58}" \
   "bash -c '. \"$(dirname "$(readlink -f "$0")")/env.sh\"; cd \"${SCRIPTS:?}\"; exec ./deck-status.sh'"
 sleep "${BOOT:-2.0}"

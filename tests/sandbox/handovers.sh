@@ -152,13 +152,13 @@ echo "== WINDOW follows a real tmux window"
 # The fixture tree points at window ids the sandbox server does not have, so
 # make a REAL one and point the tree at it: ● has to mean "this window exists
 # NOW", and only a window that can then be killed proves that it does.
-WID="$(tmux new-window -d -t "${SANDBOX_SESSION:?}" -P -F '#{window_id}' 'sleep 600')"
+WID="$(mux_tmux new-window -d -t "${SANDBOX_SESSION:?}" -P -F '#{window_id}' 'sleep 600')"
 printf 'shadow-lane\t\t%s\t%%99\t1735700000\tb-blocked.md\n' "$WID" >> "$WD/tree.tsv"
 sleep 2.5
 snap
 check "a live window is drawn with its id and a dot" \
   grep -qE "shadow-lane +$WID ●" "$NOW"
-tmux kill-window -t "$WID"
+mux_tmux kill-window -t "$WID"
 sleep 2.5
 snap
 check "and it reads exited once that window is gone" \
@@ -455,8 +455,8 @@ echo "== Tell types one line into the lane's own pane, never automatically"
 "$HERE/clean.sh"
 "$HERE/stop.sh" >/dev/null
 "$HERE/start.sh" 40 >/dev/null
-WID2="$(tmux new-window -d -t "${SANDBOX_SESSION:?}" -P -F '#{window_id}' 'cat > '"${SB:?}"'/heard.txt')"
-PID2="$(tmux list-panes -a -F '#{window_id} #{pane_id}' | awk -v w="$WID2" '$1==w{print $2}')"
+WID2="$(mux_tmux new-window -d -t "${SANDBOX_SESSION:?}" -P -F '#{window_id}' 'cat > '"${SB:?}"'/heard.txt')"
+PID2="$(mux_tmux list-panes -a -F '#{window_id} #{pane_id}' | awk -v w="$WID2" '$1==w{print $2}')"
 printf 'root-lane\t\t%s\t%s\t1735700000\ta-pending.md\n' "$WID2" "$PID2" >> "$WD/tree.tsv"
 sleep 2.5
 $K s; $K Right
@@ -476,7 +476,7 @@ pick "Tell ➥root-lane its answers are in"
 $K Enter
 $K y
 sleep 2
-tmux kill-window -t "$WID2" 2>/dev/null
+mux_tmux kill-window -t "$WID2" 2>/dev/null
 sleep 0.5
 check "y types the sentence, naming the file to read" \
   grep -q "Your questions are answered in .*QUESTIONS-root-lane.md" "${SB:?}/heard.txt"
