@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 
 from rich.markup import escape
 
 import muxsettings
-from dashboard.core import (DIM, HOME, PROFILE, WATCHDOG_ENABLED,
-                            model_choices)
-from dashboard.data import monitor_on, toggle_monitor, toggle_watchdog
+from dashboard.core import (DIM, HOME, PROFILE, SCRIPTS, WATCHDOG_DIR,
+                            WATCHDOG_ENABLED, model_choices)
+from dashboard.data import (frozen_snapshot, monitor_on, toggle_monitor,
+                            toggle_watchdog)
 
 
 class MuxMenu:
@@ -46,6 +48,18 @@ class MuxMenu:
             {"label": "Monitor: %s  ask a working window to wind down near the limit"
                       % ("ON" if mon else "off"),
              "on": mon, "act": toggle_monitor, "stay": True},
+        ]
+        # THE WINDOWS A LOST SERVER TOOK (docs/restore.md): a row only while
+        # the watchdog holds a frozen snapshot, so the menu is what it always
+        # was on a machine where nothing was lost.
+        snap = frozen_snapshot()
+        if snap is not None:
+            _, k, seen = snap
+            when = time.strftime("%m-%d %H:%M", time.localtime(seen)) if seen else "?"
+            items.append({"label": "Restore %d windows from %s  rebuild what the lost tmux server took, each resuming its session"
+                                   % (k, when),
+                          "act": lambda k=k, when=when: self.act_restore(k, when)})
+        items += [
             {"sep": True},
             {"label": "Disconnect  detach this tmux client; the dashboard and every window keep running",
              "act": self.act_disconnect},
@@ -54,8 +68,31 @@ class MuxMenu:
             {"label": "Quit the dashboard", "act": self.act_quit, "danger": True},
         ]
         if not os.environ.get("TMUX"):
-            items[5]["disabled"] = "not inside tmux"
+            for it in items:
+                if it.get("act") is self.act_disconnect:
+                    it["disabled"] = "not inside tmux"
         return items
+
+    def act_restore(self, k: int, when: str) -> str:
+        """A confirm, then the watchdog's own restore, detached: it opens K
+        windows and waits on each claude for up to thirty seconds, which is
+        not something to do inside a frame."""
+        self.app.confirm = {"label": "Restore %d windows from %s into this session?" % (k, when),
+                            "fn": self._do_restore}
+        return ""
+
+    def _do_restore(self) -> str:
+        cmd = [str(SCRIPTS / "claude-watchdog.sh")]
+        if PROFILE:
+            cmd += ["--profile", PROFILE]
+        cmd += ["--restore"]
+        try:
+            log = open(WATCHDOG_DIR / "restore.out", "ab")
+            subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+        except OSError as exc:
+            return "restore failed to start: %s" % exc
+        return "restoring in the background -- the windows appear as each claude comes up; the log says which resumed"
 
     def act_disconnect(self) -> str:
         """`tmux detach-client` with no target: inside a pane TMUX names the
@@ -157,6 +194,13 @@ HELP_MUX = f"""
     model and effort preselected when c creates a window, whether such a window
     is watched and monitored, the working folder offered first, and which
     settings.json "make it the default" writes to.
+
+    RESTORE appears in the menu only while the watchdog holds a frozen window
+    snapshot -- the windows a dead tmux server took, saved every pass and kept
+    when the session vanished. It rebuilds them into this session in their
+    order, names and folders, each running `claude --resume` on the session it
+    had, and puts every lane back in the tree. `muxtopus` offers the same at
+    start; docs/restore.md has the rest.
 """
 
 def register(app) -> None:

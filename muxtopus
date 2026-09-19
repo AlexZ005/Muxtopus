@@ -271,7 +271,8 @@ if [ "$RESTORE" = 1 ]; then
   [ -f "$RESTORE_FROM" ] || { echo "muxtopus: no snapshot at $RESTORE_FROM" >&2; exit 1; }
 elif ! mux_tmux has-session -t "=$SESSION" 2>/dev/null && [ -f "$_snap" ] \
      && [ "$SESSION" = "$MUX_TMUX" ]; then
-  _age=$(( $(date +%s) - $(mux_snapshot_seen "$_snap" || echo 0) ))
+  _seen="$(mux_snapshot_seen "$_snap")"
+  _age=$(( $(date +%s) - ${_seen:-0} ))
   _k="$(mux_snapshot_rows "$_snap")"; _when="$(mux_snapshot_when "$_snap")"
   if [ "$_age" -le $(( ${WATCHDOG_RESTORE_MAX_AGE:-24} * 3600 )) ] && [ "$_k" -gt 0 ]; then
     case "${WATCHDOG_RESTORE:-ask}" in
