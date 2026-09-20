@@ -74,6 +74,7 @@ WATCHDOG_USAGE_EVERY=60
 WATCHDOG_USAGE_STALE=180
 WATCHDOG_HEARTBEAT_LOG=60
 WATCHDOG_STRANDED=120
+WATCHDOG_WOUND_RESUME=on
 CLAUDE_USAGE_MAX_AGE=20
 CLAUDE_USAGE_MODEL=-
 CLAUDE_CONTEXT_WINDOW=1000000
@@ -194,6 +195,12 @@ mux_key_help() {
                             echo "pending schedule entry naming it before its state becomes 'stranded'"
                             echo "instead of 'idle' -- nothing is ever going to touch that window."
                             echo "0 turns it off. It is a fact shown to a human, never a trigger." ;;
+    WATCHDOG_WOUND_RESUME)  echo "on|off. A window wound down at the HARD band was told to stop, so it"
+                            echo "never prints the limit banner the resume path watches for. With this"
+                            echo "on, such a window is sent the continue message once its budget window"
+                            echo "has come back -- but only while its handover is still open, and never"
+                            echo "if it is opted out. off is the behaviour before this existed: the"
+                            echo "window stops and nothing restarts it." ;;
     CLAUDE_USAGE_MAX_AGE)   echo "Minutes: the dashboard's u and R re-read the limits only past this age." ;;
     CLAUDE_USAGE_MODEL)     echo "Which model's limit line the probe reads. Default: the model in"
                             echo "the account's settings.json." ;;
