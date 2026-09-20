@@ -130,23 +130,45 @@ $K Escape;  shot "settings-closed"      "q quit"
 
 # ============================================ c: a new claude session
 "$HERE/start.sh" 58 >/dev/null
-$K c;      shot "new-folder"  "new session · working folder"
-$K Enter;  shot "new-model"   "new session · model"
-$K Enter;  shot "new-effort"  "new session · effort"
-$K Enter;  shot "new-mode"    "nothing preselected"
+# THE FORM, not a queue of pickers: every parameter is on the one screen
+# with Create at the top, so the route walks DOWN it instead of through it.
+$K c;      shot "new-form"    "Create ➥"
+# DOWN MOVES ONE ROW AND SKIPS THE SEPARATOR, so one press from Create is the
+# Name row. Each row opens its own submode and comes back to the form, and the
+# shot after each Escape is the proof that esc left the ROW, not the form.
+$K Down;   $K Enter
+shot "new-name"               "the slug"
+$K BSpace; $K BSpace; $K BSpace; $K BSpace; $K BSpace; $K BSpace
+$T "route-lane"
+shot "new-name-typed"         "route-lane"
+$K Enter;  shot "new-form-named" "Name: route-lane"
+$K Down;   $K Enter
+shot "new-folder"             "working folder"
+$K Escape; shot "new-folder-escaped" "Create ➥route-lane"
+$K Down;   $K Enter
+shot "new-model"              "CLI aliases"
+$K Escape
+$K Down;   $K Enter
+shot "new-effort"             "effort"
+# The fixture account sets DASHBOARD_NEW_EFFORT=high, so the picker opens ON
+# high and one Down is xhigh -- the row below the one the form came in with.
+$K Down;   $K Enter
+shot "new-form-effort"        "Effort: xhigh"
+$K Down;   $K Enter
+shot "new-mode"               "permission mode"
+# ...and DASHBOARD_NEW_PERMISSION_MODE=ask, so the mode picker opens on
+# "(account default)" and bypassPermissions is three below it.
 $K Down; $K Down; $K Down
 shot "new-mode-bypass"        "bypassPermissions"
 $K Enter;  shot "new-bypass"  "…and make it the default"
 $K Down;   shot "new-bypass-permanent" "writes settings.json"
-$K Up
-$K Enter;  shot "new-where"   "under ➥root-lane"
-$K Down;   shot "new-where-under" "under ➥root-lane"
-$K Up
-$K Enter;  shot "new-name"    "new session · name"
-$K BSpace; $K BSpace; $K BSpace; $K BSpace; $K BSpace; $K BSpace
-$T "route-lane"
-shot "new-name-typed"         "route-lane"
-$K Enter;  shot "new-prompt"  "new session · first prompt"
+$K Escape
+$K Down;   $K Enter
+shot "new-where"              "under ➥root-lane"
+$K Escape
+$K Down;   $K Enter
+shot "new-prompt"             "first prompt"
+$K Escape
 $K Escape; shot "new-cancelled" "cancelled"
 "$HERE/stop.sh"
 

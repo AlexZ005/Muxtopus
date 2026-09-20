@@ -38,7 +38,7 @@ The screens that share a tab strip name each tab **with its count** — `▸sche
 | `enter` | open that session's window (`Ctrl-b 0` comes back); on a lane row, show every account's lanes |
 | `space` | menu for the session under the cursor |
 | `esc` | the muxtopus menu: Settings, Insights, the watchdog and monitor switches, disconnect, reload, quit |
-| `c` | a new claude session — folder, model, effort, permission mode, where, name, first prompt |
+| `c` | a new claude session: a form of every parameter, `Create` on the first row — so `c` `enter` is a window |
 | `←` `→` | fold / unfold the subtree under the cursor; `←` on a leaf steps out to its parent |
 | `t` | tree ordering on / off |
 | `f` | lanes: this account only / every account |
@@ -141,17 +141,39 @@ Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.da
 
 ## A new claude session (`c`)
 
-Seven screens through the picker and the prompt:
+**One screen.** `c` opens a form with every parameter already filled in from the new-window defaults in Settings, and `Create` on the first row — so a window you have no particular opinion about is **`c` `enter`**, and one you do is arrowing to that row and pressing enter on it. The form stays open while you change things: set the effort, think again about the folder, set it back. `esc` on a row leaves that row alone; `esc` on the form abandons the whole thing.
 
-1. **the working folder** — the cursor's, the setting, every session's, the dirty trees, the checkouts under `MUXTOPUS_HOME`, or a typed path; it must exist;
-2. **the model**, as a CLI *alias* (`opus`, `fable`, `sonnet`…): `--model opus-5`, the MODEL column's spelling, is refused by the CLI and kills the window after it has eaten the paste;
-3. **the effort**;
-4. **the permission mode** — preselected from Settings, or nothing preselected when that says `ask`: a default, never a lock;
-5. **where it goes** — a top-level window, or under a live one as `➥➥name`, inserted after that parent's subtree and drawn indented;
-6. **the name**, which is the slug: the window, the handover file, the `handover.sh done` the worker is told to run;
-7. an optional **first prompt**.
+```
+╭─ new session · ~/work/repo-b ──────────────────────────────────╮
+│  ▸ Create ➥repo-b  and go to its window                        │
+│    ·········································                   │
+│    Name: repo-b  the window, the handover, `handover.sh done`  │
+│    Folder: ~/work/repo-b  where claude starts                  │
+│    Model: fable  a CLI alias                                   │
+│    Effort: high                                                │
+│    Permission mode: (account default)                          │
+│    Where: a top-level window                                   │
+│    First prompt: (none)  empty makes it a plan entry           │
+│    ·········································                   │
+│    Cancel                                                      │
+╰────────────────────────────────────────────────────────────────╯
+```
+
+| row | |
+|---|---|
+| **Name** | the slug: the window `➥name`, `STATUS-name.md`, the `handover.sh done name` the worker is told to run. Taken from the folder, and made unique *before* it is offered, so `c` `enter` works a second time |
+| **Folder** | enter opens the candidates — the cursor's, the setting, every live session's, the dirty trees the watchdog publishes, the checkouts under `MUXTOPUS_HOME` — or a typed path, which must exist |
+| **Model** | a CLI *alias* (`opus`, `fable`, `sonnet`…): `--model opus-5`, the MODEL column's spelling, is refused by the CLI and kills the window after it has eaten the paste |
+| **Effort** | passed as `claude --effort` |
+| **Permission mode** | pinned for the life of the window — it cannot be fixed afterwards. `(account default)` passes no flag at all |
+| **Where** | a top-level window, or under a live one as `➥➥name`, inserted after that parent's subtree and drawn indented |
+| **First prompt** | empty writes a `plan` entry: the session receives its identity line and nothing invented |
+
+It was seven pickers in a fixed order, which meant answering six questions you had no opinion about to reach the one you did, with no way back to change your mind about the second without abandoning the flow.
 
 Then it **writes a schedule entry** with `at:` already past, and nothing else. It opens no window itself: the watchdog's next pass does the trust dialog, the readiness wait, the bracketed paste, the tree row and the log line, exactly as for any entry — one launcher, whoever asked. The entry carries `model:`, `effort:`, `permission-mode:`, `cwd:`, `parent:`/`window:`, and `watchdog: off` / `monitor: off` when Settings says a new window is not watched or monitored. An empty prompt writes a `plan` entry: the session receives its identity line and nothing invented.
+
+**And then it takes you there.** There is no window to jump to at the moment you press `Create` — the launcher has not opened it yet — so the form remembers the slug, the key line reads `opening ➥name`, and the tmux client moves to that window the moment it appears. The dashboard keeps running in window 0, so `Ctrl-b 0` comes straight back. After three minutes it stops waiting, and the window is simply there like any other.
 
 Between the template and the editor comes [the options table](schedules.md#the-options-table): the contract sentences you would otherwise retype into every brief, as checkboxes.
 
