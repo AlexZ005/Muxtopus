@@ -216,6 +216,16 @@ USAGE_STALE="${WATCHDOG_USAGE_STALE:-180}"
 # `idle` is a fact about the last turn, `stranded` is a fact about the future.
 # 0 turns it off.
 STRANDED_MIN="${WATCHDOG_STRANDED:-120}"
+# A HARD WIND-DOWN IS NOT A ONE-WAY DOOR. Band 2 tells a window to land its
+# step, write a handoff and STOP -- and nothing here used to start it again,
+# because the resume path fires only for a pane whose text says "hit your
+# session limit", a banner a window that obeyed the directive never reaches.
+# MEASURED 2026-09-20: window muxtopus-updates, wound at band 2 at 12:25,
+# stopped at 12:32 with an open handover saying "Resume after the session
+# reset", reset passed at 12:40, still idle at 13:10 with nothing due to touch
+# it. `stranded` would eventually have REPORTED it; reporting is not resuming.
+# off turns it back into today's behaviour.
+WOUND_RESUME="${WATCHDOG_WOUND_RESUME:-on}"
 
 mkdir -p "$STATE_DIR"
 [ -f "$MSGFILE" ] || printf '%s\n' "$DEFAULT_MSG" > "$MSGFILE"
@@ -530,6 +540,43 @@ band_for() {
 # The last time this session was wound down, as an epoch.
 last_wound() {
   awk -F'\t' -v s="$1" '$1==s{v=$4} END{print (v?v:"-")}' "$WOUND" 2>/dev/null || echo -
+}
+
+# The QUANTIZED RESET EPOCH of this session's most recent HARD wind-down, or
+# "" when it was never wound down hard. Band 1 is a note about style and the
+# window keeps working through it; band 2 is the one that says "then stop", so
+# band 2 is the only one that owes the window a way back. The epoch is the key
+# wind_down already wrote -- session_reset_at rounded to a quarter hour -- so
+# the resume needs no second idea of when the budget comes back.
+last_hard_wound() {
+  awk -F'\t' -v s="$1" '$1==s && $2==2{v=$3} END{print v}' "$WOUND" 2>/dev/null
+}
+
+# HAS THIS SESSION ALREADY BEEN PROMPTED FOR THIS LIMIT WINDOW? The two paths
+# key the same window differently -- the due path by the epoch parsed out of
+# the banner, this one by session_reset_at rounded to a quarter hour -- so they
+# are compared with a quarter hour of tolerance rather than for equality. Two
+# real limit windows are five hours apart, so nothing can be confused with its
+# neighbour, and the two paths cannot both fire for one reset.
+prompted_near() {
+  awk -F'\t' -v s="$1" -v e="$2" \
+    '$1==s && ($2-e <= 900 && e-$2 <= 900){f=1} END{exit !f}' \
+    "$PROMPTED" 2>/dev/null
+}
+
+# AN OPEN HANDOVER IS THE SIGNAL THAT A WOUND-DOWN WINDOW MEANT TO CONTINUE.
+# The band-2 directive tells the worker to write one and then stop, so the
+# file being there and NOT in done/ is the window saying "there is more"; a
+# handover in done/ is `handover.sh done` having been run, which is the lane
+# saying it is finished, and a finished lane must never be poked. The slug is
+# derived with lane_slug_of, the same function the directive built the path it
+# asked for with -- one function, so the file we look for is the file the
+# worker was told to write.
+wound_lane_open() {
+  local lane; lane="$(lane_slug_of "$1")"
+  [ -n "$lane" ] && [ "$lane" != "-" ] || return 1
+  [ -f "$HANDOVERS/STATUS-$lane.md" ] || return 1
+  [ ! -f "$HANDOVERS/done/STATUS-$lane.md" ]
 }
 
 # Hand a WORKING session one line about its budget, at most once per band per
@@ -2728,7 +2775,7 @@ pass() {
 
   local f pid sid pane paneid ver st kind cwd tr ctx name text reset epoch state acted
   local spent rd resumed model optout idle jobid cwd turn_at wound moptout
-  local prev lane stranded pprev since
+  local prev lane stranded pprev since hkey
   # Rebuilt lazily, once per pass at most, by the stranded test below.
   SCHED_NAMED=""
   SNAP_SID=(); SNAP_PID=(); SNAP_CWD=()
@@ -2851,6 +2898,81 @@ pass() {
         acted="prompted"; resumed="$now"
         log "prompted ${sid:0:8} in $name (pane $paneid) after reset $reset"
         state="working"
+      fi
+    fi
+
+    # A HARD WIND-DOWN ARMS ITS OWN RESUME.
+    #
+    # The path above keys off a pane that says "hit your session limit". A
+    # window wound down at band 2 was told to stop BEFORE it got there, so it
+    # never prints that banner, and wind_down writes no schedule entry either:
+    # the only mechanism that would resume it keys off a condition its own
+    # directive guarantees will never occur. That is the bug, and it is a
+    # one-way door -- the window stops and nothing on this machine is going to
+    # start it again.
+    #
+    # Everything needed is already in the `wound` ledger: the session, the
+    # band, and the quantized epoch of the budget window the directive named
+    # ("the budget resets at HH:MM"). So: a session wound down at BAND 2,
+    # IDLE now (not working, not at a prompt -- `waiting` is decided below and
+    # is not idle by the time it matters, and a window at a prompt is asking,
+    # not stopped), whose epoch HAS PASSED, WITH AN OPEN HANDOVER, gets the
+    # same message the due path sends, once, under the same PROMPTED dedup.
+    #
+    # WHAT IT MUST NOT POKE, and each is a real window somebody would be
+    # angry about:
+    #   * a lane that FINISHED -- its handover is in done/ (wound_lane_open);
+    #   * a window the user opted out of restarts (--optout), or one whose
+    #     account has the watchdog switched off -- exactly the due path's
+    #     gates, in the same order, so there is one answer to "will anything
+    #     type into this window" and not two;
+    #   * a window the user opted out of MONITORING since. The wind-down that
+    #     stopped it was the monitor's doing; taking the window out of the
+    #     monitor's hands afterwards reads as "leave this one alone", and the
+    #     cheap reading of an ambiguous signal is the one that types nothing;
+    #   * a session with no pane (a background job): there is nothing to type
+    #     into, which is why the due path needs a paneid too;
+    #   * A PANE THAT IS ASKING A QUESTION. `waiting` is decided below, and it
+    #     needs the same prompt on two consecutive passes -- too slow to guard
+    #     this, which would have typed the continue message into a y/n dialog
+    #     on the first pass and answered it with Enter. So this asks
+    #     prompt_scan directly: one pass, and an idle pane with a numbered
+    #     option on it is a question, not a window that stopped.
+    #
+    # It is VISIBLE before it fires: the state becomes `resume-due`, which the
+    # dashboard's STATE column draws and --dry-run and --status print, with
+    # WOULD-RESUME in the action column. A resume nobody can see coming is the
+    # bug one level up from this one.
+    if [ -z "$acted" ] && [ "$state" = idle ] && [ -n "$paneid" ] \
+       && [ "$WOUND_RESUME" = on ]; then
+      hkey="$(last_hard_wound "$sid")"
+      case "$hkey" in ''|*[!0-9]*) hkey="" ;; esac
+      # prompt_scan LAST: it is the only test here that reads the pane text,
+      # and it costs nothing for a pane with no numbered option on it. It
+      # resets its own globals on every call, so the `waiting` test below
+      # calling it again is free of this one.
+      if [ -n "$hkey" ] && [ "$now" -ge $(( hkey + GRACE )) ] \
+         && ! prompted_near "$sid" "$hkey" \
+         && wound_lane_open "$name" \
+         && ! prompt_scan "$text"; then
+        state=resume-due
+        if [ "$optout" = 1 ]; then
+          acted="opted-out"
+        elif [ "$moptout" = 1 ]; then
+          acted="monitor-opted-out"
+        elif [ "$enabled" != 1 ]; then
+          acted="watchdog-off"
+        elif [ "$DRY" = 1 ]; then
+          acted="WOULD-RESUME"
+        else
+          mux_tmux send-keys -t "$paneid" "$msg" 2>/dev/null
+          sleep 1
+          mux_tmux send-keys -t "$paneid" Enter 2>/dev/null
+          printf '%s\t%s\t%s\n' "$sid" "$hkey" "$now" >> "$PROMPTED"
+          acted="wound-resume"; resumed="$now"
+          log "resumed ${sid:0:8} in $name (pane $paneid): wound down hard for the budget window that reset at $(date -d "@$hkey" '+%H:%M' 2>/dev/null || printf '%s' "$hkey"), idle since, handover still open"
+          state="working"
+        fi
       fi
     fi
 

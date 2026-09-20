@@ -207,6 +207,13 @@ STATES: dict[str, tuple[str, str, bool]] = {
     # it is a fact about the last turn and usually means finished; stranded is
     # a fact about the FUTURE, so it is the one idle state worth a colour.
     "stranded": ("stranded", RED, False),
+    # A WINDOW THE DAEMON ITSELF TOLD TO STOP, whose budget window has come
+    # back. Yellow rather than red: unlike `stranded` this one IS going to be
+    # touched -- it is the state a row wears for the pass or two between the
+    # epoch passing and the resume being typed, and the state it stays in when
+    # something (an opt-out, the global switch, --dry-run) is holding the
+    # resume back. A resume nobody can see coming is worse than no resume.
+    "resume-due": ("resume due", YELLOW, False),
 }
 
 

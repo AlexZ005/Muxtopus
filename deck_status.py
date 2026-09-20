@@ -142,17 +142,52 @@ def _complete_key(data: bytes) -> bool:
     return True
 
 
+# WHAT A FINAL BYTE NAMES, when the sequence is ESC [ <params> <final> or
+# ESC O <final>. Home and End have a final-byte form (xterm's SS3 `ESC O H`,
+# and `ESC [ 1 ; 5 H` for a MODIFIED Home, which every terminal measured here
+# sends whatever it sends unmodified) as well as the `~` form below.
+_FINAL_KEYS = {0x41: "UP", 0x42: "DOWN", 0x43: "RIGHT", 0x44: "LEFT",
+               0x48: "HOME", 0x46: "END"}
+
+# AND WHAT THE FIRST PARAMETER NAMES when the final byte is `~`, which is
+# shared by a dozen keys -- so the parameter, not the final byte, is what
+# tells PageUp from F5. Measured on this machine (tmux 3.5a, TERM
+# tmux-256color): PageUp ESC[5~, PageDown ESC[6~, Home ESC[1~, End ESC[4~;
+# 7 and 8 are the rxvt Home/End, and 2 (Insert), 3 (Delete), 11-24 (the F
+# keys) and 200/201 (bracketed paste) are deliberately absent -- they are
+# IGNORED, which is the point of this table being a whitelist.
+_TILDE_KEYS = {1: "HOME", 4: "END", 5: "PGUP", 6: "PGDN", 7: "HOME", 8: "END"}
+
+# An escape sequence this dashboard has no name for. NOT "\x1b": a bare
+# Escape is the views' own "leave this screen"/"open the muxtopus menu" key,
+# so decoding F5, Insert, Delete, shift-Tab or a mouse report as Escape made
+# every one of them quit the schedule view. "" is a key every caller ignores
+# -- route_key, the submodes and each view's on_key all fall through it --
+# and a key that does nothing is the only honest answer for one we cannot
+# name. A BARE ESC byte does not come through here: it never enters the CSI
+# branch, and still decodes to "\x1b".
+IGNORED = ""
+
+
 def decode_key(data: bytes) -> str:
-    """Bytes to a key name. Pure, so the arrow handling is testable."""
+    """Bytes to a key name. Pure, so the key handling is testable."""
     if data.startswith((b"\x1b[", b"\x1bO")):
-        for b in data[2:]:
+        body = data[2:]
+        for i, b in enumerate(body):
             if 0x40 <= b <= 0x7E:
-                # Final byte identifies the key; anything between is a
-                # modifier parameter (ESC [ 1 ; 5 A is ctrl-up), and a
+                # The first final byte ends the sequence; everything before
+                # it is the parameters (ESC [ 1 ; 5 A is ctrl-up), and a
                 # modified arrow should still move the cursor.
-                return {0x41: "UP", 0x42: "DOWN",
-                        0x43: "RIGHT", 0x44: "LEFT"}.get(b, "\x1b")
-        return "\x1b"
+                if b == 0x7E:
+                    head = body[:i].split(b";")[0]
+                    try:
+                        return _TILDE_KEYS.get(int(head), IGNORED)
+                    except ValueError:
+                        return IGNORED
+                return _FINAL_KEYS.get(b, IGNORED)
+        # A PREFIX THAT NEVER FINISHED -- the 250ms in read_key ran out
+        # holding "ESC [". Half a sequence is not an Escape either.
+        return IGNORED
     return data[:1].decode("utf-8", "replace")
 
 

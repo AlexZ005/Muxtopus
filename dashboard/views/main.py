@@ -27,8 +27,9 @@ from rich.table import Table
 from rich.text import Text
 
 from dashboard.app import View
-from dashboard.menulayout import (TABLE_MIN, fit_columns, make_table,
-                                  rendered_height, share_rows)
+from dashboard.menulayout import (PAGE_KEYS, TABLE_MIN, fit_columns,
+                                  make_table, page_jump, rendered_height,
+                                  share_rows)
 from dashboard.core import (CONTEXT_WINDOW, DIM, EXTRAS_SENTINEL, EXTRA_HINTS,
                             FRAME_INTERVAL, USAGE_MAX_AGE, WATCHDOG_TREE,
                             WD_INTERVAL, knob,
@@ -138,6 +139,11 @@ class MainView(View):
         # frame that costs 12.9 ms, and App asks for them in that order.
         self._foot = None
         self._anchor = 2
+        # THE SESSIONS TABLE'S PAGE, for PageUp/PageDown: the row lines
+        # fit_height actually gave it this frame. The cursor walks one list
+        # (lanes, then sessions, then the extras row) but it lives in the
+        # sessions table, so that table's viewport is what a page means here.
+        self._page = TABLE_MIN
 
     # -------------------------------------------------------- the protocol
     def build(self, app) -> list:
@@ -155,11 +161,28 @@ class MainView(View):
     def move(self, delta: int) -> None:
         if not self.sids:
             return
+        self.cursor = self.sids[max(0, min(len(self.sids) - 1,
+                                           self.cursor_row() + delta))]
+
+    def cursor_row(self) -> int:
+        """Where the cursor is in the ONE list the arrows walk."""
         try:
-            i = self.sids.index(self.cursor)
+            return self.sids.index(self.cursor)
         except ValueError:
-            i = 0
-        self.cursor = self.sids[max(0, min(len(self.sids) - 1, i + delta))]
+            return 0
+
+    def page(self, key: str) -> None:
+        """PageUp/PageDown/Home/End down the same list, clamped at both ends.
+
+        Home and End are the FIRST AND LAST ROW OF THE SCREEN -- the topmost
+        lane and the extras row -- and not the first and last session: the
+        cursor is one cursor top to bottom, and an End that stopped short of
+        the row it can see at the bottom would be the surprising one."""
+        if not self.sids:
+            return
+        j = page_jump(key, self.cursor_row(), len(self.sids), self._page)
+        if j is not None:
+            self.cursor = self.sids[j]
 
     def open_selected(self) -> str:
         """Jump the tmux client to the selected session's window.
@@ -871,7 +894,7 @@ class MainView(View):
         keys = Text.assemble(
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " schedules  ",
-            ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",
+            ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("pgup/dn home/end", DIM), " jump  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",
             ("esc", DIM), " muxtopus  ", ("c", DIM), " new session  ",
             ("←→", DIM), " fold  ", ("t", DIM), " tree  ",
             ("f", DIM), " all lanes  ", ("p", DIM), " btop  ", ("?", DIM), " help",
@@ -995,6 +1018,10 @@ class MainView(View):
         foot = self.app._submode_foot() or self._foot
         full = assemble(None, ())
         if rendered_height(console, Group(*[p for _n, p in full], foot)) <= height:
+            # Every row drawn: the page is the sessions table's whole length,
+            # so PageDown from the top lands where End does. That is what a
+            # screenful means when the screen holds the lot.
+            self._page = max(1, len(specs[1][2]))
             return full
         chrome = sum(rendered_height(console, p) for p in tables("chrome"))
         drop: list[str] = []
@@ -1012,6 +1039,7 @@ class MainView(View):
                 break
         else:
             lines = [TABLE_MIN, TABLE_MIN]
+        self._page = max(1, lines[1])
         note = (" · %s hidden: short terminal" % ", ".join(reversed(drop))) \
             if drop else ""
         return assemble(lines, drop, note)
@@ -1026,6 +1054,8 @@ class MainView(View):
             self.move(-1)
         elif key == "DOWN":
             self.move(1)
+        elif key in PAGE_KEYS:
+            self.page(key)
         elif key in ("\r", "\n"):
             self.app.say(self.open_selected())
         elif key == " ":

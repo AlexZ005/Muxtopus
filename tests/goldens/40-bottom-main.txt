@@ -1,7 +1,7 @@
 ╭──────────────────────────────────────────────────────────────────────────── deck ────────────────────────────────────────────────────────────────────────────╮
 │ <machine: deck>
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────── steamdeck · <n> threads · desktop mode · v<n>.<n> ─╯
-╭─ lanes · <n> server(s) · <n> MB · mxsplit · <n> hidden  (f: all) ─<pad>╮
+╭─ lanes · <n> server(s) · <n> <unit> · mxsplit · <n> hidden  (f: all) ─<pad>╮
 │ <machine: lanes>
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ claude [mxsplit] · 6 session(s) · 3.17M spent · watchdog on · scan <age> ago · monitor on ─<pad>╮
@@ -27,5 +27,5 @@
 ╭─ system ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ <machine: system>
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- q quit  r refresh  R reload  s schedules  w watchdog  m monitor  u/U usage  ↑↓ pick  enter open  space menu  esc muxtopus  c new session  ←→ fold  t tree  f
-all lanes  p btop  ? help  · 2 ?
+ q quit  r refresh  R reload  s schedules  w watchdog  m monitor  u/U usage  ↑↓ pick  pgup/dn home/end jump  enter open  space menu  esc muxtopus  c new session
+←→ fold  t tree  f all lanes  p btop  ? help  · 2 ?

@@ -54,6 +54,24 @@ It is delivered through a `PostToolUse` hook (`claude-winddown-hook.sh`), so it 
 
 The session is never told *why*. It receives an instruction, not a budget negotiation; the reasoning is logged instead: the dashboard's WOUND column says when a window was last asked to wrap up, and the log carries the reading that decided it. `monitor: off` on a schedule entry, or the second switch in a row's menu, exempts one session.
 
+### Resuming a wind-down
+
+A hard wind-down is an instruction to **stop**, and for a long time nothing started the window again. The restart path above fires only for a pane whose text says `hit your session limit`, and a window that stopped *because it was told to*, before it ever reached the limit, never prints that banner; the wind-down writes no schedule entry either. The one mechanism that would resume it keyed off a condition its own directive guaranteed would never occur.
+
+Measured on 2026-09-20: window `muxtopus-updates` was wound down at band 2 at 12:25 for the budget window resetting at 12:45, stopped at 12:32 with an open handover saying "Resume after the session reset", and was still idle at 13:10 with nothing due to touch it. `stranded` would eventually have *reported* it after two hours; reporting is not resuming.
+
+So the hard band now arms its own resume. A session gets the same continue message the limit path sends — once, under the same `prompted` ledger — when **all** of these hold:
+
+- it was wound down at **band 2** (band 1 is a note about style; the window keeps working through it);
+- it is **idle** now, with a pane to type into — never one that is working, and never a background job;
+- the **budget window recorded with the wind-down has come back** (`now ≥ epoch + 20 s`, the epoch being the quantized `session_reset_at` the directive named);
+- its **handover is still open** — `STATUS-<slug>.md` exists and is not in `done/`. The directive told the worker to write that file and then stop, so an open one is the window saying there is more to do and a `done` one is `handover.sh done` having been run. A finished lane is never poked;
+- it has not already been prompted for that budget window. The two paths key the window differently — the limit path by the epoch in the banner, this one by `session_reset_at` rounded to a quarter hour — so they are compared with a quarter hour of tolerance. Real limit windows are five hours apart, so the two can never both fire for one reset.
+
+`--optout`, a **monitoring** opt-out taken since (the wind-down was the monitor's doing; taking the window out of its hands afterwards reads as "leave this one alone") and the global `w` switch all stop it, exactly as they stop the limit path.
+
+**It is visible before it fires.** The state reads `resume due` on the dashboard and in `--status` from the moment the epoch passes, and `--dry-run` prints `WOULD-RESUME` in the action column. `WATCHDOG_WOUND_RESUME=off` turns the whole thing back into the old behaviour.
+
 ## Scheduled windows
 
 The daemon is the only launcher: the dashboard's `c` flow, a hand-written entry and a `Schedule ➥resume` from a row's menu all write a file into the schedules folder and the next pass opens it. The format, the fields and the verdicts are on [Scheduled windows](schedules.md); the two things the daemon decides are here.

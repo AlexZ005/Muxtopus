@@ -45,7 +45,8 @@ from rich.text import Text
 
 from dashboard.core import (DIM, PROFILE, RED, SCRIPTS, STATES, knob)
 from dashboard.tabstrip import fit
-from dashboard.menulayout import (MENU_MIN, menu_needed, menu_panel,
+from dashboard.menulayout import (CHROME, MENU_MIN, PAGE_KEYS, menu_needed,
+                                  menu_panel, page_jump, page_land,
                                   rendered_height)
 
 # The setting that hides tabs (dashboard/menus/tabs.py draws its menu).
@@ -120,6 +121,11 @@ class App:
         # its Settings submenu. They share the mover, the activator and the
         # drawing; only the registered entries function differs.
         self.menu: dict | None = None      # {"kind": ..., "i": int}
+        # THE OPEN MENU'S PAGE, for PageUp/PageDown: the item lines
+        # place_menu actually gave it this frame, not a constant. A menu is
+        # drawn before a key can reach it, so this is only ever the default
+        # for a menu nobody has seen.
+        self._menu_page = MENU_MIN - CHROME
         self.prompt: dict | None = None    # inline text entry (rename)
         self.confirm: dict | None = None   # yes/no gate (close)
         self.picker: dict | None = None    # arrow-driven option list
@@ -407,6 +413,7 @@ class App:
             layout, kept, room = "modal", [], height
             title += "[/] [%s](modal: no room below)" % DIM
         rows = max(MENU_MIN, min(room, menu_needed(items)))
+        self._menu_page = max(1, rows - CHROME)
         panel = menu_panel(items, cur, title, rows, self.menu_hint())
         if layout == "modal":
             panel.expand = False
@@ -433,6 +440,24 @@ class App:
             if not items[i].get("sep") and not items[i].get("disabled"):
                 self.menu["i"] = i
                 return
+
+    def menu_page(self, key: str) -> None:
+        """PageUp/PageDown/Home/End in an open menu.
+
+        The same jump every other list on this screen makes, and off the
+        separators and the disabled rows the mover already skips -- a page
+        that parks the cursor on a separator would make the next enter do
+        nothing."""
+        if self.menu is None:
+            return
+        items = self.menu_entries()
+        if not items:
+            return
+        j = page_land(key, self.menu["i"], len(items), self._menu_page,
+                      lambda k: bool(items[k].get("sep")
+                                     or items[k].get("disabled")))
+        if j is not None:
+            self.menu["i"] = j
 
     def menu_activate(self) -> None:
         if self.menu is None:
@@ -518,6 +543,14 @@ class App:
             pk["i"] = n - 1 if pk["i"] < 0 else (pk["i"] - 1) % n
         elif key == "DOWN":
             pk["i"] = 0 if pk["i"] < 0 else (pk["i"] + 1) % n
+        elif key in PAGE_KEYS:
+            # THE WHOLE PICKER IS DRAWN, always: it is a handful of options
+            # in the footer panel with no viewport to scroll, so its page is
+            # its length and PageDown lands where End does. With nothing
+            # preselected a page key picks the end it came from, exactly as
+            # the arrows do -- no row is marked until a key moves.
+            pk["i"] = (page_jump(key, pk["i"], n, n) if pk["i"] >= 0
+                       else (n - 1 if key in ("PGUP", "END") else 0))
         elif key in ("\r", "\n"):
             if pk["i"] < 0:
                 return
@@ -659,7 +692,11 @@ class App:
         before every global key -- including q. Typing a window name that
         contains a "q" must not quit the dashboard, and neither must
         answering a confirm."""
-        if key is None:
+        # "" IS NO KEY AT ALL: decode_key returns it for an escape
+        # sequence this dashboard has no name for (F5, Insert, a mouse
+        # report), and the whole point of that is that nothing acts on it.
+        # It used to arrive here as "\x1b" and quit whatever view was open.
+        if not key:
             return False
         if self.in_submode() or self.menu is not None:
             if self.prompt is not None:
@@ -677,6 +714,8 @@ class App:
                 self.menu_move(-1)
             elif key == "DOWN":
                 self.menu_move(1)
+            elif key in PAGE_KEYS:
+                self.menu_page(key)
             elif key in ("\r", "\n"):
                 self.menu_activate()
             elif key in ("\x1b", " ", "q", "Q"):

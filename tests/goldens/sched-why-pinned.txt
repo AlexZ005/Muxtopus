@@ -16,4 +16,4 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ awaiting your answers: 2   → to answer                                                                                                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ pick  space menu  enter/e edit  c create  o options  l launch now  d delete  r reload  s/esc back  q quit
+ ↑↓ pick  pgup/dn home/end jump  space menu  enter/e edit  c create  o options  l launch now  d delete  r reload  s/esc back  q quit

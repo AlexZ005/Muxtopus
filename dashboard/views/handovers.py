@@ -41,7 +41,8 @@ from dashboard.app import View
 from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, PROFILE,
                             QUESTIONS_DIR, RED, SCRIPTS, YELLOW, human_age)
 from dashboard.data import claude_sessions, lane_slug_of, live_windows, read_tree
-from dashboard.menulayout import menu_viewport, rendered_height
+from dashboard.menulayout import (PAGE_KEYS, menu_viewport, page_jump,
+                                  rendered_height)
 from dashboard.schedules import read_schedules
 
 # How a row's state is drawn. Same shape as core.STATES -- name: (label,
@@ -142,6 +143,9 @@ class HandoversView(View):
         self.show_done = self._knob(DONE_KEY)
         self.show_questions = self._knob(ASKS_KEY)
         self._foot = None
+        # THE TABLE'S PAGE, for PageUp/PageDown: the row lines build_handovers
+        # measured for it this frame.
+        self._page = 3
         self._body_cache: dict = {}
         self._scanned = 0.0
         self.flow: dict | None = None      # the answer screen, when it is up
@@ -248,6 +252,18 @@ class HandoversView(View):
         if self.rows:
             self.i = max(0, min(len(self.rows) - 1, self.i + delta))
 
+    def page(self, key: str) -> None:
+        """PageUp/PageDown/Home/End in the rows table, clamped at both ends.
+
+        THE PAGE KEYS DO NOT SCROLL THE DETAIL PANEL, which is the one body
+        on this screen: that panel shows the SELECTED row's head and is
+        re-read every frame, and the whole file goes to `less` on enter --
+        which pages it with these very keys. Two pagers on one screen, one of
+        them silent about which it is, is the bug this key is fixing."""
+        j = page_jump(key, self.i, len(self.rows), self._page)
+        if j is not None:
+            self.i = j
+
     def body(self, row: dict) -> list[str]:
         """The file's lines under its title, cached the way the rows are."""
         key = str(row["path"])
@@ -337,6 +353,7 @@ class HandoversView(View):
             detail.height = max(3, rendered_height(console, detail) - short)
 
         n = len(self.rows)
+        self._page = max(1, budget)
         if n <= budget:
             top, up, down = 0, False, False
             span = n
@@ -527,7 +544,8 @@ class HandoversView(View):
 
     def foot(self) -> Text:
         keys = Text.assemble(
-            (" ↑↓", DIM), " pick  ", ("←→", DIM), " tab  ",
+            (" ↑↓", DIM), " pick  ", ("pgup/dn home/end", DIM), " jump  ",
+            ("←→", DIM), " tab  ",
             ("enter", DIM), " open/answer  ", ("e", DIM), " edit  ",
             ("E", DIM), " force-edit  ", ("space", DIM), " menu  ",
             ("f", DIM), " done  ", ("a", DIM), " asks  ",
@@ -726,6 +744,10 @@ class HandoversView(View):
             f["cur"] = (f["cur"] - 1) % len(rows)
         elif key == "DOWN":
             f["cur"] = (f["cur"] + 1) % len(rows)
+        elif key in PAGE_KEYS:
+            # The answer screen draws every option, so its page is its
+            # length: PageDown is End here, and Home is the first answer.
+            f["cur"] = page_jump(key, f["cur"], len(rows), len(rows))
         elif key == "e":
             self.flow_edit()
         elif key == "\x1b":
@@ -1067,6 +1089,8 @@ class HandoversView(View):
             self.move(-1)
         elif key == "DOWN":
             self.move(1)
+        elif key in PAGE_KEYS:
+            self.page(key)
         elif key == "r":
             self.cache.clear()
             self._body_cache.clear()

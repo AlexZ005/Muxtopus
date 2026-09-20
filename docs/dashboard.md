@@ -77,6 +77,7 @@ The **STATE** column is the watchdog's word for the window:
 | `limited 14:30` | yellow: stopped at a usage limit, waiting for that reset |
 | `due 13:00` | red: the reset has passed and it is still sitting there; the watchdog prompts it on its next pass |
 | `stranded` | red: a `➥` lane, idle past `WATCHDOG_STRANDED`, with an open handover and no pending schedule entry naming it. A label, never a trigger — see [the watchdog](watchdog.md#stranded) |
+| `resume due` | yellow: a window a **hard** wind-down told to stop, whose budget window has come back and whose handover is still open. Unlike `stranded` this one *is* going to be touched — see [resuming a wind-down](watchdog.md#resuming-a-wind-down) |
 | `(background)` | started with `claude --bg`. It has no terminal, so there is no window for enter to open and no pane for the watchdog to type into — it can be watched but never restarted from here |
 
 A session whose lane has an unanswered QUESTIONS file carries a yellow `?` beside its name, and the key line says how many files are waiting in all. Both read the same folders the handovers tab does, at most once every five seconds, so the main frame pays a glob and no fork.
