@@ -36,7 +36,8 @@ from rich.text import Text
 import muxhandovers
 import muxsettings
 from dashboard.app import View
-from dashboard.menulayout import (TABLE_MIN, fit_columns, make_table,
+from dashboard.menulayout import (PAGE_KEYS, TABLE_MIN, fit_columns,
+                                  make_table, page_jump, page_land,
                                   rendered_height, share_rows)
 from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, HOME, PROFILE,
                             QUESTIONS_DIR, RED, SCHEDULES_DIR, SCHED_TEMPLATES,
@@ -71,6 +72,10 @@ class ScheduleView(View):
         self.i = 0
         self.rows: list[dict] = []
         self._foot = None
+        # THE TABLE'S PAGE, for PageUp/PageDown: the row lines build_sched
+        # actually gave it this frame, which on a terminal with room is every
+        # row there is.
+        self._page = TABLE_MIN
 
     # ------------------------------------------------------ the protocol
     def tab_label(self, app) -> str:
@@ -101,6 +106,14 @@ class ScheduleView(View):
     def sched_move(self, delta: int) -> None:
         if self.rows:
             self.i = max(0, min(len(self.rows) - 1, self.i + delta))
+
+    def sched_page(self, key: str) -> None:
+        """PageUp/PageDown/Home/End in the entries table, clamped at both
+        ends. A page is what the table SHOWS -- fewer rows on a short
+        terminal, every row on a tall one."""
+        j = page_jump(key, self.i, len(self.rows), self._page)
+        if j is not None:
+            self.i = j
 
 
     def _sched_sel(self):
@@ -343,6 +356,21 @@ class ScheduleView(View):
                 return
 
 
+    def options_page(self, key: str) -> None:
+        """The same four keys in the options table. EVERY ROW IS DRAWN there
+        -- it is a panel, not a viewport -- so its page is its length and
+        PageDown lands where End does; the headings are skipped the way the
+        mover skips them."""
+        rows = self.option_rows()
+        if not rows or self.app.modal is None:
+            return
+        j = page_land(key, self.app.modal["i"], len(rows), len(rows),
+                      lambda k: bool(rows[k].get("head")
+                                     or rows[k].get("disabled")))
+        if j is not None:
+            self.app.modal["i"] = j
+
+
     def _option_sel(self) -> dict | None:
         rows = self.option_rows()
         i = self.app.modal["i"] if self.app.modal else -1
@@ -416,6 +444,8 @@ class ScheduleView(View):
             self.options_move(-1)
         elif key == "DOWN":
             self.options_move(1)
+        elif key in PAGE_KEYS:
+            self.options_page(key)
         elif key == " ":
             msg = self.options_toggle()
             if msg:
@@ -810,6 +840,7 @@ class ScheduleView(View):
                          title_align="left", border_style=FRAME, box=box.ROUNDED)
 
         parts = [table_panel(None)]
+        self._page = max(1, len(rows))
 
         # WHY THE SELECTED ENTRY IS NOT RUNNING, in the executor's own words.
         # One line under the table rather than a column: the sentence is long
@@ -887,7 +918,8 @@ class ScheduleView(View):
                 border_style=FRAME, box=box.ROUNDED))
 
         keys = Text.assemble(
-            (" ↑↓", DIM), " pick  ", ("space", DIM), " menu  ",
+            (" ↑↓", DIM), " pick  ", ("pgup/dn home/end", DIM), " jump  ",
+            ("space", DIM), " menu  ",
             ("enter", DIM), "/", ("e", DIM), " edit  ",
             ("c", DIM), " create  ", ("o", DIM), " options  ",
             ("l", DIM), " launch now  ",
@@ -907,6 +939,7 @@ class ScheduleView(View):
             room = (console.size.height - rendered_height(console, table_panel("chrome"))
                     - rendered_height(console, Group(*parts[1:], foot)))
             lines = share_rows(room, [len(st_rows)]) or [TABLE_MIN]
+            self._page = max(1, lines[0])
             parts[0] = table_panel(lines[0])
         # The entry's menu goes under the TABLE -- the why sentence belongs
         # in the menu, not above it -- so the anchor is section 0.
@@ -923,6 +956,8 @@ class ScheduleView(View):
             self.sched_move(-1)
         elif key == "DOWN":
             self.sched_move(1)
+        elif key in PAGE_KEYS:
+            self.sched_page(key)
         elif key in ("\r", "\n", "e", "E"):
             m = self.request_edit_selected()
             if m:

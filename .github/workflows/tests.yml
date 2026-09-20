@@ -44,6 +44,12 @@ jobs:
         run: python3 tests/test_tabs_hidden.py
       - name: the App -- routing, registration, ordering, failure
         run: python3 tests/test_dashboard_app.py
+      - name: decode_key -- every escape sequence, and the split read
+        run: python3 tests/test_decode_key.py
+      - name: pgup/pgdn/home/end page a list and do not leave the view
+        run: python3 tests/test_view_paging.py
+      - name: ...and the same test against the OLD decoder still shows the bug
+        run: python3 tests/test_view_paging.py --counterfactual
       - name: every name the dashboard mentions is one it can reach
         run: python3 tests/test_names.py
       - name: muxstats

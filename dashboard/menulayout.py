@@ -20,6 +20,8 @@ scrolling rule on the screen and not one per table:
     TABLE_MIN                              3: ▲, one row, ▼ (MENU_MIN less chrome)
     table_window(n, cur, lines)   -> (top, span, show_up, show_down)
     share_rows(room, needs)       -> [lines per table] or None: no room
+    page_jump(key, i, n, page)    -> the index PageUp/PageDown/Home/End means
+    page_land(key, i, n, page, skip) -> the same, off unselectable rows
     fit_columns(cols, width)      -> the columns a narrow terminal keeps
     make_table(cols, keep, rows, cur, marker, lines) -> Table, windowed
 
@@ -188,6 +190,54 @@ def share_rows(room: int, needs: list[int]) -> list[int] | None:
         out[i] += more
         left -= more
     return out
+
+
+# --------------------------------------------------- Page Up/Down, Home/End
+# A list that scrolls with the rule above also has to answer PageUp, PageDown,
+# Home and End, and the arithmetic is the same arithmetic: a "page" is the
+# rows the viewport actually shows, which is the number the caller already
+# worked out for menu_panel/make_table. One implementation, so the schedules
+# table, the sessions table, the handovers tab, the insights breakdown, the
+# menus, the picker and the options table cannot disagree about what a page
+# is -- a key that pages one list and exits another is worse than no key.
+PAGE_KEYS = ("PGUP", "PGDN", "HOME", "END")
+
+
+def page_jump(key: str, i: int, n: int, page: int) -> int | None:
+    """The new cursor index for one of PAGE_KEYS, or None for any other key.
+
+    CLAMPED AT BOTH ENDS -- PageUp at the top is the first row, not a
+    negative index and not a wrap -- and O(1), so End on a thousand-row
+    ledger costs what End on a three-row one costs."""
+    if key not in PAGE_KEYS or n <= 0:
+        return None
+    page = max(1, page)
+    if key == "HOME":
+        return 0
+    if key == "END":
+        return n - 1
+    if key == "PGUP":
+        return max(0, i - page)
+    return min(n - 1, i + page)
+
+
+def page_land(key: str, i: int, n: int, page: int, skip=None) -> int | None:
+    """page_jump, then off any row that cannot hold a cursor.
+
+    `skip(j)` is True for a row the cursor may not sit on -- a menu
+    separator, a disabled row, the options table's headings. Home and End
+    search INTO the list; a page step searches the way it moved and then the
+    other way, so PageUp landing on a heading at the top still ends on the
+    first row that IS selectable rather than on the heading or nowhere."""
+    j = page_jump(key, i, n, page)
+    if j is None or skip is None:
+        return j
+    first = -1 if key in ("PGUP", "END") else 1
+    for step in (first, -first):
+        for k in range(j, n if step > 0 else -1, step):
+            if not skip(k):
+                return k
+    return i
 
 
 def fit_columns(cols: list, width: int, want: int = 20) -> list[int]:

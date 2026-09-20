@@ -52,7 +52,9 @@ from dashboard.app import View
 from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, HOME, PROFILE,
                             PROFILE_LABEL, RED, SCHEDULES_DIR, YELLOW,
                             mux_home)
-from dashboard.menulayout import CHROME, MENU_MIN, menu_viewport, rendered_height
+from dashboard.menulayout import (CHROME, MENU_MIN, PAGE_KEYS,
+                                  menu_viewport, page_jump,
+                                  rendered_height)
 
 # How far `enter` goes, and it stops where a filter cannot follow. A breakdown
 # key is only a filter if muxstats.FILTER_KEYS holds its dimension, so a day,
@@ -86,6 +88,9 @@ class InsightsView(View):
         self.filters: dict[str, list] = {}
         self.all_accounts = False
         self.cur = 0
+        # THE BREAKDOWN'S PAGE, for PageUp/PageDown: the row lines
+        # breakdown_panel measured for it this frame.
+        self._page = 3
         # (filters, group_by, cursor) per level of `enter`, so backspace puts
         # the screen back exactly where it was rather than guessing a parent.
         self.stack: list[tuple] = []
@@ -201,6 +206,8 @@ class InsightsView(View):
             self.move(-1)
         elif key == "DOWN":
             self.move(1)
+        elif key in PAGE_KEYS:
+            self.page(key)
         elif key == "g":
             self.cycle_group(1)
         elif key == "G":
@@ -260,6 +267,17 @@ class InsightsView(View):
         n = len(self.report()["breakdown"])
         if n:
             self.cur = max(0, min(n - 1, self.cur + delta))
+
+    def page(self, key: str) -> None:
+        """PageUp/PageDown/Home/End down the breakdown, clamped at both ends.
+
+        End on a ledger grouped by session is the one that earns its keep:
+        that list is hundreds of rows long and holding ↓ down was the only
+        way to the bottom of it."""
+        n = len(self.report()["breakdown"])
+        j = page_jump(key, self.cur, n, self._page)
+        if j is not None:
+            self.cur = j
 
     def selected(self) -> dict | None:
         bd = self.report()["breakdown"]
@@ -440,6 +458,7 @@ class InsightsView(View):
             # header, rule and trailing blank line. At four the frame was two
             # lines too tall and Live cropped the footer off the bottom.
             budget = max(3, rows - 6)
+            self._page = budget
             top, up, down = menu_viewport(len(cells), self.cur, budget + CHROME)
             span = budget - up - down
             if up:

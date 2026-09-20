@@ -17,7 +17,12 @@ rather than one regex at a time wherever a diff turned up:
      account's. What is still proven about those panels is that they are
      drawn, in that order, with their titles.
   2. Numbers in those three panels' TITLES are masked (`0 server(s)`,
-     `8 hidden`, `1.1 GB`) -- the titles themselves are not.
+     `8 hidden`, `1.1 GB`) -- the titles themselves are not. AND THE UNIT
+     BESIDE A MASKED NUMBER, because human_mb prints MB under 1024 and GB
+     above: the lanes title reads `<n> MB` on a machine whose dev servers
+     hold 950 MB and `<n> GB` on the same machine an hour later. Masking the
+     digits and not the unit hid half of one host fact, and a golden taken at
+     1.1 GB failed on the machine that took it once a server exited.
   3. Everywhere else, only genuinely moving things:
        the watchdog scan age       scan 3s ago   -> scan <age> ago
        the usage read clock        read 08:40    -> read <time>
@@ -52,6 +57,9 @@ MACHINE_PANELS = ("deck", "lanes", "system")
 SB = os.environ.get("SB", "")
 
 NUM = re.compile(r"\d+(?:\.\d+)?")
+# The unit that follows a number this file just masked, in a machine panel's
+# title. Only there: an MB elsewhere on the screen is the fixture's.
+UNIT = re.compile(r"(<n>) (MB|GB)\b")
 SUBS = (
     (re.compile(r"scan \d+[smhd] ago"), "scan <age> ago"),
     (re.compile(r"read \d{1,2}:\d{2}"), "read <time>"),
@@ -67,7 +75,7 @@ SUBS = (
 
 # Every token a mask can leave behind, and the two shapes of fill that a
 # panel puts between its content and its closing border.
-MASKED = re.compile(r"<age>|<time>|<stamp>|<newname>|<n>|<SB>")
+MASKED = re.compile(r"<age>|<time>|<stamp>|<newname>|<n>|<unit>|<SB>")
 PAD_SPACE = re.compile(r" {2,}(│\s*)$")
 PAD_FILL = re.compile(r"─{2,}([╮╯]\s*)$")
 
@@ -79,6 +87,11 @@ def repad(line: str) -> str:
         return line
     line = PAD_SPACE.sub(r" <pad>\1", line)
     return PAD_FILL.sub(r"─<pad>\1", line)
+
+
+def mask_machine(line: str) -> str:
+    """A machine panel's border line: its numbers, and the unit after one."""
+    return UNIT.sub(r"\1 <unit>", NUM.sub("<n>", line))
 
 
 def _title_of(border: str) -> str:
@@ -98,10 +111,10 @@ def normalise(text: str) -> str:
         if skipping:
             if "╰" in line:
                 skipping = False
-                out.append(NUM.sub("<n>", line))
+                out.append(mask_machine(line))
             continue
         if "╭" in line and _title_of(line) in MACHINE_PANELS:
-            out.append(NUM.sub("<n>", line))
+            out.append(mask_machine(line))
             out.append("│ <machine: %s>" % _title_of(line))
             skipping = True
             continue
