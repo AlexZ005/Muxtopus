@@ -63,7 +63,7 @@ KEYS = {
     # THE DASHBOARD'S OWN, written by its Settings menu into dashboard.conf
     # (muxsettings.py has the labels, choices and the writer). None here is
     # "unset": no flag, no header field, the account default.
-    "DASHBOARD_MENU_LAYOUT": "table",
+    "DASHBOARD_MENU_LAYOUT": "modal",
     "DASHBOARD_NEW_PERMISSION_MODE": "ask",
     "DASHBOARD_PERMANENT_MODE_SCOPE": "project",
     "DASHBOARD_NEW_WATCHDOG": "on",
@@ -105,8 +105,32 @@ KEYS = {
     "WATCHDOG_RESTORE": "ask",
     "WATCHDOG_RESTORE_MAX_AGE": "24",
     "MUXTOPUS_TMUX_SOCKET": "default",
+    # NEW RELEASES (mux-update.sh, docs/updates.md). These govern ONE tree of
+    # code that every account runs, so the Settings menu writes them to the
+    # SHARED dashboard.conf whichever account is on screen -- see
+    # muxsettings.scope_of. A profile file may still narrow them by hand, the
+    # way it may narrow any key.
+    "MUXTOPUS_UPDATE_MODE": "notify",
+    "MUXTOPUS_UPDATE_EVERY": "24",
+    "MUXTOPUS_UPDATE_CHANNEL": "stable",
+    "MUXTOPUS_NOTIFY_UPDATE": "off",
 }
 KINDS = ("schedules", "backups", "handovers")
+
+
+def update_dir() -> pathlib.Path:
+    """Where mux-update.sh keeps what it last learned from GitHub.
+
+    NO ACCOUNT SUFFIX, and that is the point: there is one installed tree, so
+    the newest release is a fact about the machine. profile.sh computes the
+    same path as MUX_UPDATE_DIR; this is the Python half, so a reader that
+    was not started by the shell (a test, `muxstats`) finds the same file.
+    """
+    env = os.environ.get("MUX_UPDATE_DIR")
+    if env:
+        return pathlib.Path(env)
+    state = os.environ.get("XDG_STATE_HOME") or str(HOME / ".local" / "state")
+    return pathlib.Path(state) / "muxtopus-update"
 
 
 def config_path() -> pathlib.Path:

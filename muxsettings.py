@@ -142,6 +142,8 @@ def register(specs: dict[str, dict], menu: str = "") -> None:
             raise ValueError("%s: kind must be choice, onoff or text" % key)
         if spec["kind"] == "choice" and "choices" not in spec:
             raise ValueError("%s: a choice needs choices" % key)
+        if spec.get("scope") not in (None, "", "global"):
+            raise ValueError("%s: scope is \"global\" or nothing" % key)
         if menu:
             SUBMENU_KEYS[key] = dict(spec, menu=menu)
         else:
@@ -150,6 +152,22 @@ def register(specs: dict[str, dict], menu: str = "") -> None:
 
 HEADER = ("# Written by the muxtopus dashboard (esc → Settings). Edit config or\n"
           "# profiles/<name>.conf by hand instead; this file is rewritten whole.\n")
+
+
+def scope_of(key: str, profile: str = "") -> str:
+    """WHICH ACCOUNT'S dashboard.conf this key is written to: "" is shared.
+
+    Almost every setting is a preference about one account and belongs in
+    that account's file. A few are facts about the MACHINE -- the update
+    keys govern one installed tree that every account runs -- and writing
+    those per account would mean an answer that depends on which account
+    happened to be on screen. A spec says so with `scope="global"`, and
+    only the WRITE moves: get still reads through this account's layers, so
+    a profile file that narrows the key by hand is still what the menu
+    shows, and put's read-back is what says the narrowing happened.
+    """
+    meta = spec_of(key) or {}
+    return "" if meta.get("scope") == "global" else profile
 
 
 def get(key: str, profile: str = "") -> str:
@@ -196,7 +214,9 @@ def put(key: str, value: str, profile: str = "") -> str:
     why = validate(key, value)
     if why:
         return why
-    path = dashboard_conf_path(profile)
+    # THE FILE THE VALUE GOES IN (scope_of): this account's, or the shared
+    # one for a setting that is about the machine rather than the account.
+    path = dashboard_conf_path(scope_of(key, profile))
     have = _read(path)
     if value == "":
         have.pop(key, None)

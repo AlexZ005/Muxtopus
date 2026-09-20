@@ -80,10 +80,20 @@ main() {
   fi
   mkdir -p "$(dirname "$lib")"
   if [ -e "$lib" ]; then
-    old="$lib.old.$$"
-    mv "$lib" "$old"
+    # THE TREE BEING REPLACED IS KEPT, one deep, as $lib.prev. A release that
+    # breaks this machine is then one move back -- `muxtopus update
+    # --rollback`, or by hand -- instead of a hunt for the old tag and a
+    # second download on a machine whose dashboard has stopped working. The
+    # one before it goes; two generations is a hoard, not insurance.
+    # It has no .venv: that was carried forward above, because it belongs to
+    # the PATH and to the python that built it. A rollback moves it back.
+    if [ -e "$lib.prev" ]; then
+      old="$lib.prev.old.$$"
+      mv "$lib.prev" "$old"
+    fi
+    mv "$lib" "$lib.prev"
     mv "$tmp/muxtopus-$version" "$lib"
-    rm -rf -- "${old:?}"
+    if [ -n "${old:-}" ]; then rm -rf -- "${old:?}"; fi
   else
     mv "$tmp/muxtopus-$version" "$lib"
   fi

@@ -78,7 +78,7 @@ WATCHDOG_WOUND_RESUME=on
 CLAUDE_USAGE_MAX_AGE=20
 CLAUDE_USAGE_MODEL=-
 CLAUDE_CONTEXT_WINDOW=1000000
-DASHBOARD_MENU_LAYOUT=table
+DASHBOARD_MENU_LAYOUT=modal
 DASHBOARD_NEW_PERMISSION_MODE=ask
 DASHBOARD_PERMANENT_MODE_SCOPE=project
 DASHBOARD_NEW_WATCHDOG=on
@@ -106,6 +106,10 @@ DASHBOARD_TABS_HIDDEN=-
 WATCHDOG_RESTORE=ask
 WATCHDOG_RESTORE_MAX_AGE=24
 MUXTOPUS_TMUX_SOCKET=default
+MUXTOPUS_UPDATE_MODE=notify
+MUXTOPUS_UPDATE_EVERY=24
+MUXTOPUS_UPDATE_CHANNEL=stable
+MUXTOPUS_NOTIFY_UPDATE=off
 "
 
 # The checkout these scripts live in, from this file's own location, so a
@@ -160,7 +164,13 @@ mux_load_config() {
     [ "$d" = "-" ] && continue
     [ -n "${!k:-}" ] || printf -v "$k" '%s' "$d"
   done
-  export MUXTOPUS_DIR MUXTOPUS_HOME
+  # WHERE THE UPDATE CHECK KEEPS ITS ANSWER. Not under MUX_STATE, which is
+  # per account: there is ONE installed tree, so two accounts asking GitHub
+  # the same question twice a day is two answers that can disagree about what
+  # is installed. One directory, no suffix, whoever gets there first writes
+  # it -- mux-update.sh --check returns at once when it is fresh.
+  MUX_UPDATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/muxtopus-update"
+  export MUXTOPUS_DIR MUXTOPUS_HOME MUX_UPDATE_DIR
   return 0
 }
 
@@ -280,6 +290,21 @@ mux_key_help() {
                             echo "or an absolute path (tmux -S). Passed EXPLICITLY on every call, so a"
                             echo "command run from inside a pane never follows that pane's \$TMUX to"
                             echo "some other server. default = what a bare tmux uses outside tmux." ;;
+    # UPDATES (mux-update.sh, docs/updates.md). ONE INSTALL, SHARED BY EVERY
+    # ACCOUNT: the code these keys govern is a single tree, so the dashboard
+    # writes them to the shared dashboard.conf whatever account it is showing.
+    MUXTOPUS_UPDATE_MODE)   echo "What muxtopus does about a new release. notify: check on a slow"
+                            echo "clock and say so on the dashboard; nothing is downloaded until you"
+                            echo "say yes. download: also fetch and stage it, so applying it is"
+                            echo "local. off: never check, and never reach the network for this." ;;
+    MUXTOPUS_UPDATE_EVERY)  echo "Hours between release checks. One HTTPS request that follows the"
+                            echo "releases/latest redirect -- no API token, nothing about this"
+                            echo "machine sent. The check is SHARED: whichever account's watchdog"
+                            echo "gets there first does it, and the others read its answer." ;;
+    MUXTOPUS_UPDATE_CHANNEL) echo "stable: the newest full release. prerelease: also pick up release"
+                            echo "candidates, for a machine you dogfood your own tags on." ;;
+    MUXTOPUS_NOTIFY_UPDATE) echo "on: tell the phone when a new muxtopus release is out, with the"
+                            echo "headline of its notes. Off by default: it is news, not trouble." ;;
     *)                      echo "(undocumented)" ;;
   esac
 }

@@ -1,6 +1,6 @@
 ---
 title: Configuration
-nav_order: 11
+nav_order: 12
 ---
 {% raw %}
 # Configuration
@@ -36,6 +36,10 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `WATCHDOG_RESTORE` | `ask` | what `muxtopus` does with a [frozen window snapshot](restore.md) when there is no session: `ask` offers it at a terminal; `auto` restores without asking, and the watchdog relaunches `muxtopus -d` the moment the server disappears; `off` never offers (`muxtopus --restore` still works) |
 | `WATCHDOG_RESTORE_MAX_AGE` | `24` | hours; a frozen snapshot older than this is not offered at start (`--restore` takes it regardless) |
 | `MUXTOPUS_TMUX_SOCKET` | `default` | the tmux server every muxtopus command talks to: a name (`tmux -L`) or an absolute path (`tmux -S`), passed explicitly on every call so a command run inside a pane never follows that pane's `$TMUX` elsewhere. `default` is the socket a bare `tmux` uses outside tmux |
+| `MUXTOPUS_UPDATE_MODE` | `notify` | what to do about a new [release](updates.md): `notify` checks and says so, `download` also fetches it, `off` never asks. Shared by every account |
+| `MUXTOPUS_UPDATE_EVERY` | `24` | hours between release checks; whichever account's watchdog gets there first does it |
+| `MUXTOPUS_UPDATE_CHANNEL` | `stable` | `prerelease` also picks up release candidates |
+| `MUXTOPUS_NOTIFY_UPDATE` | `off` | tell the phone when a release is out — once per version, ever |
 | `CLAUDE_USAGE_MAX_AGE` | `20` | minutes; the dashboard's `u` and `R` refresh only past this age |
 | `CLAUDE_USAGE_MODEL` | from `settings.json` | which model's limit line the probe reads |
 | `CLAUDE_CONTEXT_WINDOW` | `1000000` | what the dashboard draws the context bar against |
@@ -52,7 +56,7 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `MUXTOPUS_NOTIFY_LIMIT_BANDS` | `off` | also alert when a budget crosses the soft or hard band |
 | `MUXTOPUS_NOTIFY_STALLED` | `on` | alert when an entry cannot be judged at all |
 | `MUXTOPUS_NOTIFY_STRANDED` | `on` | alert when a lane is stranded |
-| `DASHBOARD_MENU_LAYOUT` | `table` | how a context menu is drawn: `table` (under the panel the cursor is in), `modal` (centred), `bottom` (the footer, scrolling) |
+| `DASHBOARD_MENU_LAYOUT` | `modal` | how a context menu is drawn: `table` (under the panel the cursor is in), `modal` (centred), `bottom` (the footer, scrolling) |
 | `DASHBOARD_NEW_PERMISSION_MODE` | `ask` | the mode preselected when `c` creates a window; `ask` preselects nothing |
 | `DASHBOARD_PERMANENT_MODE_SCOPE` | `project` | which `settings.json` *make it the default* writes: `project` (`<cwd>/.claude/`) or `account` (`~/.claude/`) |
 | `DASHBOARD_NEW_WATCHDOG` | `on` | `off`: a window `c` creates carries `watchdog: off` and is never restarted after a limit |

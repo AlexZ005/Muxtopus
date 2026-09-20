@@ -1,6 +1,6 @@
 ---
 title: For contributors
-nav_order: 12
+nav_order: 13
 has_children: true
 ---
 {% raw %}
@@ -19,6 +19,7 @@ claude-watchdog.sh      the daemon
 claude-usage.sh         the /usage probe
 claude-winddown-hook.sh the PostToolUse hook the daemon arms
 claude-notify.sh        one message out; --setup
+mux-update.sh           new releases: check, stage, apply, roll back
 muxtelegram.py          buttons and commands in
 muxhandovers.py         STATUS and QUESTIONS files as data; lane_state
 muxstats.py             the ledger and the report
@@ -38,6 +39,7 @@ A dashboard screen is one new file under `dashboard/views/`, discovered rather t
 ```
 .venv/bin/python tests/test_*.py      # every Python test; what CI runs
 bash tests/test_handover_sh.sh        # handover.sh
+bash tests/test_update.sh             # the self-updater, end to end
 bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 ```
 
@@ -53,6 +55,7 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | the handover reader, the states and the fork parser | `tests/test_handovers.py` | yes |
 | `handover.sh`: the marker, and what `done` carries with it | `tests/test_handover_sh.sh` | yes |
 | this manual: front matter, links, Liquid-safe bodies, nothing lost from the README | `tests/test_manual.py` | yes |
+| the self-updater, installed and rolled back for real | `tests/test_update.sh` | no — local |
 | `install.sh`: the PATH line in the shell rc, once | `tests/test_install_path.sh` | no — local |
 | where the no-systemd watchdog's pid file goes, under `su` | `tests/test_run_dir.sh` | no — local |
 | the notify shell: setup, pull, inbound, forks, the watchdog's pushes | `tests/test_notify_*.sh`, `tests/test_stats_watchdog.sh` | no — local |

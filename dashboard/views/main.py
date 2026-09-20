@@ -589,6 +589,11 @@ class MainView(View):
                      urows[2])
 
         subtitle = f"{os.uname().nodename} · {len(os.sched_getaffinity(0))} threads · {mode} mode · v{self.app.version}"
+        # An update landed under this process. Not a notice, which scrolls
+        # away: a standing mark on the header, until R re-execs onto it.
+        got = self.app.stale()
+        if got:
+            subtitle += f" [{YELLOW}]→ {got} installed, press R[/]"
 
         # ---- lanes --------------------------------------------------------
         groups: dict[int, dict] = {}

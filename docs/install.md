@@ -19,7 +19,9 @@ less get.sh
 bash get.sh                   # options after it go to install.sh: bash get.sh --no-watchdog
 ```
 
-Running `get.sh` again from a newer release upgrades in place and keeps the dashboard's venv. It will not touch `~/.local/lib/muxtopus` if something else put it there, such as a git checkout.
+Running `get.sh` again from a newer release upgrades in place and keeps the dashboard's venv. It will not touch `~/.local/lib/muxtopus` if something else put it there, such as a git checkout. The release it replaces is kept as `~/.local/lib/muxtopus.prev`, which is what a [rollback](updates.md#rolling-back) puts back.
+
+You do not normally have to do that by hand: muxtopus checks for a new release once a day and offers it on the dashboard under `esc ▸ Settings ▸ Updates`, or on the command line as `muxtopus update`. What it asks the network, and how to turn it off, is [Updates](updates.md).
 
 **From a git checkout** instead, if you want to follow `main` or send a patch:
 
