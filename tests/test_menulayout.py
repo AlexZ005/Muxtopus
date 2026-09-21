@@ -23,7 +23,7 @@ from dashboard.menulayout import (MENU_MIN, menu_needed, menu_panel,  # noqa: E4
 # Dashboard.menu_entries() builds it. The plan (§0.3) counts it as 11 entries,
 # 2 separators and 2 "off globally" lines; the last two rows before the
 # separator stand in for the entries that bring today's 9 up to that count.
-W = "➥➥dash-menus-settings-with-a-long-name"
+W = "dash-menus-settings-with-a-long-name"
 SESSION = [
     {"key": "wd_win", "label": "Restart %s after a limit: YES" % W, "on": True},
     {"key": "mon_win", "label": "Wind %s down near the limit: no, never interrupted" % W,
@@ -34,7 +34,7 @@ SESSION = [
     {"label": "Wind down %s now  ask it to checkpoint and stop" % W},
     {"label": "Resume %s now  tell it to continue" % W},
     {"label": "Continue %s at low priority  spends the WEEKLY budget" % W},
-    {"label": "Schedule ➥resume of %s at the next reset  reads its STATUS file" % W},
+    {"label": "Schedule a resume of %s at the next reset  reads its STATUS file" % W},
     {"label": "Open the STATUS file of %s" % W, "disabled": "background session, no window"},
     {"label": "Copy the handover path of %s" % W},
     {"sep": True},
@@ -54,7 +54,7 @@ SCHEDULE = [
     {"label": "Launch now", "disabled": "only a pending entry"},
     {"label": "Duplicate as a new pending entry"},
     {"label": "Check: resolve it and show the report"},
-    {"label": "Open its window ➥dash-menus-layout-engine"},
+    {"label": "Open its window dash-menus-layout-engine"},
     {"sep": True},
     {"label": "Delete %s" % F, "danger": True},
 ]

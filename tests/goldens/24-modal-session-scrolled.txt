@@ -3,17 +3,17 @@
 
 
 
-                                         ╭─ menu · ➥root-lane ────────────────────────────────────────────────────────╮
-                                         │    Restart ➥root-lane after a limit: YES                                   │
-                                         │    Wind ➥root-lane down near the limit: YES                                │
+                                         ╭─ menu · root-lane ─────────────────────────────────────────────────────────╮
+                                         │    Restart root-lane after a limit: YES                                    │
+                                         │    Wind root-lane down near the limit: YES                                 │
                                          │    ····················································                    │
-                                         │    Open ➥root-lane                                                         │
-                                         │    Rename ➥root-lane                                                       │
-                                         │    Wind down ➥root-lane now  ask it to checkpoint and stop                 │
-                                         │    Resume ➥root-lane now  tell it to continue                              │
-                                         │    Continue ➥root-lane at low priority  spends the WEEKLY budget           │
-                                         │    Schedule ➥resume of ➥root-lane at the next reset  reads its STATUS file │
+                                         │    Open root-lane                                                          │
+                                         │    Rename root-lane                                                        │
+                                         │    Wind down root-lane now  ask it to checkpoint and stop                  │
+                                         │    Resume root-lane now  tell it to continue                               │
+                                         │    Continue root-lane at low priority  spends the WEEKLY budget            │
+                                         │    Schedule a resume of root-lane at the next reset  reads its STATUS file │
                                          │    ····················································                    │
-                                         │  ▸ Close ➥root-lane  kills the claude session in it                        │
+                                         │  ▸ Close root-lane  kills the claude session in it                         │
                                          │    ↑↓ pick · enter choose · esc close                                      │
                                          ╰────────────────────────────────────────────────────────────────────────────╯

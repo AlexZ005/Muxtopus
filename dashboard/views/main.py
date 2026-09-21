@@ -264,7 +264,7 @@ class MainView(View):
                  "act": self.act_resume, "need_pane": True},
                 {"label": "Continue %s at low priority  spends the WEEKLY budget" % label,
                  "act": self.act_lowpri, "need_pane": True},
-                # "Schedule ➥resume of ..." used to sit here. It writes a
+                # "Schedule a resume of ..." used to sit here. It writes a
                 # schedule entry, so it belongs to the schedule view, and it
                 # arrives back in this list through app.add_rows("session",
                 # ..., order=85) -- the registry doing the one job the old
@@ -824,8 +824,11 @@ class MainView(View):
                 mon_txt = Text("off", style=DIM)
             else:
                 mon_txt = Text("on", style=GREEN)
-            # DEPTH IS DRAWN, not stored in tmux: the window name carries its
-            # own ➥ markers, and this adds the indent the flat list cannot.
+            # DEPTH IS DRAWN HERE AND NOWHERE ELSE. It used to be in the
+            # window name too (➥lane, ➥➥child), which tmux showed and this
+            # ignored; the name is the slug now, so this indent is the only
+            # place a reader sees how deep a lane sits. Tree OFF means depth
+            # 0 for every row (tree_layout), so nothing is indented then.
             if depth:
                 wtx = Text.assemble(("  " * depth + "└ ", FRAME), s.window)
             else:
@@ -1282,13 +1285,13 @@ HELP_DIRTY = f"""
 
     [{YELLOW}]limited[/]  stopped at a usage limit, waiting for the reset
     [{RED}]due[/]      the reset has passed and it is still sitting there
-    [{RED}]stranded[/] NOTHING IS EVER GOING TO TOUCH THIS. A ➥ lane, idle past
+    [{RED}]stranded[/] NOTHING IS EVER GOING TO TOUCH THIS. A lane, idle past
              WATCHDOG_STRANDED (120m), with an OPEN handover, and no pending
              schedule entry naming it -- not by slug, not by after:, not a
              resume- entry. idle stays dim because it is a fact about the last
              turn and usually means finished; this is a fact about the future.
              It is a label, never a trigger: the watchdog only ever prompts a
-             [{RED}]due[/] window. Schedule a ➥resume from the menu, or answer its
+             [{RED}]due[/] window. Schedule a resume from the menu, or answer its
              handover.
 
     [bold]w[/] arms the watchdog: an IDLE window that hit a limit is prompted to

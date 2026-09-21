@@ -8,14 +8,27 @@
 │                                                                                                                                                              │
 │        MON    WINDOW               MODEL         CONTEXT                            SPENT     IDLE   STATE              DIRTY   WOUND          RESUMED       │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
-│   ✔    on     ➥root-lane ?         opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
-│   ✔    on       └ ➥➥kid-lane       fable         ████··········  31% 310k            880k      15m   limited 14:30          3   Jan 2 03:06    —             │
-│  ▸✔    on     ➥stranded-lane       sonnet        ██············  18% 180k            410k       2h   stranded               7   —              —             │
-│   ✔    on     ➥due-lane            opus[1m]      █·············   9% 90k             250k       5m   due 13:00              3   —              Jan 2 05:53   │
+│   ✔    on     root-lane ?          opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
+│   ✔    on       └ kid-lane         fable         ████··········  31% 310k            880k      15m   limited 14:30          3   Jan 2 03:06    —             │
+│  ▸✔    on     stranded-lane        sonnet        ██············  18% 180k            410k       2h   stranded               7   —              —             │
+│   ✔    on     due-lane             opus[1m]      █·············   9% 90k             250k       5m   due 13:00              3   —              Jan 2 05:53   │
 │   ✔    on     (background)         haiku         ··············   4% 45k             120k        —   idle                   —   —              —             │
-│   ✔    on     ➥opted-out           fable         ··············   2% 20k              60k       2m   idle                   7   —              —             │
+│   ✔    on     opted-out            fable         ··············   2% 20k              60k       2m   idle                   7   —              —             │
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ name  (the slug: window ➥name, STATUS-name.md): _ [repo-b-quail]      enter takes what is in brackets · esc cancel                                           │
+╭─ new session · <SB>/work/repo-b ─<pad>╮
+│  ▸ Create [repo-b-vale           ]  and go to its window  · type to rename                                                                                   │
+│    ····················································                                                                                                      │
+│    Sub-window repo-b-vale under stranded-lane  empty, no prompt                                                                                              │
+│    Sub-window repo-b-vale under stranded-lane  continues from its handover                                                                                   │
+│    ····················································                                                                                                      │
+│    Folder: <SB>/work/repo-b  where claude starts <pad>│
+│    Model: fable  a CLI alias; the MODEL column's names are refused                                                                                           │
+│    Effort: high                                                                                                                                              │
+│    Permission mode: unset  (no flag; the CLI's own default)  cannot be changed after launch                                                                  │
+│    Where: a top-level window                                                                                                                                 │
+│    First prompt: (none)  empty makes it a plan entry                                                                                                         │
+│    ····················································                                                                                                      │
+│    Cancel                                                                                                                                                    │
+│    ↑↓ pick · enter set · esc cancel                                                                                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

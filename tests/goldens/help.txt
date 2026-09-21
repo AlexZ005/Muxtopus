@@ -5,13 +5,13 @@
 
     limited  stopped at a usage limit, waiting for the reset
     due      the reset has passed and it is still sitting there
-    stranded NOTHING IS EVER GOING TO TOUCH THIS. A ➥ lane, idle past
+    stranded NOTHING IS EVER GOING TO TOUCH THIS. A lane, idle past
              WATCHDOG_STRANDED (120m), with an OPEN handover, and no pending
              schedule entry naming it -- not by slug, not by after:, not a
              resume- entry. idle stays dim because it is a fact about the last
              turn and usually means finished; this is a fact about the future.
              It is a label, never a trigger: the watchdog only ever prompts a
-             due window. Schedule a ➥resume from the menu, or answer its
+             due window. Schedule a resume from the menu, or answer its
              handover.
 
     w arms the watchdog: an IDLE window that hit a limit is prompted to
