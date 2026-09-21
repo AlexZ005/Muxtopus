@@ -2137,7 +2137,7 @@ check_update() {
   [ -n "$latest" ] || return 0
   # ONCE PER VERSION, EVER: the fingerprint is the version, so the dedupe
   # ledger that stops a waiting prompt being told twice a minute is the same
-  # one that stops "5.2.0 is out" arriving every day until it is installed.
+  # one that stops "<new> is out" arriving every day until it is installed.
   # No "cleared" message either -- `update` is not a registered family, so
   # installing it simply ends the story rather than announcing a non-event.
   notify_on "${MUXTOPUS_NOTIFY_UPDATE:-off}" || return 0
