@@ -26,9 +26,10 @@ So: one file may not know a phrase the other knows. This does not assert any
 particular wording -- that is Claude Code's to change -- only that the two
 lists stay the same size as each other, which is the thing nobody notices.
 
-THIS MATTERS MORE SINCE v5.2.2, when the probe stopped treating the dialog as
-a dead end and started answering it. A phrase the probe does not know used to
-cost a readable error message; it now costs a dialog that nothing answers.
+THIS MATTERS MORE NOW THAN IT DID, because the probe stopped treating the
+dialog as a dead end and started answering it. A phrase the probe does not
+know used to cost a readable error message; it now costs a dialog that
+nothing answers.
 """
 import pathlib
 import re

@@ -4,6 +4,94 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.2.2 — 2026-09-22
+
+A patch, and every line of it is a fix for something that did not work on a
+fresh machine. Nothing was renamed, no setting changed meaning, and no file
+moved, so the number moves in its last place.
+
+Three failures found on one newly installed box, where the usage figures were
+blank and `c` produced no window at all. They turned out to be unrelated:
+Claude Code's trust dialog, a missing `jq`, and a watchdog that was running
+but never armed. The fourth change is the one that made the others tiring to
+find — the dashboard said "scheduled" whether or not anything was listening.
+
+Upgrade by running the new release's `get.sh`, with `muxtopus update` from a
+release install, or `git pull && ./install.sh` in a checkout.
+
+### Usage and dependencies
+
+#### usage: the numbers are read again, and jq is no longer required
+
+- The usage probe now ANSWERS the trust dialog instead of stopping in front
+  of it — the same Down/Enter on "Yes, I trust this folder" that the
+  scheduler and the restore have always used for the windows they open. On a
+  machine whose folder had never been accepted, every reading failed as
+  "<account> has not trusted <folder>" while the launcher was quietly
+  accepting the same dialog in the same folder all day.
+- The probe also picks a folder it can actually enter. It used to choose any
+  folder the account had accepted, which on one box was `/root` — left there
+  by a `claude` run under sudo, and unreadable by the user who owns the
+  session, so the probe fell back to home and hit the dialog anyway.
+- **jq is optional.** It was a silent hard requirement at ~60 call sites and
+  only three of them ever checked for it, so a machine without jq could not
+  read `sessions/<pid>.json` at all: no sessions, no token counts, no model
+  on the dashboard, reported as "0 session(s)". Muxtopus now reads JSON
+  through `mux_json`, which uses the real jq when it is installed, libjq via
+  the `jq` PyPI wheel when that is importable, and its own small reader
+  otherwise. Installing jq is still worth it and the installer still says so
+  — it just no longer decides whether the watchdog can see your sessions.
+
+### Schedules
+
+#### c: the window is actually created, and in about a second
+
+- **New windows are opened again on machines without systemd.** `c` writes a
+  schedule entry and the watchdog opens the window — but a disarmed watchdog
+  drops every entry, and the no-systemd start path (a container, WSL, macOS,
+  a bare login) never armed it: arming lived only in the systemd install
+  branch. On one box the daemon had been running 39 minutes, an entry had
+  been `pending` for 19 of them, and the log read "0 pending schedule(s)".
+  The daemon now arms itself the first time it starts, records that the
+  decision was made, and says so in its log — so disarming with `w` still
+  sticks.
+- **A window appears in about a second instead of up to thirty.** The
+  dashboard used to write the entry and wait for the next poll, which read
+  as the keypress having been ignored. It now nudges the watchdog, which
+  takes its next pass immediately.
+- **And when the watchdog cannot act, the form says so.** A disarmed
+  watchdog used to get "scheduled ➥name" exactly as a working one did. The
+  form now carries a warning row, and Create reports that the entry was
+  written but nothing will open it until you press `w`.
+
+### The dashboard
+
+#### c: the name is typed in the Create row, and esc is instant again
+
+- **esc opens the menu straight away.** A lone Escape used to take the full
+  250ms that a split escape sequence is allowed, because a bare ESC looks
+  like the start of one — a quarter second of nothing on the key that leaves
+  every view. The two waits are now separate: 100ms to tell Escape from an
+  arrow, and the old generous budget once a sequence has actually begun.
+  `MUXTOPUS_ESC_TIME` overrides it on a slow link.
+- **No name modal.** `c` opens the form directly with the name already in
+  the first row — `Create ➥[muxtopus-crane]` — and you type into that row.
+  The field is padded, so nothing moves sideways as you type; the first
+  character replaces the whole offer; a space becomes the hyphen a slug
+  would have had anyway. `c enter` is now the whole gesture, one keystroke
+  fewer than before.
+- **Press `c` again and it offers a different name.** The suggestion used to
+  be seeded from the folder alone, so the second look gave the same word —
+  the only thing that moved it on was a name being *taken*, which one you
+  just declined is not.
+- **Model, Effort and Permission mode say what you will actually get.**
+  Those rows read `(account default)`, which names the mechanism — no flag
+  is passed — and never the outcome. They now read the value out of the
+  settings.json that will apply (the project's `settings.local.json`, its
+  `settings.json`, then the account's) and name it and the file. When
+  nothing sets it anywhere the row says `unset`, which is a different and
+  honest answer: the CLI's own built-in default applies.
+
 ## v5.2.1 — 2026-09-21
 
 A patch. The interpreter v5.2.0 fetches when a machine has no `python3` >= 3.10
