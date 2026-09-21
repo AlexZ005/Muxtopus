@@ -56,8 +56,8 @@ from rich.text import Text
 import muxsettings
 from dashboard import naming
 from dashboard.core import (CONFIG_DIR, DIM, GREEN, HANDOVERS_DIR, PROFILE,
-                            SCHED_TEMPLATES, SCHEDULES_DIR, YELLOW,
-                            model_choices, mux_home)
+                            SCHED_TEMPLATES, SCHEDULES_DIR, SCRIPTS,
+                            WATCHDOG_ENABLED, YELLOW, model_choices, mux_home)
 from dashboard.data import (dirty_repos, lane_slug_of, live_windows,
                             read_tree)
 from dashboard.schedules import read_schedules, sanitise_slug
@@ -201,6 +201,16 @@ class NewSession:
                                       % ("NOT written" if ns.get("default_err") else "written",
                                          ns["default_msg"]),
                              "disabled": "already done"})
+        # THE DISARMED WATCHDOG, SAID OUT LOUD. `c` writes an entry and the
+        # WATCHDOG opens the window; a disarmed one returns at the first line
+        # of check_schedules, so the entry is written, nothing ever reads it,
+        # and the form reported "scheduled" exactly as it does when it worked.
+        # Measured on a fresh box: an entry sat `pending` for 19 minutes with
+        # no new window and nothing anywhere saying why.
+        if not WATCHDOG_ENABLED.exists():
+            items.insert(1, {"label": "⚠ the watchdog is DISARMED — nothing will open this "
+                                      "window until it is armed",
+                             "disabled": "press w on the dashboard to arm it"})
         return items
 
     # ------------------------------------------------- the two quick rows
@@ -571,10 +581,37 @@ class NewSession:
                          + (ns["prompt"] + "\n" if ns["prompt"] else ""))
         except OSError as exc:
             return "could not write the entry: %s" % exc
-        msg = "scheduled ➥%s — the watchdog opens it within ~30s (%s)" % (slug, f.name)
+        # GO NOW, rather than waiting out the poll. The entry is already on
+        # disk, so this is pure latency: nudged, the window appears in about a
+        # second; unnudged it took up to a full interval (measured at 20-30s),
+        # which read as the dashboard having ignored the keypress.
+        if not WATCHDOG_ENABLED.exists():
+            # Written, and honestly reported as going nowhere. Not refused:
+            # the entry is a real record of what was asked for, and arming
+            # the watchdog launches it without retyping any of the form.
+            return ("wrote %s — but the watchdog is DISARMED, so nothing will "
+                    "open it. Press w to arm it." % f.name)
+        woke = self._nudge_watchdog()
+        msg = ("scheduled ➥%s — opening it now (%s)" if woke else
+               "scheduled ➥%s — the watchdog opens it within ~30s (%s)") % (slug, f.name)
         if ns.get("default_msg"):
             msg += " · settings.json %s" % ns["default_msg"]
         return msg
+
+    @staticmethod
+    def _nudge_watchdog() -> bool:
+        """Ask the daemon to take its next pass NOW. Best effort by design:
+        the entry is written either way and the next ordinary pass launches
+        it, so a daemon that is not running, or one too old to know --nudge,
+        costs the old latency and never an error."""
+        cmd = [str(SCRIPTS / "claude-watchdog.sh")]
+        if PROFILE:
+            cmd += ["--profile", PROFILE]
+        cmd += ["--nudge"]
+        try:
+            return subprocess.run(cmd, capture_output=True, timeout=5).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
 
 
     # --------------------------------------------------------- the follow

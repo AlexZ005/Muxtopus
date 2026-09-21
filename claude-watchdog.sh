@@ -75,6 +75,11 @@ unset TMUX TMUX_PANE
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog$MUX_SUFFIX"
 ENABLED="$STATE_DIR/enabled"
+# HAS THIS INSTALL EVER DECIDED whether to arm? Written by --on, --off and the
+# daemon's own first start. Its ABSENCE means nobody has ever chosen, which is
+# how a box the no-systemd path never armed is told apart from one somebody
+# disarmed deliberately. See the daemon's first-start block.
+ARMED_ONCE="$STATE_DIR/armed.once"
 STATUS="$STATE_DIR/status.tsv"
 PROMPTED="$STATE_DIR/prompted"
 LOG="$STATE_DIR/log"
@@ -297,6 +302,30 @@ prompt_scan() {
   return 0
 }
 
+# THE RUNNING DAEMON'S PID, wherever it was started from: the systemd unit's
+# MainPID, else the pid file the no-systemd path writes (muxtopus, watchdog_up).
+# Prints it and returns 0, or returns 1 when nothing is running.
+#
+# NEVER pgrep. Two accounts run two daemons from the same script path, and a
+# pattern match would signal whichever one it found first -- the wrong
+# account's, half the time.
+daemon_pid() {
+  local pid pidf
+  pid="$(systemctl --user show -p MainPID --value "$MUX_UNIT" 2>/dev/null)"
+  if [ "${pid:-0}" -gt 0 ] 2>/dev/null; then printf '%s' "$pid"; return 0; fi
+  pidf="$(mux_run_dir)/muxtopus-wd$MUX_SUFFIX.pid"
+  if [ -f "$pidf" ]; then
+    pid="$(cat "$pidf" 2>/dev/null)"
+    # A pid in a stale file is whatever got that number next, so check it is
+    # still a watchdog before handing it to a caller that will signal it.
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
+       && ps -o args= -p "$pid" 2>/dev/null | grep -q 'claude-watchdog'; then
+      printf '%s' "$pid"; return 0
+    fi
+  fi
+  return 1
+}
+
 MODE="--once"; DRY=0
 case "${1:---once}" in
   --once)    MODE=once ;;
@@ -310,17 +339,28 @@ case "${1:---once}" in
              fi
              echo "# account=$MUX_LABEL restart=$r monitor=$m soft=$SOFT_PCT% hard=$HARD_PCT% interval=${INTERVAL}s usage-every=${USAGE_EVERY}m scanned=$hb"
              [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
-  --on)      : > "$ENABLED"; echo "watchdog enabled"; exit 0 ;;
-  --off)     rm -f "$ENABLED"; echo "watchdog disabled"; exit 0 ;;
-  --reload)  # SIGHUP makes the daemon re-exec (see the daemon loop). Sent to
-             # the unit's main pid directly rather than via `systemctl reload`
-             # so it also works on a unit installed before ExecReload existed.
-             pid="$(systemctl --user show -p MainPID --value "$MUX_UNIT" 2>/dev/null)"
-             pidf="$(mux_run_dir)/muxtopus-wd$MUX_SUFFIX.pid"
-             if [ "${pid:-0}" -gt 0 ] 2>/dev/null; then :
-             elif [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; then pid="$(cat "$pidf")"
+  # ARM AND DISARM ARE DECISIONS, and they are now RECORDED as such
+  # (ARMED_ONCE). Whether this install has ever had one made is what tells a
+  # box that was never armed -- the no-systemd start path used to skip it --
+  # from one somebody disarmed on purpose. See the daemon's first-start block.
+  --on)      : > "$ENABLED"; : > "$ARMED_ONCE"; echo "watchdog enabled"; exit 0 ;;
+  --off)     rm -f "$ENABLED"; : > "$ARMED_ONCE"; echo "watchdog disabled"; exit 0 ;;
+  --reload)  if pid="$(daemon_pid)"; then :
              else echo "watchdog ($MUX_LABEL) is not running" >&2; exit 1; fi
              kill -HUP "$pid" && echo "watchdog ($MUX_LABEL) reloading (pid $pid)"; exit $? ;;
+  # GO NOW. The dashboard writes a schedule entry with `at:` already past and
+  # then had nothing to do but wait for the next poll, so `c` took up to a
+  # full INTERVAL (30s by default) to produce a window -- measured at 20-30s,
+  # and felt like the dashboard had ignored the keypress. SIGUSR1 cuts the
+  # sleep short and the entry is launched within about a second.
+  #
+  # BEST EFFORT, ALWAYS. A nudge that cannot be delivered is not an error:
+  # the entry is on disk and the next ordinary pass takes it, which is exactly
+  # the old behaviour. So this never fails the thing that asked for it.
+  --nudge)   if pid="$(daemon_pid)"; then
+               kill -USR1 "$pid" 2>/dev/null && exit 0
+             fi
+             exit 1 ;;
   --monitor-on)  mkdir -p "$DIRECTIVES"; : > "$MONITOR"
                  echo "session monitoring enabled"; exit 0 ;;
   --monitor-off) rm -f "$MONITOR"; echo "session monitoring disabled"; exit 0 ;;
@@ -3182,6 +3222,34 @@ fi
 
 if [ "$MODE" = daemon ]; then
   log "watchdog started for $MUX_LABEL (interval ${INTERVAL}s, soft $SOFT_PCT%, hard $HARD_PCT%)"
+  printf '%s\n' "$$" > "$STATE_DIR/daemon.pid" 2>/dev/null || true
+
+  # ARMED ON FIRST START, because a watchdog that watches without acting is
+  # not what anyone installs one for -- and because check_schedules is gated
+  # on $ENABLED, a disarmed daemon silently drops every window `c` asks for.
+  #
+  # THE BUG THIS FIXES. `: > "$ENABLED"` lived only in --install, which is the
+  # SYSTEMD path. On a machine with no systemd --user (a container, WSL, macOS,
+  # a bare login) muxtopus starts the daemon with nohup instead, and that path
+  # never armed it. Measured on a fresh Ubuntu box: the daemon had been up for
+  # 39 minutes, a schedule entry written by `c` had sat `pending` for 19 of
+  # them, the dashboard showed two windows, and the log said "0 pending
+  # schedule(s)" -- because check_schedules returned at its first line.
+  #
+  # ONCE, AND NEVER AGAIN. ARMED_ONCE records that the decision has been made,
+  # so disarming with `w` or --off sticks. A machine that was deliberately
+  # disarmed BEFORE this existed has no record either way and is armed once
+  # here; the log line below says so, and one `w` settles it for good.
+  if [ ! -f "$ARMED_ONCE" ]; then
+    : > "$ARMED_ONCE"
+    if [ -f "$ENABLED" ]; then
+      log "arm/disarm recorded as already decided (armed)"
+    else
+      : > "$ENABLED"
+      log "armed: this install had no record of an arm/disarm decision" \
+          "-- press w on the dashboard to disarm"
+    fi
+  fi
   # RELOAD BY RE-EXEC. A running daemon is a bash loop holding the values it
   # parsed at start, so a config edit -- or SIGHUP, from --reload or from
   # `systemctl --user reload` -- replaces the process with a fresh read of
@@ -3196,8 +3264,20 @@ if [ "$MODE" = daemon ]; then
     exec "$SELF" "${_ARGV[@]}"
   }
   trap 'reload SIGHUP' HUP
+  # GO NOW (--nudge). The dashboard sends SIGUSR1 the moment it writes a
+  # schedule entry, so `c` opens a window in about a second instead of
+  # waiting out the poll. Killing the sleep is enough when one is in flight;
+  # _NUDGED covers a signal that lands DURING a pass, which would otherwise
+  # be swallowed and cost the full interval after all. `pass` is idempotent,
+  # so running it once more than strictly needed is free.
+  _NUDGED=""
+  nudge() { _NUDGED=1; [ -n "$_SLEEP" ] && kill "$_SLEEP" 2>/dev/null; return 0; }
+  trap 'nudge' USR1
   CONF_SEEN="$STATE_DIR/config.seen"; : > "$CONF_SEEN"
   while :; do
+    # Cleared BEFORE the pass, so a nudge arriving at any point from here on
+    # is honoured rather than cleared by the pass it was meant to trigger.
+    _NUDGED=""
     pass
     # An edit to either file takes effect within one interval, without anyone
     # remembering to restart anything. -nt is a builtin: no fork when quiet.
@@ -3205,6 +3285,8 @@ if [ "$MODE" = daemon ]; then
        { [ -n "${MUX_PROFILE_CONF:-}" ] && [ "$MUX_PROFILE_CONF" -nt "$CONF_SEEN" ]; }; then
       reload "config changed"
     fi
+    # A nudge that landed while the pass was running: go straight round.
+    [ -n "$_NUDGED" ] && continue
     # Sleep in the background and wait on it: a trap cannot interrupt a
     # foreground command, but it does return from `wait` at once.
     sleep "$INTERVAL" & _SLEEP=$!; wait "$_SLEEP"; _SLEEP=""

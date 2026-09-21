@@ -56,6 +56,8 @@ jobs:
         run: python3 tests/test_naming.py
       - name: muxjson -- the jq stand-in, checked against the real jq
         run: python3 tests/test_muxjson.py
+      - name: a window asked for with c is launched, and quickly
+        run: python3 tests/test_schedule_launch.py
       - name: the usage probe and the watchdog agree on the trust wording
         run: python3 tests/test_trust_wording.py
       - name: every name the dashboard mentions is one it can reach
