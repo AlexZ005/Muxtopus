@@ -206,13 +206,19 @@ class App:
         self._views[view.name] = view
 
     def add_menu(self, kind: str, entries_fn, title_fn=None, hint_fn=None,
-                 esc_to: str | None = None) -> None:
+                 esc_to: str | None = None, on_esc=None) -> None:
         """A menu of your own. `esc_to` names the parent kind esc goes back
-        to, which generalises the one hard-coded "settings goes back to mux"."""
+        to, which generalises the one hard-coded "settings goes back to mux".
+
+        `on_esc` is what CLOSING it means, for a menu that is holding
+        something: the new-session form is half-filled answers, and esc there
+        has to throw them away and say so, not just stop drawing. A menu that
+        names neither closes silently, which is what a list of actions
+        should do."""
         if kind in self._menus:
             raise RegistrationError("two menus are called %r" % kind)
         self._menus[kind] = {"entries": entries_fn, "title": title_fn,
-                             "hint": hint_fn, "esc_to": esc_to}
+                             "hint": hint_fn, "esc_to": esc_to, "on_esc": on_esc}
 
     def add_rows(self, menu_kind: str, rows_fn, order: int = 50) -> None:
         """Rows INTO someone else's menu -- how `ESC ▸ Insights` arrives
@@ -487,11 +493,17 @@ class App:
         it does everywhere else on this screen. Which is which is the menu's
         own `esc_to`, not a name this file knows."""
         kind = self.menu["kind"] if self.menu else ""
-        parent = (self._menus.get(kind) or {}).get("esc_to")
+        spec = self._menus.get(kind) or {}
+        parent = spec.get("esc_to")
         if parent:
             self.open_menu(parent)
         else:
             self.menu = None
+            fn = spec.get("on_esc")
+            if fn is not None:
+                msg = fn()
+                if msg:
+                    self.say(msg)
 
     # ======================================================= the submodes
     def prompt_key(self, key: str) -> None:
@@ -507,8 +519,7 @@ class App:
             self.say(fn(text))
         elif key == "\x1b":
             self.prompt = None
-            self.ns = None
-            self.say("cancelled")
+            self._submode_cancel(pr)
         elif key in ("\x7f", "\b"):
             pr["buf"] = pr["buf"][:-1]
         elif len(key) == 1 and key.isprintable():
@@ -531,8 +542,7 @@ class App:
             self.say(fn())
         elif key in ("n", "N", "\x1b", "\r", "\n"):
             self.confirm = None
-            self.ns = None
-            self.say("cancelled")
+            self._submode_cancel(cf)
 
     def picker_key(self, key: str) -> None:
         pk = self.picker
@@ -561,8 +571,32 @@ class App:
                 self.say(msg)
         elif key == "\x1b":
             self.picker = None
-            self.ns = None
-            self.say("cancelled")
+            self._submode_cancel(pk)
+
+    def _submode_cancel(self, sub: dict) -> None:
+        """esc in a prompt, a confirm or a picker -- and what it abandons.
+
+        THE ANSWER USED TO BE "the new-session flow", unconditionally: all
+        three branches set self.ns = None, because the only multi-screen flow
+        on the dashboard was that one and each of its screens WAS the flow.
+        The comment on self.ns said the real fix was for a submode to carry
+        its own cancel, and left it to whoever next had a flow.
+
+        This is that: `on_cancel` in the submode's own dict. A screen that is
+        one step of something larger says what leaving it means -- the
+        new-session form's rows say "nothing; the form is still open behind
+        you" -- and a screen that says nothing keeps exactly the old
+        behaviour, which is what every caller that has not thought about it
+        wants.
+        """
+        fn = sub.get("on_cancel")
+        if fn is not None:
+            msg = fn()
+            if msg:
+                self.say(msg)
+            return
+        self.ns = None
+        self.say("cancelled")
 
     def _submode_foot(self):
         """The footer panel when a text prompt, confirm, picker or a view's
