@@ -141,7 +141,7 @@ for c in bash tmux git jq python3 claude; do
     case "$c" in
       bash|tmux|git) warn "$c MISSING (required) -- $(pkg_line "$c")"; missing=1 ;;
       python3)       warn "python3 missing -- $(pkg_line python3), or let step 5 fetch one" ;;
-      # jq IS OPTIONAL SINCE v5.2.2 and this line is the whole reason it can
+      # jq IS OPTIONAL NOW, and this line is the whole reason it can
       # be: muxjson.py stands in for it (profile.sh, mux_json). It used to be
       # listed with the required tools, warned about once and then never
       # mentioned again -- while the watchdog quietly could not read
