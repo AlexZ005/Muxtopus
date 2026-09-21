@@ -27,7 +27,7 @@ record. This is that record, one per account:
       lanes.tsv     one row per lane: parent, launched, done, forks, stranded
       meta          schema, collecting-since, last collect, backfill
 
-MEASURED, and the reason for the dedupe index (plan-insights §0.2): one API
+MEASURED, and the reason for the dedupe index: one API
 message is written as one line PER CONTENT BLOCK, each repeating the same
 `usage`, so a naive sum over lines is wrong by more than 2x. And a resumed
 session COPIES earlier messages into its new file -- same message id, same
@@ -882,7 +882,7 @@ def budget_collect(state, wd_dir, limits: dict, cutoff: int = 0) -> None:
 # `stranded:` lines. Merged into what was kept, like budget.tsv.
 LANE_COLS = ("slug", "parent", "launched", "done", "questions_asked",
              "questions_answered", "stranded")
-# The fork rules of muxtelegram.py (plan-handover-visibility §2.2), mirrored:
+# The fork rules of muxtelegram.py (docs/handovers.md), mirrored:
 # a file is answered iff a line matches ^\W*ANSWERED\b; a fork starts at a
 # `## ` heading or a top-level `N.` item; a fork is answered when one of its
 # lines starts `**Answer`.
@@ -1191,7 +1191,7 @@ def _group_key(r: dict, g: str) -> str:
 def query(ledger: Ledger, period: str = "week", filters: dict | None = None,
           group_by: str = "project", now: int | None = None,
           table: PriceTable | None = None) -> dict:
-    """Every figure of plan-insights §2 for one period, from rows alone. A
+    """Every figure the insights view shows for one period, from rows alone. A
     figure that needs a distribution is None, with the reason in `needs`,
     until THIN_DAYS days have been collected."""
     now = int(now if now is not None else _dt.datetime.now().timestamp())

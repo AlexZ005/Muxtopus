@@ -35,6 +35,5 @@ footer_content: MIT licence. The manual is docs/ in the repository; a change to 
 
 # What Jekyll must not treat as a page or copy into the site.
 exclude:
-  - "plan-*.md"
   - build-local.sh
   - _site

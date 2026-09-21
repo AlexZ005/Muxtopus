@@ -414,7 +414,7 @@ class InsightsView(View):
             bits.append("[%s]%s[/]" % (GREEN, escape(self.account_label())))
         head = ("[%s] · [/]" % DIM).join(bits)
         # THE SINCE-DATE NEVER LEAVES. "collecting since <date>" is what makes
-        # a sparse screen honest (plan-insights §2), so a collect in flight
+        # a sparse screen honest, so a collect in flight
         # adds a chip in front of it rather than replacing it.
         busy = ("[%s]collecting…[/] " % GREEN) if self._collecting else ""
         return "%s [%s]── [/]%s[%s]collecting since %s[/]" % (

@@ -3,7 +3,7 @@
 #
 # The goldens photograph the menu; this presses the rows that WRITE something
 # and looks at what they wrote, the way actions.sh does for the schedule view.
-# Four things, from docs/plan-notify-telegram.md §6 phase 5:
+# Four things (docs/notifications.md):
 #
 #   the submenu opens from Settings and is whole (no clipped tail)
 #   a toggle round-trips to the file the sandbox WATCHDOG reads (profile.sh)

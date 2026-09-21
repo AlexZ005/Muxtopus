@@ -1,6 +1,6 @@
 """dashboard.menus.notify -- Settings ▸ Notifications, and the needs-you state.
 
-docs/plan-notify-telegram.md §1 and §4. The watchdog can tell a phone four
+docs/notifications.md. The watchdog can tell a phone four
 things and obey what the phone answers; this file is where a hand switches
 any of that on or off, sets it up, and proves it works -- and it is one new
 file, registering through the seam, with nothing in the shell edited.

@@ -266,7 +266,7 @@ by LOOKING for the row they want, which is the pattern to copy.
 
 ## Branches, pull requests and the changelog
 
-From `docs/plan-dashboard-split.md` §5b, and it applies to every lane:
+This applies to every lane:
 
 * **`main` is the trunk and always runs.** Nothing is developed in the main
   checkout; it only fast-forwards. The user's `R` then only ever re-execs

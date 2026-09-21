@@ -21,7 +21,7 @@
         ✎ type -- retiring any earlier message for that fork. Prints the
         message_id.
 
-docs/plan-notify-telegram.md §3, §3b. NO DAEMON, NO WEBHOOK, NO PORT: the
+docs/notifications.md. NO DAEMON, NO WEBHOOK, NO PORT: the
 watchdog calls `poll` with timeout=0, so latency is one pass.
 
 ONE POLLER PER BOT. getUpdates has a single consumer and both accounts'
@@ -823,7 +823,7 @@ def cmd_windows(profiles_: list[str], note: str = "") -> None:
 
 
 # ------------------------------------------------------------------ stats
-# plan-insights.md §4: the same module, a third face. The VIEW and the CLI may
+# docs/stats.md: the same module, a third face. The VIEW and the CLI may
 # collect first; this one never does -- a command must cost no more than
 # reading what the watchdog's own five-minute hook already wrote, and a
 # ledger one pass out of date is not worth a fork on somebody's phone.

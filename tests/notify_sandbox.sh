@@ -1,6 +1,6 @@
 # tests/notify_sandbox.sh -- the sandbox every notify test runs in. SOURCE it.
 #
-# Sandbox discipline (docs/plan-dashboard-menus.md §5, docs/plan-notify-telegram.md §6):
+# Sandbox discipline (docs/contributing.md, "The sandbox"):
 # own HOME, XDG_CONFIG_HOME, XDG_STATE_HOME, MUXTOPUS_CONFIG, CLAUDE_CONFIG_DIR;
 # a `tmux` wrapper pinned to -L mxnotify (SB_SOCKET); a fake `claude`; TELEGRAM_API at
 # tests/fake_telegram.py; CLAUDE_NOTIFY_CONF at a sandbox file. Nothing here can
