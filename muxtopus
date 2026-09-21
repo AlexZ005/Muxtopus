@@ -15,6 +15,7 @@
 #   muxtopus -l                       list accounts, sessions and watchdogs
 #   muxtopus -c [--profile=acme]      the effective configuration of an account
 #   muxtopus stats [--week|--all]     what was used, counts only (stats -h)
+#   muxtopus update [--check|--apply] new releases (docs/updates.md)
 #   muxtopus --version                the release this checkout is (VERSION)
 #
 # THE NAME IS A FLAG. Symlinked as `muxtopus-acme` this is `muxtopus
@@ -135,6 +136,26 @@ mux_snapshot_line() {
 if [ "${1:-}" = "stats" ]; then
   shift
   exec python3 "$_dir/muxstats.py" stats --profile "$PROFILE" "$@"
+fi
+
+# ------------------------------------------------------------------ update
+# New releases, on the command line: the same script the watchdog runs on its
+# daily clock and the dashboard's Settings > Updates drives. Taken here, before
+# tmux or a config dir is touched, for the same reason `stats` is -- checking
+# whether there is a newer muxtopus needs neither -- and the word is reserved
+# with it, so a session cannot be named `update` from here.
+#
+#   muxtopus update              what is installed, what is out
+#   muxtopus update --check      ask now, whatever the clock says
+#   muxtopus update --apply      take it (asks first; --yes does not)
+#   muxtopus update --rollback   put back the tree the last one replaced
+if [ "${1:-}" = "update" ]; then
+  shift
+  case "${1:-}" in
+    ""|--status) set -- --status ;;
+    --check)     shift; set -- --check --force "$@" ;;
+  esac
+  exec bash "$_dir/mux-update.sh" ${PROFILE:+--profile "$PROFILE"} "$@"
 fi
 
 # ----------------------------------------------------------------- config

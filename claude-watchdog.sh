@@ -177,6 +177,13 @@ REPO_EVERY=120
 # restarts with the machine, and a counter would begin again at zero each
 # time while the stamp remembers. Five minutes, so a 30-second pass pays for
 # a transcript walk twice an hour instead of a hundred and twenty times.
+# A NEW RELEASE (mux-update.sh, docs/updates.md). The check has a clock of
+# its own and, unlike everything else on this page, a SHARED one: there is a
+# single installed tree, so the answer belongs to the machine and not to this
+# account. The gate below is a read of that shared file with no fork in it;
+# only a stale answer costs a process, once a day, and only for whichever
+# account's daemon gets there first.
+UPDATE_STATE="${MUX_UPDATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/muxtopus-update}/state"
 STATS_AT="$STATE_DIR/stats.at"
 STATS_EVERY=300
 # Bounded, because this daemon's real job is restarting limited windows and a
@@ -2089,6 +2096,60 @@ sweep_repos() {
   printf '%s\n' "$now" > "$REPOS_AT"
 }
 
+# IS THERE A NEWER MUXTOPUS. Two halves, and they are deliberately not the
+# same clock: the CHECK runs at most every MUXTOPUS_UPDATE_EVERY hours and is
+# shared by every account, while the TELLING is per account, because the
+# switch and the chat are. Neither half ever installs anything -- that needs a
+# hand on the dashboard's confirm row or `muxtopus update --apply --yes`.
+#
+# THE GATE IS FORKLESS. This runs on every pass, which on the default interval
+# is 2,880 times a day to start one process; the state file is a dozen short
+# lines and `read` is a builtin, so the quiet answer costs no process at all.
+check_update() {
+  local now="$1" k v last=0 latest="" st="" every
+  [ "${MUXTOPUS_UPDATE_MODE:-notify}" = off ] && return 0
+  every="${MUXTOPUS_UPDATE_EVERY:-24}"
+  case "$every" in ''|*[!0-9]*) every=24 ;; esac
+  if [ -f "$UPDATE_STATE" ]; then
+    while IFS='=' read -r k v; do
+      case "$k" in
+        CHECKED_AT) last="$v" ;;
+        LATEST)     latest="$v" ;;
+        STATE)      st="$v" ;;
+      esac
+    done < "$UPDATE_STATE"
+  fi
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  if [ $(( now - last )) -ge $(( every * 3600 )) ] && [ -x "$SCRIPT_DIR/mux-update.sh" ]; then
+    # Bounded and detached from this pass's outcome: a release check that
+    # hangs on a captive-portal network must not hold up the thing that
+    # restarts limited windows. Its own log says what happened.
+    timeout 60 "$SCRIPT_DIR/mux-update.sh" ${MUX_PROFILE:+--profile "$MUX_PROFILE"} \
+      --check --quiet >/dev/null 2>&1
+    latest=""; st=""
+    if [ -f "$UPDATE_STATE" ]; then
+      while IFS='=' read -r k v; do
+        case "$k" in LATEST) latest="$v" ;; STATE) st="$v" ;; esac
+      done < "$UPDATE_STATE"
+    fi
+  fi
+  case "$st" in available|staged) ;; *) return 0 ;; esac
+  [ -n "$latest" ] || return 0
+  # ONCE PER VERSION, EVER: the fingerprint is the version, so the dedupe
+  # ledger that stops a waiting prompt being told twice a minute is the same
+  # one that stops "5.2.0 is out" arriving every day until it is installed.
+  # No "cleared" message either -- `update` is not a registered family, so
+  # installing it simply ends the story rather than announcing a non-event.
+  notify_on "${MUXTOPUS_NOTIFY_UPDATE:-off}" || return 0
+  [ "$NOTIFY_READY" = 1 ] || return 0
+  local body
+  body="$(timeout 20 "$SCRIPT_DIR/mux-update.sh" --status 2>/dev/null \
+          | sed -n 's/^headline: //p')"
+  notify_event "update:$latest" "$latest" "muxtopus $latest is out" \
+    "${body:-installed: $(cat "$MUXTOPUS_DIR/VERSION" 2>/dev/null)}. Update it from the dashboard: esc ▸ Settings ▸ Updates."
+  return 0
+}
+
 # One line of proof that this is running, and an hourly one in the log.
 heartbeat() {
   local sessions="${1:-0}" now pending=0 last=0
@@ -3067,6 +3128,7 @@ pass() {
     notify_limits
   fi
   notify_sessions
+  check_update "$now"
   notify_end
   heartbeat "$(grep -c '' "$STATUS" 2>/dev/null)"
   # Keep the limit figures warm on their own hourly clock. --ensure is a no-op

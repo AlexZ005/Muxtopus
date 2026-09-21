@@ -16,6 +16,8 @@ curl -fsSL https://github.com/AlexZ005/Muxtopus/releases/latest/download/get.sh 
 
 This installs the newest [release](https://github.com/AlexZ005/Muxtopus/releases), pinned to its tag and checked against its sha256, into `~/.local/lib/muxtopus`. It never follows `main`. To read it before running it, or to install from a git checkout instead, see [Install](https://alexz005.github.io/Muxtopus/install.html).
 
+Once it is installed it keeps itself current: it checks for a new release once a day, says so on the dashboard, and takes it when you say yes — your Claude windows keep running while it does. All of that is a setting, `off` included; see [Updates](https://alexz005.github.io/Muxtopus/updates.html).
+
 Needs `bash`, `tmux` ≥ 3.2, `git`, `jq`, `python3` ≥ 3.10 and the `claude` CLI. The installer symlinks `muxtopus` into `~/.local/bin`, writes a config file, creates the data folders, builds the dashboard's venv and installs the watchdog as a user service. Nothing is written outside your home directory, and `install.sh --dry-run` prints every path first.
 
 ## Quick start

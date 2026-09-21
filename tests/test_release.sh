@@ -82,6 +82,12 @@ if [ -z "${NO_VENV:-}" ]; then
   [ -e "$L/.venv/keep-me" ] && ok "the upgrade carries the venv across" || bad "the upgrade lost the venv"
 fi
 ls -d "$H/.local/lib/muxtopus.old."* >/dev/null 2>&1 && bad "an old tree was left behind" || ok "no old tree left behind"
+# THE ONE TREE THAT IS KEPT, and only one: the release being replaced becomes
+# muxtopus.prev, which is what `muxtopus update --rollback` puts back.
+is "$(cat "$H/.local/lib/muxtopus.prev/VERSION" 2>/dev/null | tr -d '[:space:]')" "$V" \
+   "the replaced tree is kept as muxtopus.prev"
+ls -d "$H/.local/lib/muxtopus.prev.old."* >/dev/null 2>&1 && bad "a second generation was kept" \
+  || ok "only one generation is kept"
 
 # What it must refuse.
 cp "$D/muxtopus-$V.tar.gz" "$T/bad.tar.gz"; printf x >> "$T/bad.tar.gz"

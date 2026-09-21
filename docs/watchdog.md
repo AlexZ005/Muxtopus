@@ -27,7 +27,7 @@ It is a `systemd --user` unit where systemd exists (`claude-watchdog.service`, `
 3. When armed, prompts a `due` window — one whose reset time has passed — with the continue message, once per limit. It never types into a window that is working.
 4. Judges every pending [schedule entry](schedules.md) and launches the due ones: the trust dialog, the readiness wait, one bracketed paste, a row in the tree, a log line naming which gate fired.
 5. Writes the **window snapshot** — one row per window of the session, with its Claude session id, cwd, parent and launch flags — or, when the session is gone, freezes the last one instead of overwriting it, and says so once (log and phone). [Restore after a lost server](restore.md) is what that buys.
-6. Publishes the rows, the verdicts, the tree and the heartbeat; refreshes the usage reading when it is older than `WATCHDOG_USAGE_EVERY` minutes; every five minutes collects into [the stats ledger](stats.md); and sends what changed to [the phone](notifications.md).
+6. Publishes the rows, the verdicts, the tree and the heartbeat; refreshes the usage reading when it is older than `WATCHDOG_USAGE_EVERY` minutes; every five minutes collects into [the stats ledger](stats.md); once a day asks whether there is a [newer muxtopus](updates.md); and sends what changed to [the phone](notifications.md).
 
 Every action is logged with the reading that decided it. Disarmed, the panel still reports; nothing is sent to any pane.
 
@@ -128,4 +128,6 @@ All of it in `~/.local/state/claude-watchdog[-<account>]/`, read by the dashboar
 | `prompted`, `wound` | which limit each session was last prompted for, and when each was last asked to wrap up |
 | `notify/` | what the phone has already been told, so nothing is said twice |
 | `log`, `usage.log`, `notify.log` | the record: every action with the reading that decided it |
+
+The [release check](updates.md) is the one thing on that list it does **not** keep here: there is a single installed tree, so its answer lives in `~/.local/state/muxtopus-update/` with no account suffix, and whichever account's daemon gets there first does the asking.
 {% endraw %}

@@ -85,6 +85,12 @@ NOTIFY_KEYS: dict[str, dict] = {
     "MUXTOPUS_NOTIFY_STRANDED": {
         "label": "A lane is stranded", "kind": "onoff",
         "hint": "idle, an open handover, nothing will ever resume it"},
+    # NEWS, NOT TROUBLE, so off like the bands. Told once per version, ever,
+    # and never "cleared": installing a release is not an event a phone
+    # wants to hear about twice. Settings > Updates is the rest of it.
+    "MUXTOPUS_NOTIFY_UPDATE": {
+        "label": "A new muxtopus release", "kind": "onoff",
+        "hint": "once per version, with the headline of its notes -- off by default"},
 }
 
 # The blocked-after row is minutes on disk and words on screen. One table,

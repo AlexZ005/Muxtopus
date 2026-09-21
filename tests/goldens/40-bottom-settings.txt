@@ -8,7 +8,6 @@
 
 
 
-
                    ╭─ settings · <SB>/config/muxtopus/profiles/mxsplit.dashboard.conf (modal: no room below) ─<pad>╮
                    │  ▸ Menu layout: bottom  table: under the panel · modal: centred · bottom: the footer                                  │
                    │    Default permission mode for a new window: ask  ask: c stops on the mode picker with nothing preselected            │
@@ -23,6 +22,7 @@
                    │    Handovers: show question rows: ON  QUESTIONS files, answered and not (a on the tab)                                │
                    │    Notifications ▸  what the phone is told, and what it may answer                                                    │
                    │    Tabs ▸  which tabs the strip shows (0 hidden)                                                                      │
+                   │    Updates ▸  new releases: whether to look, what to take, and what to keep                                           │
                    │    ····················································                                                               │
                    │    Back                                                                                                               │
                    │    ↑↓ pick · enter change · esc back                                                                                  │

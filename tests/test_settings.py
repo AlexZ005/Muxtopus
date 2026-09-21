@@ -71,10 +71,10 @@ for k in muxsettings.DASHBOARD_KEYS:
     ok(k in muxconfig.KEYS, "%s is a config key" % k)
 
 # ---- 2. the store, round-tripped through both halves ---------------------
-ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "table", "built-in default")
-ok(muxsettings.put("DASHBOARD_MENU_LAYOUT", "modal") == "", "put modal")
-ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "modal", "python reads modal back")
-ok(shell_val("DASHBOARD_MENU_LAYOUT") == "modal", "shell reads modal back")
+ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "modal", "built-in default")
+ok(muxsettings.put("DASHBOARD_MENU_LAYOUT", "table") == "", "put table")
+ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "table", "python reads table back")
+ok(shell_val("DASHBOARD_MENU_LAYOUT") == "table", "shell reads table back")
 path = muxsettings.dashboard_conf_path("")
 ok(path == CFG / "dashboard.conf", "shared file beside config")
 ok(not path.with_name("dashboard.conf.tmp").exists(), "no temp file left behind")
@@ -82,7 +82,7 @@ ok(path.read_text().startswith("# Written by the muxtopus dashboard"), "header s
 
 bad = muxsettings.put("DASHBOARD_MENU_LAYOUT", "sideways")
 ok(bad.startswith("one of table, modal, bottom"), "bad choice refused: %r" % bad)
-ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "modal", "refused value did not land")
+ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "table", "refused value did not land")
 ok(muxsettings.put("DASHBOARD_NEW_WATCHDOG", "maybe") != "", "onoff refused")
 ok(muxsettings.put("DASHBOARD_NEW_MODEL", 'opus"; rm') != "", "quote refused")
 ok(muxsettings.put("DASHBOARD_NEW_MODEL", "opus[1m]") == "", "model alias accepted")
@@ -95,19 +95,19 @@ ok(muxsettings.get("DASHBOARD_NEW_MODEL") == "", "unset reads as empty")
 
 # precedence: config < dashboard.conf < profile.conf < profile.dashboard.conf
 (CFG / "config").write_text('DASHBOARD_MENU_LAYOUT="bottom"\nDASHBOARD_NEW_EFFORT="low"\n')
-ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "modal", "dashboard.conf beats config")
+ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "table", "dashboard.conf beats config")
 ok(muxsettings.get("DASHBOARD_NEW_EFFORT") == "low", "config still sets what the menu did not")
 (CFG / "profiles").mkdir()
 (CFG / "profiles" / "work.conf").write_text('DASHBOARD_MENU_LAYOUT="bottom"\n')
 ok(muxsettings.get("DASHBOARD_MENU_LAYOUT", "work") == "bottom",
    "the account's hand-written file beats the shared dashboard file")
 ok(shell_val("DASHBOARD_MENU_LAYOUT", "work") == "bottom", "shell agrees")
-ok(muxsettings.put("DASHBOARD_MENU_LAYOUT", "table", "work") == "", "put for work")
+ok(muxsettings.put("DASHBOARD_MENU_LAYOUT", "modal", "work") == "", "put for work")
 ok(muxsettings.dashboard_conf_path("work") == CFG / "profiles" / "work.dashboard.conf",
    "per-account dashboard file beside the profile file")
-ok(muxsettings.get("DASHBOARD_MENU_LAYOUT", "work") == "table", "profile dashboard file is the top")
-ok(shell_val("DASHBOARD_MENU_LAYOUT", "work") == "table", "shell reads the top layer")
-ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "modal", "the default account is untouched")
+ok(muxsettings.get("DASHBOARD_MENU_LAYOUT", "work") == "modal", "profile dashboard file is the top")
+ok(shell_val("DASHBOARD_MENU_LAYOUT", "work") == "modal", "shell reads the top layer")
+ok(muxsettings.get("DASHBOARD_MENU_LAYOUT") == "table", "the default account is untouched")
 # a layer the writer cannot beat is REPORTED, not hidden
 os.environ["MUXTOPUS_PROFILES_DIR"] = str(CFG / "profiles")
 (CFG / "profiles" / "work.dashboard.conf").chmod(0o444)

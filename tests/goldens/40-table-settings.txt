@@ -29,6 +29,6 @@
 │    Handovers: show finished rows: off  done handovers and answered question files (f on the tab)                                                             │
 │    Handovers: show question rows: ON  QUESTIONS files, answered and not (a on the tab)                                                                       │
 │    Notifications ▸  what the phone is told, and what it may answer                                                                                           │
-│    ▼ 3 more                                                                                                                                                  │
+│    ▼ 4 more                                                                                                                                                  │
 │    ↑↓ pick · enter change · esc back                                                                                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

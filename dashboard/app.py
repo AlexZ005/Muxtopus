@@ -153,6 +153,12 @@ class App:
         self.view = "main"                 # the ACTIVE view's name
         self.version = (SCRIPTS / "VERSION").read_text().strip() \
             if (SCRIPTS / "VERSION").exists() else "?"
+        # WHAT IS ON DISK NOW, which after an update is not what is RUNNING:
+        # this process imported its modules at start-up and an update
+        # replaced them underneath it. The header says so until R re-execs.
+        # Read at most every five seconds -- it changes about once a month.
+        self._disk_version = self.version
+        self._disk_at = 0.0
 
         # ------------------------------------------------- the registries
         self._views: dict[str, View] = {}
@@ -309,6 +315,20 @@ class App:
             if mark is not None:
                 out.append(mark)
         return out
+
+    def stale(self) -> str:
+        """The version INSTALLED, when it is not the one this process is
+        running; "" the rest of the time. An update applied from the menu
+        sets pending_reload itself, so this is for the other ways it can
+        happen: `muxtopus update` in a terminal, or a second dashboard."""
+        now = time.time()
+        if now - self._disk_at > 5.0:
+            self._disk_at = now
+            try:
+                self._disk_version = (SCRIPTS / "VERSION").read_text().strip()
+            except OSError:
+                pass
+        return "" if self._disk_version == self.version else self._disk_version
 
     def hints(self) -> list:
         out = []
