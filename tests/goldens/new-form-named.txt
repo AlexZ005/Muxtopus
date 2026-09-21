@@ -19,6 +19,9 @@
 ╭─ new session · <SB>/work/repo-b ─<pad>╮
 │    Create ➥route-lane  and go to its window                                                                                                                  │
 │    ····················································                                                                                                      │
+│    Sub-window ➥➥route-lane under ➥root-lane  empty, no prompt                                                                                                │
+│      Sub-window ➥➥route-lane under ➥root-lane  continues from its handover  (➥root-lane has not written STATUS-root-lane.md)                                 │
+│    ····················································                                                                                                      │
 │  ▸ Name: route-lane  the window, the handover, `handover.sh done`                                                                                            │
 │    Folder: <SB>/work/repo-b  where claude starts <pad>│
 │    Model: fable  a CLI alias; the MODEL column's names are refused                                                                                           │

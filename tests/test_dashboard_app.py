@@ -327,6 +327,70 @@ a.add_menu("mux", base)
 a.open_menu("mux")
 check(a.build() is not None, "and with a menu open it is placed, not appended")
 
+print("== a prompt's placeholder: what enter on an empty line takes")
+a = app()
+a.add_view(Spy("main"))
+got = []
+a.prompt = {"title": "name", "buf": "", "placeholder": "scripts-otter",
+            "fn": lambda s: got.append(s) or ""}
+a.route_key("\r")
+check(got == ["scripts-otter"], "enter on an empty line takes the placeholder")
+got.clear()
+a.prompt = {"title": "name", "buf": "", "placeholder": "scripts-otter",
+            "fn": lambda s: got.append(s) or ""}
+for ch in "mine":
+    a.route_key(ch)
+a.route_key("\r")
+check(got == ["mine"], "and anything typed replaces it")
+a.prompt = {"title": "name", "buf": "", "placeholder": "scripts-otter",
+            "fn": lambda s: ""}
+panel = a._submode_foot()
+text = "".join(seg.text for seg in a.console.render(panel))
+check("[scripts-otter]" in text, "the offer is drawn in brackets: %r"
+      % text.strip()[:60])
+a.prompt["buf"] = "m"
+text = "".join(seg.text for seg in a.console.render(a._submode_foot()))
+check("[scripts-otter]" not in text, "and the brackets go the moment one is typed")
+a.prompt = None
+
+print("== a submode goes where the menu layout setting says")
+# THE ANSWERS FOLLOW THE QUESTION. A picker used to land in the footer
+# whatever `Menu layout` said, so `modal` gave a centred menu and then a
+# footer panel for the answers that menu was collecting. place_submode is
+# place_menu's rule applied to the other three screens.
+import dashboard.app as appmod                       # noqa: E402
+from rich.align import Align                         # noqa: E402
+from rich.panel import Panel                         # noqa: E402
+
+a = app()
+a.add_view(Spy("main"))
+sections = [("top", Panel(Text("top"))), ("mid", Panel(Text("mid"))),
+            ("low", Panel(Text("low")))]
+sub = Panel(Text("pick one"))
+real_knob = appmod.knob
+try:
+    for layout, want in (("bottom", 4), ("table", 3), ("modal", 1)):
+        appmod.knob = lambda key, prof=None, _l=layout: _l
+        parts = a.place_submode(sections, 1, Panel(Text("pick one"))).renderables
+        check(len(parts) == want,
+              "%s: %d renderables in the frame" % (layout, len(parts)))
+    appmod.knob = lambda key, prof=None: "modal"
+    parts = a.place_submode(sections, 1, sub).renderables
+    check(isinstance(parts[0], Align), "modal centres it and drops the panels")
+    check(sub.expand is False, "and lets it shrink to its content")
+    appmod.knob = lambda key, prof=None: "table"
+    parts = a.place_submode(sections, 1, Panel(Text("x"))).renderables
+    check(parts[0] is sections[0][1] and parts[1] is sections[1][1],
+          "table keeps the panels down to the cursor's and drops the rest")
+    # NO ROOM: a 6-line console cannot hold three panels and a picker, so
+    # this degrades to modal exactly as place_menu does.
+    small = App(2.0, Console(width=80, height=6, force_terminal=False))
+    small.add_view(Spy("main"))
+    parts = small.place_submode(sections, 2, Panel(Text("x"))).renderables
+    check(isinstance(parts[0], Align), "and degrades to modal when it will not fit")
+finally:
+    appmod.knob = real_knob
+
 print()
 print("%d assertions passed" % PASSES if not FAILS
       else "%d passed, %d FAILED" % (PASSES, FAILS))

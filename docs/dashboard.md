@@ -141,13 +141,22 @@ Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.da
 
 ## A new claude session (`c`)
 
-**One screen.** `c` opens a form with every parameter already filled in from the new-window defaults in Settings, and `Create` on the first row — so a window you have no particular opinion about is **`c` `enter`**, and one you do is arrowing to that row and pressing enter on it. The form stays open while you change things: set the effort, think again about the folder, set it back. `esc` on a row leaves that row alone; `esc` on the form abandons the whole thing.
+**The name, then one screen.** `c` asks what to call the window, with an offer in the brackets, and then opens a form with every other parameter already filled in from the new-window defaults in Settings and `Create` on the first row — so a window you have no particular opinion about is **`c` `enter` `enter`**, and one you do is arrowing to that row and pressing enter on it. The form stays open while you change things: set the effort, think again about the folder, set it back. `esc` on a row leaves that row alone; `esc` on the form abandons the whole thing.
 
 ```
+╭────────────────────────────────────────────────────────────────╮
+│ name  (the slug: window ➥name, STATUS-name.md): _ [repo-b-quail]│
+│                       enter takes what is in brackets · esc cancel│
+╰────────────────────────────────────────────────────────────────╯
+
 ╭─ new session · ~/work/repo-b ──────────────────────────────────╮
-│  ▸ Create ➥repo-b  and go to its window                        │
+│  ▸ Create ➥repo-b-quail  and go to its window                  │
 │    ·········································                   │
-│    Name: repo-b  the window, the handover, `handover.sh done`  │
+│    Sub-window ➥➥repo-b-quail under ➥lane  empty, no prompt     │
+│    Sub-window ➥➥repo-b-quail under ➥lane  continues from its   │
+│                                           handover             │
+│    ·········································                   │
+│    Name: repo-b-quail  the window, the handover, `handover.sh` │
 │    Folder: ~/work/repo-b  where claude starts                  │
 │    Model: fable  a CLI alias                                   │
 │    Effort: high                                                │
@@ -159,9 +168,26 @@ Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.da
 ╰────────────────────────────────────────────────────────────────╯
 ```
 
+### The name is asked, not assumed
+
+It is the slug — the window `➥name`, `STATUS-name.md`, the `handover.sh done name` the worker is told to run — and it is the one parameter a default cannot choose well, so the line is yours to type. It starts **empty**: what is in the brackets is what `enter` takes if you type nothing, and anything you type replaces it rather than having to be backspaced away first.
+
+What is offered is **the folder and one word**: `scripts-otter`, `repo-b-quail`. The word is there because the second window in a folder used to be `scripts-2` and the third `scripts-3`, and a digit tells you nothing about which of the three you are looking at, while a word can be said out loud and recognised in a list. It is checked against every live window and pending entry before it is offered, and the same folder always offers the same word — until that name is taken, which is the only thing that moves it on.
+
+### Two sub-window rows
+
+Whenever the cursor is on a live session, two rows sit under `Create`, and each is one `enter`:
+
 | row | |
 |---|---|
-| **Name** | the slug: the window `➥name`, `STATUS-name.md`, the `handover.sh done name` the worker is told to run. Taken from the folder, and made unique *before* it is offered, so `c` `enter` works a second time |
+| **empty, no prompt** | a `➥➥` child of that window with nothing pasted into it — a `plan` entry, so the session gets its identity line and nothing invented |
+| **continues from its handover** | the same child, with the brief `Schedule ➥resume` pastes: read `STATUS-<parent>.md` and carry on from its *How to resume* section. Greyed, with the reason, until that lane has actually written one — `Wind down` in the session menu is what asks for it |
+
+`Create` itself is unchanged and still makes a top-level window.
+
+| row | |
+|---|---|
+| **Name** | enter reopens the prompt above; the brackets then hold the name it has now, so enter keeps it |
 | **Folder** | enter opens the candidates — the cursor's, the setting, every live session's, the dirty trees the watchdog publishes, the checkouts under `MUXTOPUS_HOME` — or a typed path, which must exist |
 | **Model** | a CLI *alias* (`opus`, `fable`, `sonnet`…): `--model opus-5`, the MODEL column's spelling, is refused by the CLI and kills the window after it has eaten the paste |
 | **Effort** | passed as `claude --effort` |

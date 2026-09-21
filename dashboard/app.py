@@ -126,7 +126,10 @@ class App:
         # drawn before a key can reach it, so this is only ever the default
         # for a menu nobody has seen.
         self._menu_page = MENU_MIN - CHROME
-        self.prompt: dict | None = None    # inline text entry (rename)
+        # An inline text entry (rename, the new window's name). Optionally
+        # carries a `placeholder`: what enter on an EMPTY line means, drawn
+        # in brackets where the typing would go. See prompt_key.
+        self.prompt: dict | None = None
         self.confirm: dict | None = None   # yes/no gate (close)
         self.picker: dict | None = None    # arrow-driven option list
         # A VIEW'S OWN MODAL -- the options table is the one today. The App
@@ -446,6 +449,43 @@ class App:
             return Group(Align.center(panel, vertical="middle", height=height))
         return Group(*kept, panel)
 
+    def place_submode(self, sections: list, at: int, sub) -> Group:
+        """The frame with the open PROMPT, CONFIRM, PICKER or modal in it,
+        under the same layout setting the menus obey.
+
+        A submode is a question a menu row asked -- the folder picker, the
+        name prompt, the bypassPermissions warning -- and it used to land at
+        the bottom of the screen whatever `Menu layout` said, so a user who
+        set `modal` got a centred menu and then a footer panel for its
+        answers: the question moved away from where the asking was. There is
+        no separate setting for it, because "where does a menu go" and "where
+        do its answers go" is one question and nobody would want two answers.
+
+          table   under the cursor's panel, everything below dropped
+          modal   the submode alone, centred
+          bottom  the whole frame, the submode under it
+
+        A submode is measured rather than given a budget: it is a handful of
+        lines that draws every one of them (a picker has no viewport to
+        scroll), so when the room under the kept panels is less than it
+        needs, this degrades to modal exactly as place_menu does."""
+        layout = knob("DASHBOARD_MENU_LAYOUT", PROFILE) or "table"
+        height = self.console.size.height
+        if layout == "bottom":
+            return Group(*[p for _n, p in sections], sub)
+        kept = [] if layout == "modal" else [p for _n, p in sections[:at + 1]]
+        if kept:
+            room = height - rendered_height(self.console, Group(*kept))
+            if room < rendered_height(self.console, sub):
+                kept = []
+        if not kept:
+            # expand=False is what makes a centred panel the width of its
+            # content instead of the console's -- the same line place_menu
+            # needs for the same reason.
+            sub.expand = False
+            return Group(Align.center(sub, vertical="middle", height=height))
+        return Group(*kept, sub)
+
     def open_menu(self, kind: str) -> None:
         self.menu = {"kind": kind, "i": 0}
         self.menu_move(0)
@@ -532,7 +572,12 @@ class App:
             return
         if key in ("\r", "\n"):
             fn = pr["fn"]
-            text = pr["buf"]
+            # ENTER ON AN EMPTY LINE TAKES THE PLACEHOLDER. A prompt that
+            # offers one is saying "this is what you get if you say nothing",
+            # and the brackets in the panel are that sentence drawn; the
+            # alternative -- prefilling the buffer -- makes typing your own
+            # name start with holding backspace.
+            text = pr["buf"] or pr.get("placeholder", "")
             self.prompt = None
             if not pr.get("keep_menu"):
                 self.menu = None
@@ -623,10 +668,19 @@ class App:
         own modal owns the keyboard -- shared by every view, so a flow works
         from whichever one started it."""
         if self.prompt is not None:
+            # THE BRACKETS ARE THE OFFER. An empty line with a placeholder
+            # draws it where the text would be and says what enter does with
+            # it, so "press enter and get a sensible name" is legible before
+            # the first key rather than something to find out afterwards.
+            # The moment anything is typed the brackets go: what is on the
+            # line is then what will be used.
+            hold = self.prompt.get("placeholder", "") if not self.prompt["buf"] else ""
             return Panel(
                 Text.assemble((self.prompt["title"] + ": ", "bold"),
                               (self.prompt["buf"], "#c9a0dc"), ("_", "bold #c9a0dc"),
-                              ("      enter save · esc cancel", DIM)),
+                              (" [%s]" % hold if hold else "", DIM),
+                              ("      enter takes what is in brackets · esc cancel"
+                               if hold else "      enter save · esc cancel", DIM)),
                 border_style="#c9a0dc", box=box.ROUNDED)
         if self.confirm is not None:
             return Panel(
@@ -734,9 +788,11 @@ class App:
                 " · %d hidden (esc ▸ Settings ▸ Tabs)" % gone if gone > 0 else "")
             panel.subtitle_align = "right"
         sub = self._submode_foot()
-        if self.menu is not None and sub is None:
+        if sub is not None:
+            return self.place_submode(sections, view.menu_anchor(self), sub)
+        if self.menu is not None:
             return self.place_menu(sections, view.menu_anchor(self))
-        return Group(*[p for _n, p in sections], sub or view.footer(self))
+        return Group(*[p for _n, p in sections], view.footer(self))
 
     # ======================================================== key routing
     def route_key(self, key: str | None) -> bool:

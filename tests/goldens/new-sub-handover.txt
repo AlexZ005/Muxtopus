@@ -8,21 +8,21 @@
 │                                                                                                                                                              │
 │        MON    WINDOW               MODEL         CONTEXT                            SPENT     IDLE   STATE              DIRTY   WOUND          RESUMED       │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
-│  ▸✔    on     ➥root-lane ?         opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
+│   ✔    on     ➥root-lane ?         opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
 │   ✔    on       └ ➥➥kid-lane       fable         ████··········  31% 310k            880k      15m   limited 14:30          3   Jan 2 03:06    —             │
-│   ✔    on     ➥stranded-lane       sonnet        ██············  18% 180k            410k       2h   stranded               7   —              —             │
+│  ▸✔    on     ➥stranded-lane       sonnet        ██············  18% 180k            410k       2h   stranded               7   —              —             │
 │   ✔    on     ➥due-lane            opus[1m]      █·············   9% 90k             250k       5m   due 13:00              3   —              Jan 2 05:53   │
 │   ✔    on     (background)         haiku         ··············   4% 45k             120k        —   idle                   —   —              —             │
 │   ✔    on     ➥opted-out           fable         ··············   2% 20k              60k       2m   idle                   7   —              —             │
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ new session · <SB>/work/repo-b ─<pad>╮
-│  ▸ Create ➥route-lane  and go to its window                                                                                                                  │
+│    Create ➥repo-b-quail  and go to its window                                                                                                                │
 │    ····················································                                                                                                      │
-│    Sub-window ➥➥route-lane under ➥root-lane  empty, no prompt                                                                                                │
-│      Sub-window ➥➥route-lane under ➥root-lane  continues from its handover  (➥root-lane has not written STATUS-root-lane.md)                                 │
+│    Sub-window ➥➥repo-b-quail under ➥stranded-lane  empty, no prompt                                                                                          │
+│  ▸ Sub-window ➥➥repo-b-quail under ➥stranded-lane  continues from its handover                                                                               │
 │    ····················································                                                                                                      │
-│    Name: route-lane  the window, the handover, `handover.sh done`                                                                                            │
+│    Name: repo-b-quail  the window, the handover, `handover.sh done`                                                                                          │
 │    Folder: <SB>/work/repo-b  where claude starts <pad>│
 │    Model: fable  a CLI alias; the MODEL column's names are refused                                                                                           │
 │    Effort: high                                                                                                                                              │

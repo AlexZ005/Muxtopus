@@ -1,12 +1,23 @@
 """dashboard.views.newsession -- c: a new claude session, on ONE screen.
 
-A FORM, NOT A WIZARD. `c` opens a menu with every parameter on it, each row
-already carrying the default it would use, and `Create` on the first row --
-so the whole of "give me a window" is `c` then enter, and changing something
-is arrowing to that row and pressing enter on it. It was seven pickers in a
-fixed order, which meant answering six questions you did not have an opinion
-about to reach the one you did, and no way to go back and change your mind
-about the second one without abandoning the flow.
+A FORM, NOT A WIZARD. `c` asks for the name and opens a menu with every other
+parameter on it, each row already carrying the default it would use, and
+`Create` on the first row -- so the whole of "give me a window" is `c enter
+enter`, and changing something is arrowing to that row and pressing enter on
+it. It was seven pickers in a fixed order, which meant answering six questions
+you did not have an opinion about to reach the one you did, and no way to go
+back and change your mind about the second one without abandoning the flow.
+
+THE NAME IS THE ONE QUESTION ASKED OUT LOUD, because it is the one nothing
+else can answer: it is the window in the tree, STATUS-<name>.md, and what the
+lane is called for the rest of its life. It is asked with an offer in the
+brackets -- the folder and one word, `scripts-otter` (dashboard/naming.py) --
+so enter takes it and anything typed replaces it.
+
+TWO SUB-WINDOW ROWS, under Create. A fork of the lane the cursor is on, empty
+or carrying on from that lane's handover, is the common second window and was
+two rows and a paste away; it is now one enter. The top row is unchanged and
+still makes a top-level window.
 
 Every row still uses the App's own picker and prompt -- the folder row opens
 the same candidate list it always did -- and they now come back to the form
@@ -29,6 +40,7 @@ dashboard down with it.
 WHAT IT READS THAT IS NOT ITS OWN (docs/dashboard-views.md):
 
     app.view_of("main").cursor_cwd()        the folder offered first
+    app.view_of("main").cursor_window()     what a sub-window goes under
     app.view_of("main").listed_sessions()   the windows it can go under
     app.view_of("main").known_windows()     the names a slug may not take
 """
@@ -42,8 +54,10 @@ from rich.markup import escape
 from rich.text import Text
 
 import muxsettings
-from dashboard.core import (CONFIG_DIR, DIM, GREEN, PROFILE, SCHEDULES_DIR,
-                            YELLOW, model_choices, mux_home)
+from dashboard import naming
+from dashboard.core import (CONFIG_DIR, DIM, GREEN, HANDOVERS_DIR, PROFILE,
+                            SCHED_TEMPLATES, SCHEDULES_DIR, YELLOW,
+                            model_choices, mux_home)
 from dashboard.data import (dirty_repos, lane_slug_of, live_windows,
                             read_tree)
 from dashboard.schedules import read_schedules, sanitise_slug
@@ -71,9 +85,8 @@ class NewSession:
     # below did not have to change shape -- and the menu is redrawn from it on
     # every frame, which is what makes a row show the value you just set.
     def start_new_session(self) -> str:
-        cwd = self._default_cwd()
-        name = self._free_slug(self._name_for(cwd))
         mode = muxsettings.get("DASHBOARD_NEW_PERMISSION_MODE", PROFILE)
+        cwd = self._default_cwd()
         self.app.ns = {
             "cwd": cwd,
             "model": muxsettings.get("DASHBOARD_NEW_MODEL", PROFILE),
@@ -84,23 +97,49 @@ class NewSession:
             # the account's own defaultMode.
             "mode": mode if mode in muxsettings.PERM_MODES else "",
             "window": "", "parent": "", "prompt": "",
-            "title": name, "slug": name,
+            "title": "", "slug": "",
         }
-        self.app.open_menu("newsession")
+        # Worked out ONCE, so a name refused as taken is asked again with the
+        # same offer still in the brackets -- a suggestion that changed under
+        # a retyped answer would be a third name to read.
+        self.app.ns["offer"] = self._suggested_name()
+        # THE NAME IS ASKED FIRST, and it is the only thing that is. Not
+        # because it is hard -- enter answers it -- but because it is the one
+        # parameter nothing else can choose well: it is the window in the
+        # tree, the handover file and what a lane is called for the rest of
+        # its life, and a form that quietly filled it in was a form that
+        # handed out names nobody had read. The offer is in the brackets, so
+        # the window nobody has an opinion about is still one gesture:
+        # `c enter enter`, one keystroke more than it was.
+        self._ask_name(first=True)
         return ""
 
     @staticmethod
     def _name_for(cwd: str) -> str:
-        """The name a folder suggests. The LEADING DOT GOES: sanitise_slug is
-        the executor's rule character for character and keeps it (a slug may
-        legitimately contain one), but a folder called ~/.code would then
-        offer `.code`, whose handover is the hidden file STATUS-.code.md and
-        whose window is ➥.code. Typing that is still allowed; offering it is
-        not something anybody meant to ask for."""
+        """What the FOLDER contributes to the offered name. The LEADING DOT
+        GOES: sanitise_slug is the executor's rule character for character and
+        keeps it (a slug may legitimately contain one), but a folder called
+        ~/.code would then offer `.code`, whose handover is the hidden file
+        STATUS-.code.md and whose window is ➥.code. Typing that is still
+        allowed; offering it is not something anybody meant to ask for."""
         base = os.path.basename(cwd.rstrip("/")).lstrip(".")
         if not base:
             base = os.path.basename(os.path.dirname(cwd.rstrip("/"))).lstrip(".")
-        return sanitise_slug(base) or "session"
+        return sanitise_slug(base)
+
+    def _suggested_name(self) -> str:
+        """The name in the brackets: the folder and one word (naming.py).
+
+        WHY NOT THE FOLDER ALONE, which is what it used to be: the second
+        window in a folder cannot have that name, and the answer then was
+        `scripts-2`, `scripts-3` -- which is the collision papered over
+        rather than solved, because the digit tells you nothing about which
+        of the three you are looking at. A word does: `scripts-otter` and
+        `scripts-heron` are as easy to tell apart as they are to say, and
+        the first one in a folder gets a word too, so there is no odd one
+        out and no renaming when the second arrives."""
+        return naming.suggest(self._name_for(self.app.ns["cwd"]),
+                              self._taken_slugs())
 
     def _default_cwd(self) -> str:
         """Where a session starts when nobody says otherwise: the setting, the
@@ -124,15 +163,6 @@ class NewSession:
         return taken | {lane_slug_of(w)
                         for w in self.app.view_of("main").known_windows()}
 
-    def _free_slug(self, base: str) -> str:
-        taken = self._taken_slugs()
-        if base not in taken:
-            return base
-        for n in range(2, 100):
-            if "%s-%d" % (base, n) not in taken:
-                return "%s-%d" % (base, n)
-        return base
-
     # ------------------------------------------------------------- the rows
     def entries(self) -> list[dict]:
         ns = self.app.ns
@@ -144,6 +174,9 @@ class NewSession:
             {"label": "Create ➥%s  and go to its window" % ns["slug"],
              "act": self._create},
             {"sep": True},
+        ]
+        items += self._quick_rows()
+        items += [
             {"label": "Name: %s  the window, the handover, `handover.sh done`" % ns["slug"],
              "act": self._edit_name, "stay": True},
             {"label": "Folder: %s  where claude starts" % self._short(ns["cwd"]),
@@ -170,6 +203,77 @@ class NewSession:
                              "disabled": "already done"})
         return items
 
+    # ------------------------------------------------- the two quick rows
+    # A SUB-WINDOW IS THE COMMON SECOND WINDOW. You are in a lane, the work
+    # forks, and what you want is another session under this one -- either
+    # empty, to put something unrelated in, or carrying on from where this
+    # one wrote its handover. Both are reachable from the rows below (Where,
+    # then First prompt), and both were four keystrokes and a paste away;
+    # these are the same two entries written for you, one enter each.
+    #
+    # THE TOP ROW STAYS A TOP-LEVEL WINDOW. That is what `c enter` has always
+    # made and what most windows are; a form whose first row changed meaning
+    # depending on where the cursor happened to be would be a form you had to
+    # read before pressing enter on it.
+    def _quick_parent(self) -> tuple[str, str]:
+        """(window name, slug) of the window a quick sub-window would go
+        under: the one the form was told about, else the one the cursor is
+        on. ("", "") when there is none -- a lane row, the extras row, or a
+        session with no window at all."""
+        win = self.app.ns.get("window") or self.app.view_of("main").cursor_window()
+        return (win, lane_slug_of(win)) if win else ("", "")
+
+    def _quick_rows(self) -> list[dict]:
+        win, lane = self._quick_parent()
+        if not win:
+            return []
+        status = HANDOVERS_DIR / ("STATUS-%s.md" % lane)
+        rows = [
+            {"label": "Sub-window ➥➥%s under %s  empty, no prompt"
+                      % (self.app.ns["slug"], win),
+             "act": self._create_sub_empty},
+            {"label": "Sub-window ➥➥%s under %s  continues from its handover"
+                      % (self.app.ns["slug"], win),
+             "act": self._create_sub_handover},
+        ]
+        if not status.exists():
+            # NOT hidden, and not silently pointed at a file that is not
+            # there: the row is the answer to "can I fork this lane yet", and
+            # "not until it has written one" is that answer. `Wind down` in
+            # the session menu is what asks for one.
+            rows[1]["disabled"] = "%s has not written STATUS-%s.md" % (win, lane)
+        rows.append({"sep": True})
+        return rows
+
+    def _create_sub(self, prompt: str) -> str:
+        win, lane = self._quick_parent()
+        if not win:
+            return "no window to go under"
+        # window: is the tmux name, parent: the slug the tree is keyed on --
+        # the same two fields the Where row sets, because this IS the Where
+        # row, answered for you.
+        self.app.ns["window"], self.app.ns["parent"] = win, lane
+        self.app.ns["prompt"] = prompt
+        return self._create()
+
+    def _create_sub_empty(self) -> str:
+        return self._create_sub("")
+
+    def _create_sub_handover(self) -> str:
+        """The child reads the parent's handover. The same template the
+        schedule view's `Schedule ➥resume` uses, resolved the same way, so a
+        resume at the next reset and a fork right now say one thing to the
+        session and not two."""
+        _win, lane = self._quick_parent()
+        status = "%s/STATUS-%s.md" % (HANDOVERS_DIR, lane)
+        try:
+            tpl = (SCHED_TEMPLATES / "resume-status.md").read_text()
+        except OSError:
+            tpl = ('Read {{STATUS_FILE}} and continue from its "How to resume" '
+                   "section. One commit per phase; update the STATUS file "
+                   "before stopping.")
+        return self._create_sub(tpl.replace("{{STATUS_FILE}}", status).strip())
+
     @staticmethod
     def _short(path: str) -> str:
         home = os.path.expanduser("~")
@@ -195,12 +299,40 @@ class NewSession:
         return ""
 
     def _edit_name(self) -> str:
-        self.app.prompt = {"title": "name  (the slug: window ➥name, STATUS-name.md)",
-                           "buf": self.app.ns["title"], "fn": self._set_name,
-                           "keep_menu": True, "on_cancel": self._stay}
+        return self._ask_name(first=False)
+
+    def _ask_name(self, first: bool, title: str = "", buf: str = "") -> str:
+        """The name prompt, on `c` and on the Name row alike.
+
+        THE BRACKETS HOLD WHAT ENTER WOULD TAKE -- the offered name on `c`,
+        the current one on the row -- and the line itself starts EMPTY, so
+        typing a name of your own is typing it, not clearing a prefilled one
+        first. App.prompt_key is where an empty line becomes the placeholder.
+
+        `first` is the difference between the two callers and it is only
+        about what surrounds the prompt: on `c` there is no form yet, so
+        answering opens it and esc abandons a flow that has produced nothing;
+        on the row the form is open underneath and both answers go back to
+        it."""
+        self.app.prompt = {
+            "title": title or "name  (the slug: window ➥name, STATUS-name.md)",
+            "buf": buf,
+            "placeholder": self.app.ns["offer"] if first else self.app.ns["slug"],
+            "fn": self._name_then_form if first else self._set_name,
+            "keep_menu": not first,
+            "on_cancel": self._cancel if first else self._stay}
         return ""
 
-    def _set_name(self, text: str) -> str:
+    def _name_then_form(self, text: str) -> str:
+        """`c`'s own prompt: take the name, then open the form on it. A name
+        that was refused has put the prompt back up, and that is the test --
+        the form opens on an accepted name and on nothing else."""
+        self._set_name(text, first=True)
+        if self.app.prompt is None:
+            self.app.open_menu("newsession")
+        return ""
+
+    def _set_name(self, text: str, first: bool = False) -> str:
         slug = sanitise_slug(text.strip())
         why = ""
         if not slug:
@@ -208,9 +340,10 @@ class NewSession:
         elif slug != self.app.ns["slug"] and slug in self._taken_slugs():
             why = "%s is taken (a window or an entry has it)" % slug
         if why:
-            self.app.prompt = {"title": "%s — name" % why, "buf": text.strip(),
-                               "fn": self._set_name, "keep_menu": True,
-                               "on_cancel": self._stay}
+            # Said in the prompt's own title, and asked again with what was
+            # typed still on the line: the notice is not drawn while a prompt
+            # owns the footer.
+            self._ask_name(first, title="%s — name" % why, buf=text.strip())
             return ""
         self.app.ns["title"] = text.strip()
         self.app.ns["slug"] = slug
@@ -505,17 +638,33 @@ class NewSession:
 # deck_status.py -- the split moved who owns the words, not the words.
 HELP_NEWSESSION = f"""
   [{DIM}]A NEW CLAUDE SESSION (c)[/]
-    ONE SCREEN, not a questionnaire. `c` opens a form with every parameter
-    already filled in from Settings ▸ the new-window defaults, and `Create` on
-    the first row -- so a window you have no particular opinion about is
-    [bold]c enter[/], and one you do is arrowing to that row and pressing enter
-    on it. The form stays open while you do: set the effort, change your mind
-    about the folder, set it back. esc on a row leaves that row alone; esc on
-    the form abandons the whole thing.
+    ONE SCREEN, not a questionnaire. `c` asks for the NAME, with an offer in
+    the brackets, and then opens a form with every other parameter already
+    filled in from Settings ▸ the new-window defaults and `Create` on the
+    first row -- so a window you have no particular opinion about is
+    [bold]c enter enter[/], and one you do is arrowing to that row and
+    pressing enter on it. The form stays open while you do: set the effort,
+    change your mind about the folder, set it back. esc on a row leaves that
+    row alone; esc on the form abandons the whole thing.
 
-    Name          the slug: the window ➥name, STATUS-name.md, `handover.sh
-                  done name`. Offered from the folder, and made unique before
-                  it is offered, so c enter works a second time
+    THE NAME IS ASKED, NOT ASSUMED. It is the slug -- the window ➥name,
+    STATUS-name.md, `handover.sh done name` -- and it is the one parameter a
+    default cannot choose well, so the line is yours to type. What is in the
+    brackets is what enter takes if you type nothing: the FOLDER AND ONE WORD,
+    `scripts-otter`, checked against every window and pending entry first. The
+    word is there because the second window in a folder used to be `scripts-2`
+    and the third `scripts-3`, and a digit tells you nothing about which of
+    the three you are looking at.
+
+    TWO SUB-WINDOW ROWS sit under Create whenever the cursor is on a live
+    session: `empty, no prompt`, and `continues from its handover`, which
+    pastes the same brief `Schedule ➥resume` does -- read STATUS-<parent>.md
+    and carry on from its "How to resume" section. Both make a ➥➥ child of
+    that window; the handover row is greyed with the reason until that lane
+    has actually written one (`Wind down` in the session menu asks for it).
+    Create itself is unchanged: a top-level window.
+    Name          enter reopens the prompt; the brackets then hold the name
+                  it has now, so enter keeps it
     Folder        enter opens the candidates -- the cursor's folder, the
                   setting, every live session's, the dirty trees the watchdog
                   publishes, the checkouts under MUXTOPUS_HOME -- or a typed
