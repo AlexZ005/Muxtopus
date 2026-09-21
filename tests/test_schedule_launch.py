@@ -63,7 +63,22 @@ if first_start:
 
 # ----------------------------------------------------------- the fast path
 ok("--nudge)" in wd, "the watchdog takes --nudge")
-ok("trap 'nudge' USR1" in wd, "the daemon traps SIGUSR1")
+
+# THE SIGNAL MUST BE HARMLESS TO A DAEMON THAT DOES NOT TRAP IT.
+# An earlier release sent SIGUSR1, whose default action is TERMINATE, so the
+# first `c`
+# after an upgrade killed any daemon still running the older script -- which
+# is every daemon that had not been restarted. Measured on a real box: the
+# personal watchdog died on the first nudge and survived only because systemd
+# restarted it. On a machine with no systemd it would have stayed dead.
+#
+# SIGCONT's default action is to continue an already-running process, i.e.
+# nothing, and bash can still trap it.
+ok("kill -USR1" not in wd,
+   "--nudge does NOT send SIGUSR1: its default action is to KILL an old daemon")
+ok("kill -CONT" in wd,
+   "it sends SIGCONT, which an untrapping daemon safely ignores")
+ok("trap 'nudge' CONT" in wd, "and the daemon traps SIGCONT")
 ok(re.search(r"nudge\(\) \{ _NUDGED=1; \[ -n \"\$_SLEEP\" \] && kill \"\$_SLEEP\"", wd)
    is not None,
    "a nudge kills the sleep in flight")
@@ -73,6 +88,14 @@ ok(re.search(r"while :; do\n\s*#.*\n\s*#.*\n\s*_NUDGED=\"\"", wd) is not None
    or re.search(r"_NUDGED=\"\"\n\s*pass", wd) is not None,
    "the flag is cleared before the pass, not after it")
 ok("daemon_pid()" in wd, "there is one place that finds the running daemon")
+ok(re.search(r'--nudge\).{0,200}daemon\.pid', wd, re.S) is not None,
+   "a nudge is only sent to a daemon whose pid file says it will CATCH it")
+# The pid file is the proof the trap exists, so it must be published AFTER
+# the trap and not before.
+trap_at = wd.index("trap 'nudge' CONT")
+pid_at = wd.index('"$$" > "$STATE_DIR/daemon.pid"')
+ok(pid_at > trap_at,
+   "the daemon publishes its pid AFTER installing the trap, never before")
 code = "\n".join(l for l in wd.splitlines() if not l.lstrip().startswith("#"))
 ok("pgrep" not in code,
    "and it is not pgrep -- two accounts run two daemons from one script path")

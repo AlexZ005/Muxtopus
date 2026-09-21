@@ -351,14 +351,34 @@ case "${1:---once}" in
   # GO NOW. The dashboard writes a schedule entry with `at:` already past and
   # then had nothing to do but wait for the next poll, so `c` took up to a
   # full INTERVAL (30s by default) to produce a window -- measured at 20-30s,
-  # and felt like the dashboard had ignored the keypress. SIGUSR1 cuts the
-  # sleep short and the entry is launched within about a second.
+  # and felt like the dashboard had ignored the keypress. This cuts the sleep
+  # short and the entry is launched within about a second.
+  #
+  # SIGCONT, NOT SIGUSR1, AND THE REASON IS A BUG AN EARLIER RELEASE SHIPPED
+  # WITH. It sent SIGUSR1, whose DEFAULT ACTION IS TERMINATE -- so the first
+  # `c` after an upgrade killed any daemon still running the older script,
+  # which is every daemon not yet restarted. Measured on the author's own
+  # box: the personal watchdog died on the first nudge and only came back
+  # because systemd restarted it. On the machines this feature was written for
+  # -- the ones with no systemd, where muxtopus nohups the daemon itself -- it
+  # would have stayed dead until the next `muxtopus`.
+  #
+  # SIGCONT's default action is to continue a process that is already running,
+  # which is to say NOTHING, and bash can still trap it. So an old daemon
+  # ignores the nudge and keeps polling, exactly as it did before, and a new
+  # one wakes. Verified both ways against a harness of the real loop.
+  #
+  # THE PID FILE IS THE SECOND HALF. daemon.pid is written only by a daemon
+  # that has already installed the trap, so a matching pid proves the signal
+  # will be caught rather than merely survived. It costs nothing and keeps the
+  # nudge from reaching a process that is not ours at all.
   #
   # BEST EFFORT, ALWAYS. A nudge that cannot be delivered is not an error:
   # the entry is on disk and the next ordinary pass takes it, which is exactly
   # the old behaviour. So this never fails the thing that asked for it.
-  --nudge)   if pid="$(daemon_pid)"; then
-               kill -USR1 "$pid" 2>/dev/null && exit 0
+  --nudge)   if pid="$(daemon_pid)" \
+                && [ "$(cat "$STATE_DIR/daemon.pid" 2>/dev/null)" = "$pid" ]; then
+               kill -CONT "$pid" 2>/dev/null && exit 0
              fi
              exit 1 ;;
   --monitor-on)  mkdir -p "$DIRECTIVES"; : > "$MONITOR"
@@ -3222,7 +3242,6 @@ fi
 
 if [ "$MODE" = daemon ]; then
   log "watchdog started for $MUX_LABEL (interval ${INTERVAL}s, soft $SOFT_PCT%, hard $HARD_PCT%)"
-  printf '%s\n' "$$" > "$STATE_DIR/daemon.pid" 2>/dev/null || true
 
   # ARMED ON FIRST START, because a watchdog that watches without acting is
   # not what anyone installs one for -- and because check_schedules is gated
@@ -3264,15 +3283,24 @@ if [ "$MODE" = daemon ]; then
     exec "$SELF" "${_ARGV[@]}"
   }
   trap 'reload SIGHUP' HUP
-  # GO NOW (--nudge). The dashboard sends SIGUSR1 the moment it writes a
-  # schedule entry, so `c` opens a window in about a second instead of
-  # waiting out the poll. Killing the sleep is enough when one is in flight;
-  # _NUDGED covers a signal that lands DURING a pass, which would otherwise
-  # be swallowed and cost the full interval after all. `pass` is idempotent,
-  # so running it once more than strictly needed is free.
+  # GO NOW (--nudge). The dashboard signals the moment it writes a schedule
+  # entry, so `c` opens a window in about a second instead of waiting out the
+  # poll. Killing the sleep is enough when one is in flight; _NUDGED covers a
+  # signal that lands DURING a pass, which would otherwise be swallowed and
+  # cost the full interval after all. `pass` is idempotent, so running it once
+  # more than strictly needed is free.
+  #
+  # SIGCONT because its default action is to do nothing to a running process
+  # (see --nudge above): a daemon from an older release ignores the nudge
+  # instead of being killed by it.
   _NUDGED=""
   nudge() { _NUDGED=1; [ -n "$_SLEEP" ] && kill "$_SLEEP" 2>/dev/null; return 0; }
-  trap 'nudge' USR1
+  trap 'nudge' CONT
+  # AFTER THE TRAP, NEVER BEFORE. The pid file is what tells --nudge that this
+  # daemon will CATCH the signal rather than merely survive it, so publishing
+  # it while the trap was still un-installed would re-open a narrow version of
+  # the very race this file exists to close.
+  printf '%s\n' "$$" > "$STATE_DIR/daemon.pid" 2>/dev/null || true
   CONF_SEEN="$STATE_DIR/config.seen"; : > "$CONF_SEEN"
   while :; do
     # Cleared BEFORE the pass, so a nudge arriving at any point from here on
