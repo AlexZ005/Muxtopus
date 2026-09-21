@@ -8,6 +8,9 @@
 #   ./install.sh --no-watchdog   skip the watchdog service
 #   ./install.sh --no-venv       do not build .venv (the dashboard then runs its
 #                                plain bash renderer unless python3 has rich)
+#   ./install.sh --no-embedded-python
+#                                do not fetch a python when this machine has no
+#                                python3 >= 3.10; nothing is downloaded
 #   ./install.sh --no-rc         do not add the bin dir to PATH in your shell rc
 #
 # ONE NAME ON PATH: muxtopus. Not `mux`, which is already several other tools,
@@ -37,6 +40,7 @@ HOME_DIR=""
 WATCHDOG=1
 VENV=1
 RC=1
+EMBED=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -47,8 +51,9 @@ while [ $# -gt 0 ]; do
                    BIN="$2"; shift 2 ;;
     --no-watchdog) WATCHDOG=0; shift ;;
     --no-venv)     VENV=0; shift ;;
+    --no-embedded-python) EMBED=0; shift ;;
     --no-rc)       RC=0; shift ;;
-    -h|--help)     sed -n '2,11p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '2,14p' "$0"; exit 0 ;;
     *)             echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -81,32 +86,77 @@ echo "  config     $CFG"
 [ "$DRY" = 1 ] && echo "  MODE       dry run, nothing will be written"
 
 # ------------------------------------------------------------- 1. what we need
-step "1/6  Checking what is here"
+# ONE LINE PER TOOL, and the version is part of the line. This used to report
+# the tool and then report it AGAIN from a second check below -- `+ tmux`,
+# then `+ tmux 3.5`; `+ python3`, then `+ python 3.13` -- which reads as two
+# findings about two different things, and buries the one line that matters
+# (the version being too old) under a duplicate of the one that does not.
+step "1/7  Checking what is here"
 missing=0
-for c in bash tmux git; do
-  if command -v "$c" >/dev/null 2>&1; then ok "$c"; else warn "$c MISSING (required)"; missing=1; fi
-done
-for c in jq python3 claude; do
-  if command -v "$c" >/dev/null 2>&1; then ok "$c"; else warn "$c missing"; missing=1; fi
-done
-if command -v tmux >/dev/null 2>&1; then
-  tv="$(tmux -V | awk '{print $2}' | tr -d 'a-z')"
-  # `new-window -e` is how the account reaches a window; it landed in 3.2.
-  awk -v v="$tv" 'BEGIN{exit !(v+0 >= 3.2)}' && ok "tmux $tv" \
-    || warn "tmux $tv is older than 3.2 -- per-window env (-e) will not work"
-fi
-# 3.10: the Python half is written with `X | None`, which 3.9 cannot evaluate.
-# Measured, not guessed: the unit tests pass on 3.10 through 3.13 and fail on
-# 3.9 at the first import.
-if command -v python3 >/dev/null 2>&1; then
-  pv="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
-  if python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
-    ok "python $pv"
-  else
-    warn "python $pv is older than 3.10 -- the dashboard, stats and notifications need 3.10"
-    missing=1
+
+pkg_line() {   # how you would install $1 on THIS machine
+  if command -v apt-get >/dev/null 2>&1;   then echo "sudo apt install $1"
+  elif command -v dnf >/dev/null 2>&1;     then echo "sudo dnf install $1"
+  elif command -v pacman >/dev/null 2>&1;  then echo "sudo pacman -S $1"
+  elif command -v zypper >/dev/null 2>&1;  then echo "sudo zypper install $1"
+  elif command -v apk >/dev/null 2>&1;     then echo "sudo apk add $1"
+  elif command -v brew >/dev/null 2>&1;    then echo "brew install $1"
+  else echo "install $1 with your package manager"; fi
+}
+
+# The version each tool reports, in ONE word. `claude` is not asked: it is a
+# Node program whose --version can take a second, and an installer that hangs
+# on a version string it only wanted to print is a bad trade.
+tool_version() {
+  case "$1" in
+    bash)    printf '%s' "${BASH_VERSION%%[-(]*}" ;;
+    tmux)    tmux -V 2>/dev/null | awk '{print $2}' ;;
+    git)     git --version 2>/dev/null | awk '{print $3}' ;;
+    jq)      jq --version 2>/dev/null | sed 's/^jq-//' ;;
+    python3) python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null ;;
+  esac
+}
+
+for c in bash tmux git jq python3 claude; do
+  v="$(tool_version "$c")"
+  if ! command -v "$c" >/dev/null 2>&1; then
+    case "$c" in
+      bash|tmux|git) warn "$c MISSING (required) -- $(pkg_line "$c")"; missing=1 ;;
+      python3)       warn "python3 missing -- $(pkg_line python3), or let step 5 fetch one" ;;
+      *)             warn "$c missing -- $(pkg_line "$c")"; missing=1 ;;
+    esac
+    continue
   fi
-fi
+  case "$c" in
+    tmux)
+      # `new-window -e` is how the account reaches a window; it landed in 3.2.
+      # THE VERSION IS WORTH SAYING EVEN WHEN IT IS FINE: it is the one
+      # dependency whose age silently removes a feature rather than failing.
+      tv="$(printf '%s' "$v" | tr -d 'a-z')"
+      if awk -v n="$tv" 'BEGIN{exit !(n+0 >= 3.2)}'; then
+        ok "tmux $v"
+      else
+        warn "tmux $v is older than 3.2 -- per-window env (-e) will not work,"
+        warn "  so a window cannot be given its own account. Update it: $(pkg_line tmux)"
+        missing=1
+      fi
+      ;;
+    python3)
+      # 3.10: the Python half is written with `X | None`, which 3.9 cannot
+      # evaluate. Measured, not guessed: the unit tests pass on 3.10 through
+      # 3.13 and fail on 3.9 at the first import.
+      if python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+        ok "python3 $v"
+        SYS_PY_OK=1
+      else
+        warn "python3 $v is older than 3.10 -- the dashboard, stats and"
+        warn "  notifications need 3.10; step 5 fetches one rather than stop here"
+      fi
+      ;;
+    claude) ok "claude" ;;
+    *)      ok "$c${v:+ $v}" ;;
+  esac
+done
 [ "$missing" = 1 ] && warn "install the missing tools, then run this again to get a clean report"
 
 # A config that pins another checkout wins over this one: `muxtopus` reads
@@ -122,13 +172,13 @@ if [ -f "$CFG" ]; then
 fi
 
 # ------------------------------------------------------------------ 2. folders
-step "2/6  Folders"
+step "2/7  Folders"
 run mkdir -p "$HOME_DIR" "$BIN" "$CFG_DIR/profiles"
 ok "$HOME_DIR"
 ok "$BIN"
 
 # ------------------------------------------------------------------- 3. config
-step "3/6  Config"
+step "3/7  Config"
 if [ -f "$CFG" ]; then
   skip "$CFG already exists, leaving it alone"
 else
@@ -178,7 +228,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 4. the link
-step "4/6  muxtopus"
+step "4/7  muxtopus"
 run chmod +x "$SRC/muxtopus" "$SRC"/*.sh
 run ln -sfn "$SRC/muxtopus" "$BIN/muxtopus"
 ok "$BIN/muxtopus -> $SRC/muxtopus"
@@ -262,31 +312,163 @@ if [ "$DRY" = 0 ] && command -v python3 >/dev/null 2>&1; then
     && ok "schedules/, backups/, handovers/ seeded under $HOME_DIR"
 fi
 
-# ------------------------------------------------------- 5. dashboard runtime
+# --------------------------------------------------------------- 5. python
+# THE PYTHON HALF HAS A FLOOR OF 3.10 and a machine is allowed not to meet it.
+# Debian 11, Ubuntu 20.04 and a plain container all ship 3.9 or nothing, and
+# the answer used to be a warning and a dashboard with no colours, no stats,
+# no notifications and no schedules view -- most of the program, withheld for
+# a reason the user cannot fix without root.
+#
+# So it fetches one: a standalone CPython from astral-sh/python-build-standalone
+# (the same builds `uv` installs), unpacked into the data home.
+#
+# IT IS MUXTOPUS'S PYTHON, NOT THE MACHINE'S. Nothing is linked into ~/.local/bin,
+# nothing is put on PATH, no system package is touched and no other program can
+# reach it by accident: the only thing that ever runs it is muxtopus, through
+# MUX_PYTHON (profile.sh), and it is one directory to delete. An installer that
+# put a python3 of its own choosing in front of the user's tools would be
+# fixing its own problem with somebody else's environment.
+#
+# IT IS CHECKED. The release publishes a .sha256 beside every asset; the
+# tarball is refused if the two disagree. Both come over TLS from the same
+# release, so this catches a corrupted download and a swapped asset -- not a
+# compromised account, and this says so rather than implying more.
+PY_DIR="$HOME_DIR/python"
+# The release to read the asset list from. An env var only so that
+# tests/test_install_python.sh can serve a release of its own over file:// and
+# drive this whole path offline -- the download, the sha256 gate and the
+# refusal -- rather than leave the one step that touches the network as the
+# one step nothing checks.
+PBS_API="${MUXTOPUS_PBS_API:-https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest}"
+
+embedded_python() {
+  local arch os url sha want got tmp
+  case "$(uname -s)" in
+    Linux) os="unknown-linux-gnu" ;;
+    *) warn "no standalone build for $(uname -s) -- install python3 >= 3.10 yourself"; return 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64)  arch="x86_64" ;;
+    aarch64|arm64) arch="aarch64" ;;
+    *) warn "no standalone build for $(uname -m) -- install python3 >= 3.10 yourself"; return 1 ;;
+  esac
+  command -v curl >/dev/null 2>&1 || { warn "curl is needed to fetch python -- $(pkg_line curl)"; return 1; }
+  command -v tar  >/dev/null 2>&1 || { warn "tar is needed to unpack python -- $(pkg_line tar)"; return 1; }
+  command -v sha256sum >/dev/null 2>&1 || { warn "sha256sum is needed to check it -- $(pkg_line coreutils)"; return 1; }
+
+  # THE NEWEST 3.x INSTALL-ONLY BUILD for this machine, from the release's own
+  # asset list. Parsed with grep rather than jq, which is one of the tools this
+  # script is quite prepared to find missing.
+  url="$(curl -fsSL --max-time 30 "$PBS_API" 2>/dev/null \
+         | grep -o '"browser_download_url": *"[^"]*"' | cut -d'"' -f4 \
+         | grep -- "-${arch}-${os}-install_only\.tar\.gz$" \
+         | sed 's|.*/cpython-\([0-9][0-9.]*\)+.*|\1 &|' | sort -V | tail -1 | cut -d' ' -f2-)"
+  if [ -z "$url" ]; then
+    warn "could not reach $PBS_API -- no network? install python3 >= 3.10 instead"
+    return 1
+  fi
+  ok "fetching $(basename "$url")"
+  skip "$url"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/muxpy-XXXXXX")" || return 1
+  if ! curl -fsSL --max-time 600 -o "$tmp/py.tar.gz" "$url"; then
+    warn "download failed"; rm -rf -- "${tmp:?}"; return 1
+  fi
+  want="$(curl -fsSL --max-time 60 "$url.sha256" 2>/dev/null | tr -d '[:space:]')"
+  got="$(sha256sum "$tmp/py.tar.gz" | cut -d' ' -f1)"
+  if [ -z "$want" ]; then
+    warn "no published sha256 for that asset -- refusing to unpack it"
+    rm -rf -- "${tmp:?}"; return 1
+  fi
+  if [ "$want" != "$got" ]; then
+    warn "sha256 MISMATCH -- refusing to unpack"
+    warn "  published $want"
+    warn "  downloaded $got"
+    rm -rf -- "${tmp:?}"; return 1
+  fi
+  ok "sha256 matches the published sum"
+  # The archive holds a single `python/` directory, so it unpacks INTO the
+  # data home and becomes $PY_DIR. A previous one is moved aside rather than
+  # deleted under a running dashboard.
+  if [ -d "$PY_DIR" ]; then
+    rm -rf -- "${PY_DIR:?}.old"
+    mv -- "${PY_DIR:?}" "${PY_DIR:?}.old"
+  fi
+  if ! tar -xzf "$tmp/py.tar.gz" -C "$HOME_DIR"; then
+    warn "could not unpack it"
+    # PUT THE OLD ONE BACK. A half-unpacked archive must not cost a machine
+    # the interpreter it was already running on.
+    rm -rf -- "${PY_DIR:?}"
+    [ -d "${PY_DIR:?}.old" ] && mv -- "${PY_DIR:?}.old" "${PY_DIR:?}"
+    rm -rf -- "${tmp:?}"
+    return 1
+  fi
+  rm -rf -- "${tmp:?}" "${PY_DIR:?}.old"
+  if ! "$PY_DIR/bin/python3" -c 'import sys, venv; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+    warn "the fetched python does not run here -- leaving it at $PY_DIR"
+    return 1
+  fi
+  ok "$PY_DIR/bin/python3 ($("$PY_DIR/bin/python3" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])'))"
+  skip "muxtopus only; nothing was added to PATH"
+  return 0
+}
+
+step "5/7  Python"
+PY="python3"
+if [ "${SYS_PY_OK:-0}" = 1 ]; then
+  skip "python3 $(tool_version python3) is what muxtopus will use"
+elif [ "$EMBED" = 0 ]; then
+  warn "no python3 >= 3.10 and --no-embedded-python -- the dashboard will use"
+  warn "  its plain bash renderer, and stats and notifications will not run"
+elif [ -x "$PY_DIR/bin/python3" ] \
+     && "$PY_DIR/bin/python3" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+  PY="$PY_DIR/bin/python3"
+  skip "$PY is already here"
+elif [ "$DRY" = 1 ]; then
+  printf '    \033[90m$ fetch a standalone CPython into %s\033[0m\n' "$PY_DIR"
+elif embedded_python; then
+  PY="$PY_DIR/bin/python3"
+else
+  warn "carrying on without it -- the dashboard will use its plain bash renderer"
+fi
+# WRITTEN DOWN, so every later run agrees with this one. The config is only
+# ever added to here: a MUXTOPUS_PYTHON already in it is the user's own answer.
+if [ "$PY" != "python3" ] && [ "$DRY" = 0 ] && [ -f "$CFG" ] \
+   && ! grep -q '^MUXTOPUS_PYTHON=' "$CFG"; then
+  printf '\n# muxtopus (install.sh): the interpreter fetched for the python half\nMUXTOPUS_PYTHON="%s"\n' \
+         "$PY" >> "$CFG"
+  ok "$CFG: MUXTOPUS_PYTHON=$PY"
+fi
+
+# ------------------------------------------------------- 6. dashboard runtime
 # The dashboard is Rich when $SRC/.venv/bin/python can import rich, and a plain
 # bash renderer otherwise (deck-status.sh). A venv beside the code, not a
 # system package: an OS update that replaces python3 breaks a venv, which
 # after-update.sh rebuilds, but it never breaks the fallback -- the dashboard
 # is what you open when something is broken. 27 MB, one pip download.
-step "5/6  Dashboard runtime"
+#
+# BUILT FROM $PY, which is the system python3 when it is new enough and the
+# fetched one when it is not -- so a machine with no usable python3 gets the
+# Rich dashboard too, and after-update.sh's rebuild finds the same interpreter
+# through MUX_PYTHON.
+step "6/7  Dashboard runtime"
 if [ "$VENV" = 0 ]; then
   skip "skipped (--no-venv)"
 elif [ -x "$SRC/.venv/bin/python" ] && "$SRC/.venv/bin/python" -c 'import rich' 2>/dev/null; then
   skip "$SRC/.venv already has rich"
-elif ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+elif ! "$PY" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
   warn "no python3 >= 3.10 -- the dashboard will use its plain bash renderer"
 elif [ "$DRY" = 1 ]; then
-  printf '    \033[90m$ python3 -m venv %s && %s install rich\033[0m\n' "$SRC/.venv" "$SRC/.venv/bin/pip"
-elif python3 -m venv "$SRC/.venv" >/dev/null 2>&1 \
+  printf '    \033[90m$ %s -m venv %s && %s install rich\033[0m\n' "$PY" "$SRC/.venv" "$SRC/.venv/bin/pip"
+elif "$PY" -m venv "$SRC/.venv" >/dev/null 2>&1 \
      && "$SRC/.venv/bin/pip" install --quiet --disable-pip-version-check rich >/dev/null 2>&1; then
   ok "$SRC/.venv with rich $("$SRC/.venv/bin/python" -c 'import importlib.metadata as m; print(m.version("rich"))')"
 else
   warn "could not build $SRC/.venv (no network, or no python3-venv?) -- plain renderer until:"
-  warn "  python3 -m venv \"$SRC/.venv\" && \"$SRC/.venv/bin/pip\" install rich"
+  warn "  $PY -m venv \"$SRC/.venv\" && \"$SRC/.venv/bin/pip\" install rich"
 fi
 
-# --------------------------------------------------------------- 6. watchdog
-step "6/6  Watchdog"
+# --------------------------------------------------------------- 7. watchdog
+step "7/7  Watchdog"
 if [ "$WATCHDOG" = 0 ]; then
   skip "skipped (--no-watchdog); bring it up later with: muxtopus"
 elif [ "$DRY" = 1 ]; then

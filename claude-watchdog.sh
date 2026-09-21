@@ -2442,7 +2442,7 @@ notify_waiting() {
     # when pane text may leave the machine.
     local mid more=0
     notify_on "$MUXTOPUS_NOTIFY_PANE_TEXT" && more=1
-    mid="$(python3 "$SCRIPT_DIR/muxtelegram.py" prompt-message ${MUX_PROFILE:+--profile "$MUX_PROFILE"} \
+    mid="$("$MUX_PYTHON" "$SCRIPT_DIR/muxtelegram.py" prompt-message ${MUX_PROFILE:+--profile "$MUX_PROFILE"} \
             --pane "$pane" --sha "$PROMPT_SHA" --yes "$PROMPT_YES" --more "$more" \
             --title "$MUX_LABEL · needs you: $name" --body "$body" 2>/dev/null)"
     case "$mid" in ''|*[!0-9]*) mid="" ;; esac
@@ -2543,7 +2543,7 @@ notify_questions() {
   if [ -z "$first" ] && [ -f "$NOTIFY_QSIG" ] && [ "$sig" = "$(cat "$NOTIFY_QSIG")" ]; then
     return 0
   fi
-  rows="$(python3 "$SCRIPT_DIR/muxtelegram.py" questions ${MUX_PROFILE:+--profile "$MUX_PROFILE"} 2>/dev/null)" \
+  rows="$("$MUX_PYTHON" "$SCRIPT_DIR/muxtelegram.py" questions ${MUX_PROFILE:+--profile "$MUX_PROFILE"} 2>/dev/null)" \
     || return 0
   NOTIFY_FAM[questions]=1
   while IFS=$'\t' read -r path slug ids; do
@@ -2577,7 +2577,7 @@ notify_questions() {
       shown=$(( shown + 1 )); [ "$shown" -le 8 ] || break
       # WITH BUTTONS when the phone may answer: (a) (b) … and ✎ type, from
       # muxtelegram, which also knows the fork's message when it is replied to.
-      if notify_inbound && python3 "$SCRIPT_DIR/muxtelegram.py" fork-message \
+      if notify_inbound && "$MUX_PYTHON" "$SCRIPT_DIR/muxtelegram.py" fork-message \
            ${MUX_PROFILE:+--profile "$MUX_PROFILE"} --path "$path" --fork "$id" \
            --title "$MUX_LABEL · $slug · fork $shown/$n" >/dev/null 2>&1; then
         log "notify: fork $id of $slug (buttons)"
@@ -2775,7 +2775,7 @@ notify_end() {
       case "$k" in
         waiting:*)
           if notify_inbound && [[ "$NOTIFY_PROMPT_ROWS" != *"${k#waiting:}"$'\t'* ]]; then
-            python3 "$SCRIPT_DIR/muxtelegram.py" retire "prompt:${k#waiting:}" \
+            "$MUX_PYTHON" "$SCRIPT_DIR/muxtelegram.py" retire "prompt:${k#waiting:}" \
               "✓ answered at the machine ($(date +%H:%M))" >/dev/null 2>&1
           fi ;;
       esac
@@ -2792,7 +2792,7 @@ notify_end() {
   [ -f "$NOTIFY_BASELINE" ] || date +%s > "$NOTIFY_BASELINE"
   # INBOUND, once a pass: the phone's presses and commands, for BOTH accounts
   # -- whichever daemon gets the shared lock first reads the bot (§3).
-  notify_inbound && python3 "$SCRIPT_DIR/muxtelegram.py" poll ${MUX_PROFILE:+--profile "$MUX_PROFILE"} >/dev/null 2>&1
+  notify_inbound && "$MUX_PYTHON" "$SCRIPT_DIR/muxtelegram.py" poll ${MUX_PROFILE:+--profile "$MUX_PROFILE"} >/dev/null 2>&1
   return 0
 }
 
@@ -2812,12 +2812,12 @@ stats_collect() {
   # the ledger is a write, and a write is the one thing it promises not to be.
   [ "$DRY" = 1 ] && return 0
   [ -f "$SCRIPT_DIR/muxstats.py" ] || return 0
-  command -v python3 >/dev/null 2>&1 || return 0
+  command -v "$MUX_PYTHON" >/dev/null 2>&1 || return 0
   [ -f "$STATS_AT" ] && at="$(cat "$STATS_AT" 2>/dev/null)"
   case "$at" in ''|*[!0-9]*) at=0 ;; esac
   [ $(( now - at )) -ge "$STATS_EVERY" ] || return 0
   printf '%s\n' "$now" > "$STATS_AT"
-  timeout "$STATS_TIMEOUT" python3 "$SCRIPT_DIR/muxstats.py" \
+  timeout "$STATS_TIMEOUT" "$MUX_PYTHON" "$SCRIPT_DIR/muxstats.py" \
     ${MUX_PROFILE:+--profile "$MUX_PROFILE"} collect \
     >/dev/null 2>"$STATS_ERR" || rc=$?
   if [ "$rc" != 0 ]; then

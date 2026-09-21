@@ -68,5 +68,7 @@ jobs:
         run: python3 tests/test_version.py
       - name: a release builds from HEAD, and its get.sh installs it into a fresh HOME
         run: bash tests/test_release.sh
+      - name: install.sh -- one line per tool, and the fetched python
+        run: bash tests/test_install_python.sh
       - name: the dashboard package imports without a terminal
         run: python3 -c "import deck_status"

@@ -135,7 +135,11 @@ mux_snapshot_line() {
 # from here.
 if [ "${1:-}" = "stats" ]; then
   shift
-  exec python3 "$_dir/muxstats.py" stats --profile "$PROFILE" "$@"
+  # The config is loaded for its INTERPRETER and nothing else: muxstats.py
+  # resolves the account itself from --profile, and this has to run on the
+  # machine whose python3 is 3.9 as well as the one whose is not.
+  mux_load_config ""
+  exec "$MUX_PYTHON" "$_dir/muxstats.py" stats --profile "$PROFILE" "$@"
 fi
 
 # ------------------------------------------------------------------ update
