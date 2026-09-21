@@ -54,7 +54,8 @@ The check at the top of the install reports each of these **once**, with its ver
 Debian 11, Ubuntu 20.04 and a bare container ship Python 3.9 or nothing, and the Python half of muxtopus — the Rich dashboard, the stats ledger, the notifications, the schedules view — needs 3.10. Rather than withhold most of the program for a reason you may not have root to fix, the installer downloads a standalone CPython from [astral-sh/python-build-standalone](https://github.com/astral-sh/python-build-standalone) (the same builds `uv` installs) into `<data home>/python`, and records it as `MUXTOPUS_PYTHON` in your config.
 
 - **It is muxtopus's Python, not the machine's.** Nothing is linked into `~/.local/bin`, nothing goes on `PATH`, and no system package is touched. The only thing that ever runs it is muxtopus. To undo it, delete that one directory and the `MUXTOPUS_PYTHON` line.
-- **It is checked.** The release publishes a `.sha256` beside every asset; a tarball whose sum does not match is refused and nothing is unpacked. Both come over TLS from the same release, so this catches a corrupted download or a swapped asset — not a compromised account.
+- **It is checked.** The release publishes one `SHA256SUMS` beside its assets; a tarball whose sum does not match, or that is not listed there at all, is refused and nothing is unpacked. Both come over TLS from the same release, so this catches a corrupted download or a swapped asset — not a compromised account.
+- **It takes a released build**, never a pre-release (`3.15.0rc2` sorts above `3.14.7`, so "newest" is not enough) and never a free-threaded one.
 - **`--no-embedded-python` turns it off**, and a system `python3` ≥ 3.10 means it never runs at all.
 
 When it is not available — no network, an architecture with no build, or you said no — the dashboard falls back to its plain bash renderer, exactly as before.
