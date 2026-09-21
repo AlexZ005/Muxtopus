@@ -130,18 +130,25 @@ $K Escape;  shot "settings-closed"      "q quit"
 
 # ============================================ c: a new claude session
 "$HERE/start.sh" 58 >/dev/null
-# THE FORM, not a queue of pickers: every parameter is on the one screen
-# with Create at the top, so the route walks DOWN it instead of through it.
-$K c;      shot "new-form"    "Create ➥"
-# DOWN MOVES ONE ROW AND SKIPS THE SEPARATOR, so one press from Create is the
-# Name row. Each row opens its own submode and comes back to the form, and the
-# shot after each Escape is the proof that esc left the ROW, not the form.
-$K Down;   $K Enter
-shot "new-name"               "the slug"
-$K BSpace; $K BSpace; $K BSpace; $K BSpace; $K BSpace; $K BSpace
+# THE NAME FIRST, with the offer in the brackets: `c` opens the prompt and
+# nothing else, and answering it is what opens the form.
+$K c;      shot "new-name"    "enter takes what is in brackets"
 $T "route-lane"
 shot "new-name-typed"         "route-lane"
-$K Enter;  shot "new-form-named" "Name: route-lane"
+$K Enter;  shot "new-form"    "Create ➥route-lane"
+# THE TWO SUB-WINDOW ROWS sit under Create while the cursor is on a live
+# session, so one Down from Create is the first of them and not the Name row:
+#
+#   Create · | · empty sub-window · sub-window from its handover · | · Name …
+#
+# and the second of them is REFUSED here (➥root-lane has written no handover),
+# which the mover skips exactly as it skips a separator. So two Downs from
+# Create is the Name row, and the shot after each one is what would catch a
+# miscount rather than photograph the wrong screen.
+$K Down;   shot "new-sub-empty" "Sub-window ➥➥route-lane"
+$K Down;   $K Enter
+shot "new-name-row"           "the slug"
+$K Escape; shot "new-form-named" "Name: route-lane"
 $K Down;   $K Enter
 shot "new-folder"             "working folder"
 $K Escape; shot "new-folder-escaped" "Create ➥route-lane"
@@ -170,6 +177,17 @@ $K Down;   $K Enter
 shot "new-prompt"             "first prompt"
 $K Escape
 $K Escape; shot "new-cancelled" "cancelled"
+# AND THE OTHER SUB-WINDOW ROW, live. ➥stranded-lane is the fixture's lane
+# with an OPEN handover, so the fork row that reads one is offered rather
+# than refused -- two Downs from the cursor's ➥root-lane.
+$K Down; $K Down
+$K c;      shot "new-name-stranded" "enter takes what is in brackets"
+$K Enter
+# Both sub-window rows are live here, so the second Down reaches the one that
+# reads a handover instead of skipping it.
+$K Down;   $K Down
+shot "new-sub-handover"       "continues from its handover"
+$K Escape; shot "new-cancelled-2" "cancelled"
 "$HERE/stop.sh"
 
 # ================================================= ? the help screen

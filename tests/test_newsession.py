@@ -5,11 +5,16 @@
 
 WHAT IS UNDER TEST, and why each part is worth a test rather than a read:
 
-  c enter          the whole reason it stopped being seven pickers. Pressing
-                   enter on a freshly opened form must write a complete,
-                   launchable entry from the defaults -- including a name
-                   that is free, because the second c enter of the day must
-                   work as well as the first.
+  c enter enter    the whole reason it stopped being seven pickers. `c` asks
+                   for the name with an offer in the brackets; enter takes
+                   the offer and enter again writes a complete, launchable
+                   entry from the defaults. The offer must be free, because
+                   the second c of the day must work as well as the first.
+  the brackets     enter on an empty line takes the placeholder, and typing
+                   replaces it -- on `c` and on the Name row alike.
+  the sub-windows  the two rows under Create: the ➥➥ child they write, and
+                   the handover row being refused, with the reason, until
+                   the parent lane has written one.
   a row edits      each row opens a picker or a prompt, and the value comes
                    back into the form rather than into the next screen.
   esc on a row     leaves the row alone and the FORM OPEN. This is the whole
@@ -41,6 +46,7 @@ for _k in ("MUXTOPUS_CONFIG", "MUXTOPUS_HOME", "MUXTOPUS_DIR",
 sys.path.insert(0, str(ROOT))
 
 import deck_status                                          # noqa: E402
+from dashboard import naming                                # noqa: E402
 from dashboard.app import App                               # noqa: E402
 
 n = 0
@@ -69,11 +75,16 @@ deck_status.load_modules(APP)
 ok(not APP.load_errors, "every module loads: %s" % (APP.load_errors or "none"))
 
 
-def fresh():
-    """The form as `c` leaves it: open, cursor on the first row."""
+def fresh(name=""):
+    """The form as `c` leaves it, the NAME PROMPT ANSWERED: type `name`, or
+    nothing to take what is in the brackets. That prompt is what `c` opens
+    now, and answering it is what opens the form."""
     APP.newsession.start_new_session()
-    APP.menu = {"kind": "newsession", "i": 0}
-    APP.menu_move(0)
+    assert APP.prompt is not None, "c should open the name prompt"
+    for ch in name:
+        APP.prompt_key(ch)
+    APP.prompt_key("\r")
+    assert APP.menu is not None, "an answered name should open the form"
     return APP
 
 
@@ -120,6 +131,43 @@ def body(path):
     return parts[1] if len(parts) > 1 else ""
 
 
+# ---- 0. c asks for the name, with the offer in the brackets ---------------
+APP.newsession.start_new_session()
+ok(APP.prompt is not None and APP.menu is None,
+   "c opens the name prompt, not the form")
+offer = APP.prompt.get("placeholder", "")
+ok(APP.prompt["buf"] == "",
+   "the line starts EMPTY, so typing a name is not backspacing one first")
+ok("-" in offer and offer.split("-")[-1] in naming.NOUNS,
+   "and the offer is the folder and one word: %r" % offer)
+ok(offer not in APP.newsession._taken_slugs(), "the offer is a free name")
+APP.prompt_key("\r")
+ok(APP.ns["slug"] == offer, "enter on the empty line takes what is in brackets")
+ok(APP.menu is not None and APP.menu["kind"] == "newsession",
+   "and the form opens on it")
+
+APP.newsession.start_new_session()
+for ch in "typed one":
+    APP.prompt_key(ch)
+APP.prompt_key("\r")
+ok(APP.ns["slug"] == "typed-one",
+   "a typed name wins over the offer, sanitised: %r" % APP.ns["slug"])
+press(APP, "Create")           # so the name is now really taken
+
+# A NAME THAT IS TAKEN is refused and asked again, with the offer unchanged.
+APP.newsession.start_new_session()
+was_offer = APP.prompt["placeholder"]
+for ch in "typed one":
+    APP.prompt_key(ch)
+APP.prompt_key("\r")
+ok(APP.prompt is not None and APP.menu is None,
+   "a name a pending entry already has is refused")
+ok("taken" in APP.prompt["title"], "and the prompt says why: %r" % APP.prompt["title"])
+ok(APP.prompt["placeholder"] == was_offer,
+   "with the same offer still in the brackets")
+APP.prompt_key("\x1b")
+ok(APP.ns is None, "esc at the first prompt abandons the whole thing")
+
 # ---- 1. the form itself ---------------------------------------------------
 app = fresh()
 items = app.menu_entries()
@@ -135,10 +183,10 @@ ok(all(app.menu_entries()[row(app, w)].get("stay")
        for w in ("Name:", "Folder:", "Model:", "Effort:")),
    "a parameter row keeps the form open")
 
-# ---- 2. c, enter ----------------------------------------------------------
+# ---- 2. c, enter, enter ---------------------------------------------------
 before = entries()
 press(app, "Create")
-ok(len(entries()) == len(before) + 1, "c enter writes exactly one entry")
+ok(len(entries()) == len(before) + 1, "c enter enter writes exactly one entry")
 ok(app.menu is None, "and closes the form")
 first = written(before)
 f = fields(first)
@@ -155,15 +203,24 @@ ok("permission-mode" not in f,
 ok(app.newsession.follow and app.newsession.follow["slug"] == f["slug"],
    "and the form is now following that slug to its window")
 
-# ---- 3. the second c enter of the day -------------------------------------
+# ---- 3. the second c of the day -------------------------------------------
 app2 = fresh()
 ok(label(app2, "Name:").split()[1] != f["slug"],
    "the next form offers a name that is not the one just taken: %r"
    % label(app2, "Name:").split()[1])
 prev2 = entries()
 press(app2, "Create")
-ok(len(entries()) == len(prev2) + 1, "so c enter works a second time")
+ok(len(entries()) == len(prev2) + 1, "so c enter enter works a second time")
 ok(fields(written(prev2))["slug"] != f["slug"], "with a different slug")
+
+# THE NAME ROW holds the current name in its brackets, so enter keeps it.
+app2b = fresh("kept name")
+press(app2b, "Name:")
+ok(app2b.prompt["placeholder"] == "kept-name" and app2b.prompt["buf"] == "",
+   "the Name row offers the name it has: %r" % app2b.prompt.get("placeholder"))
+app2b.prompt_key("\r")
+ok(app2b.ns["slug"] == "kept-name", "and enter on the empty line keeps it")
+app2b.menu_esc()
 
 # ---- 4. a row edits, and the form stays -----------------------------------
 app3 = fresh()
@@ -227,6 +284,62 @@ press(app4, "Cancel")
 ok(app4.ns is None, "Cancel drops the form's answers")
 ok(app4.menu is None, "and closes it")
 ok(entries() == had, "and writes nothing")
+
+# ---- 6b. the two sub-window rows ------------------------------------------
+# A QUICK SUB-WINDOW IS A FORK OF THE LANE THE CURSOR IS ON, so the rows are
+# there only when the cursor is on one. The main view's accessors are what
+# they read, and this drives those directly: a tmux server is not needed to
+# answer "which window is the cursor on".
+SUB = "Sub-window"
+app6 = fresh()
+ok(not any(r.get("label", "").startswith(SUB) for r in app6.menu_entries()),
+   "no cursor session, no sub-window rows")
+app6.menu_esc()
+
+main = APP.view_of("main")
+main.cursor = "sid-parent"
+main.windows = {"sid-parent": "➥parent"}
+main.panes = {"sid-parent": "%1"}
+main.cwds = {"sid-parent": str(ROOT)}
+main.sids = ["sid-parent"]
+
+app7 = fresh("fork one")
+rows7 = [r for r in app7.menu_entries() if r.get("label", "").startswith(SUB)]
+ok(len(rows7) == 2, "a cursor session puts both sub-window rows on the form")
+ok(all("➥➥fork-one under ➥parent" in r["label"] for r in rows7),
+   "and they name the child and its parent: %r" % rows7[0]["label"][:52])
+ok("has not written STATUS-parent.md" in (rows7[1].get("disabled") or ""),
+   "the handover row is refused with its reason while there is no handover")
+
+before7 = entries()
+press(app7, SUB)                      # the empty one: the first of the two
+sub = written(before7)
+fs = fields(sub)
+ok(fs.get("window") == "➥parent" and fs.get("parent") == "parent",
+   "the empty sub-window goes under that window: %r" % fs.get("window"))
+ok(fs.get("type") == "plan" and not body(sub).strip(),
+   "and carries no prompt at all")
+ok(app7.menu is None, "and the form closes on it, like Create")
+
+# WITH A HANDOVER the second row is live, and what it pastes is the resume
+# brief pointed at that lane's STATUS file.
+HANDOVERS = pathlib.Path(HOME) / ".local/share/muxtopus/handovers"
+HANDOVERS.mkdir(parents=True, exist_ok=True)
+(HANDOVERS / "STATUS-parent.md").write_text("# parent\n\n## How to resume\n- go\n")
+app8 = fresh("fork two")
+rows8 = [r for r in app8.menu_entries() if r.get("label", "").startswith(SUB)]
+ok(not rows8[1].get("disabled"), "a written handover makes the second row live")
+before8 = entries()
+app8.menu["i"] = row(app8, SUB) + 1   # the handover one
+app8.menu_activate()
+sub2 = written(before8)
+ok(fields(sub2).get("parent") == "parent", "it is a child of that lane too")
+ok(fields(sub2).get("type") == "work", "with a prompt, so a work entry")
+ok("STATUS-parent.md" in body(sub2),
+   "and the brief names the parent's handover: %r" % body(sub2).strip()[:60])
+
+main.cursor = ""                      # back to a cursor on nothing
+main.windows, main.panes, main.cwds, main.sids = {}, {}, {}, []
 
 # ---- 7. the follow gives up rather than waiting for ever ------------------
 app5 = fresh()

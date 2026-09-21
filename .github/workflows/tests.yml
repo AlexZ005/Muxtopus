@@ -50,6 +50,12 @@ jobs:
         run: python3 tests/test_view_paging.py
       - name: ...and the same test against the OLD decoder still shows the bug
         run: python3 tests/test_view_paging.py --counterfactual
+      - name: c -- the form, the name it offers, and the sub-window rows
+        run: python3 tests/test_newsession.py
+      - name: the words a new window is named from
+        run: python3 tests/test_naming.py
+      - name: the usage probe and the watchdog agree on the trust wording
+        run: python3 tests/test_trust_wording.py
       - name: every name the dashboard mentions is one it can reach
         run: python3 tests/test_names.py
       - name: muxstats

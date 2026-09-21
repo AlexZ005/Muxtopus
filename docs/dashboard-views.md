@@ -178,6 +178,25 @@ which reaches through to a table that screen does not show; moving the branch
 out of `deck_status.py` into `MainView.on_key` is one line in each, and is
 left for whoever next has a reason to be in those two files.
 
+## Where a submode is drawn
+
+A prompt, a confirm, a picker and a view's own modal are placed by
+`App.place_submode`, under the same `Menu layout` setting the menus obey:
+`table` puts it under the cursor's panel and drops what is below, `modal`
+centres it alone, `bottom` keeps the whole frame with it underneath. With
+less room than the panel needs, it degrades to modal, exactly as
+`place_menu` does.
+
+There is no separate setting for it, because "where does a menu go" and
+"where do its answers go" is one question: a picker that landed in the footer
+while the menu that opened it was centred moved the question away from the
+asking.
+
+A prompt may also carry a `placeholder`. It is drawn in brackets where the
+typing would go, it disappears the moment anything is typed, and `enter` on
+an empty line takes it — which is how `c` offers a name without prefilling
+the line and making you backspace over it.
+
 ## A view's own modal
 
 `app.modal` is a dict carrying at least `{"key": fn(key), "panel": fn()}`

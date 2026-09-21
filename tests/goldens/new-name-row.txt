@@ -16,20 +16,6 @@
 │   ✔    on     ➥opted-out           fable         ··············   2% 20k              60k       2m   idle                   7   —              —             │
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ new session · <SB>/work/repo-b ─<pad>╮
-│  ▸ Create ➥route-lane  and go to its window                                                                                                                  │
-│    ····················································                                                                                                      │
-│    Sub-window ➥➥route-lane under ➥root-lane  empty, no prompt                                                                                                │
-│      Sub-window ➥➥route-lane under ➥root-lane  continues from its handover  (➥root-lane has not written STATUS-root-lane.md)                                 │
-│    ····················································                                                                                                      │
-│    Name: route-lane  the window, the handover, `handover.sh done`                                                                                            │
-│    Folder: <SB>/work/repo-b  where claude starts <pad>│
-│    Model: fable  a CLI alias; the MODEL column's names are refused                                                                                           │
-│    Effort: high                                                                                                                                              │
-│    Permission mode: (account default)  cannot be changed after launch                                                                                        │
-│    Where: a top-level window                                                                                                                                 │
-│    First prompt: (none)  empty makes it a plan entry                                                                                                         │
-│    ····················································                                                                                                      │
-│    Cancel                                                                                                                                                    │
-│    ↑↓ pick · enter set · esc cancel                                                                                                                          │
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ name  (the slug: window ➥name, STATUS-name.md): _ [route-lane]      enter takes what is in brackets · esc cancel                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
