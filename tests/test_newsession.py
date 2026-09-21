@@ -12,7 +12,7 @@ WHAT IS UNDER TEST, and why each part is worth a test rather than a read:
                    the second c of the day must work as well as the first.
   the brackets     enter on an empty line takes the placeholder, and typing
                    replaces it -- on `c` and on the Name row alike.
-  the sub-windows  the two rows under Create: the ➥➥ child they write, and
+  the sub-windows  the two rows under Create: the child they write, and
                    the handover row being refused, with the reason, until
                    the parent lane has written one.
   a row edits      each row opens a picker or a prompt, and the value comes
@@ -387,6 +387,11 @@ app6.menu_esc()
 
 main = APP.view_of("main")
 main.cursor = "sid-parent"
+# DELIBERATELY AN OLD-STYLE NAME. Lanes are named for their slug alone now,
+# but a window an older release opened is still on screen with its markers,
+# and every path built from it has to keep coming out the same. So the parent
+# here keeps its ➥ and the assertions below check both halves: the label
+# shows the window as tmux reports it, and `parent:` is the bare slug.
 main.windows = {"sid-parent": "➥parent"}
 main.panes = {"sid-parent": "%1"}
 main.cwds = {"sid-parent": str(ROOT)}
@@ -395,7 +400,7 @@ main.sids = ["sid-parent"]
 app7 = fresh("fork one")
 rows7 = [r for r in app7.menu_entries() if r.get("label", "").startswith(SUB)]
 ok(len(rows7) == 2, "a cursor session puts both sub-window rows on the form")
-ok(all("➥➥fork-one under ➥parent" in r["label"] for r in rows7),
+ok(all("fork-one under ➥parent" in r["label"] for r in rows7),
    "and they name the child and its parent: %r" % rows7[0]["label"][:52])
 ok("has not written STATUS-parent.md" in (rows7[1].get("disabled") or ""),
    "the handover row is refused with its reason while there is no handover")
@@ -433,7 +438,7 @@ main.windows, main.panes, main.cwds, main.sids = {}, {}, {}, []
 # ---- 7. the follow gives up rather than waiting for ever ------------------
 app5 = fresh()
 app5.newsession.follow = {"slug": "nope", "until": time.time() + 60}
-ok(str(app5.newsession.follow_hint(app5)).strip() == "· opening ➥nope",
+ok(str(app5.newsession.follow_hint(app5)).strip() == "· opening nope",
    "while it waits, the key line says which window")
 app5.newsession.follow = {"slug": "nope", "until": time.time() - 1}
 ok(app5.newsession.follow_hint(app5) is None

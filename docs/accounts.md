@@ -54,7 +54,7 @@ watchdog state   ->  ~/.local/state/claude-watchdog[-work]
 
 Open a session on an account with `muxtopus` (personal) or `muxtopus --profile=work`; it puts the account into the tmux **session**, so every window opened inside it — including one the watchdog launches from the schedules folder — runs on that account.
 
-Handoffs are **not** written into the working tree: a wind-down writes `STATUS-<slug>.md` into the account's `handovers/`, and `handover.sh done <slug>` moves a finished one into `done/`. The *slug*, never the tmux display name: a scheduled window is called `➥<slug>`, and building a path from the display name would ask for `STATUS-➥lane.md` while the same window's own footer told the worker `STATUS-lane.md`. Two accounts working one repo would otherwise overwrite each other's STATUS file without a word. See [Handovers](handovers.md).
+Handoffs are **not** written into the working tree: a wind-down writes `STATUS-<slug>.md` into the account's `handovers/`, and `handover.sh done <slug>` moves a finished one into `done/`. The *slug*, never the tmux display name: a window opened by an older release still carries `➥` markers, and building a path from the display name would ask for `STATUS-➥lane.md` while the same window's own footer told the worker `STATUS-lane.md`. Two accounts working one repo would otherwise overwrite each other's STATUS file without a word. See [Handovers](handovers.md).
 
 ## Which account a thing belongs to
 

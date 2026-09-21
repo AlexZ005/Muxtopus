@@ -45,7 +45,7 @@ For each row, in saved order:
 1. A window at the saved index when that index is free, else appended — so the order holds either way and a subtree stays contiguous. The saved name; the saved cwd, or `$HOME` with a log line when the folder is gone.
 2. `claude --resume <session-id>` with the saved model, effort and permission mode when the session's transcript still exists; otherwise a plain shell in the right folder, and the log says which session had no transcript.
 3. The launcher's own recipe — answer the trust dialog, wait for `❯`, one bracketed paste — hands each resumed session one line: `[muxtopus] restored after the tmux server was lost at <ts>; carry on`.
-4. Every `➥` window is recorded in `tree.tsv` with its saved parent, so the dashboard's tree is what it was.
+4. Every lane is recorded in `tree.tsv` with its saved parent — the snapshot's own column, not its name — so the dashboard's tree is what it was.
 
 The `status` window is skipped (`muxtopus` makes the dashboard itself), and so is any row whose session is already live in this account, so running a restore twice cannot resume a session twice. On success the frozen file becomes `windows.restored.tsv`; the log holds one line per window and a summary.
 
@@ -61,7 +61,7 @@ Plain `muxtopus` (no `-d`) that finds no session and a `windows.last.tsv` younge
 ## So it does not happen again
 
 - **Every tmux call names its server.** `profile.sh`'s `mux_tmux` passes `-L <name>` (or `-S <path>`) from `MUXTOPUS_TMUX_SOCKET` on every call `muxtopus`, the watchdog, the usage probe and the test sandbox make. With `-L` or `-S` given, tmux does not consult `$TMUX`, so a sandbox's server and the real one are two different arguments rather than two different environments. The default, `default`, is the socket a bare `tmux` uses outside tmux; nothing changes for anyone who never set the key.
-- **Every lane is told.** The identity lines pasted into a `➥` window gain a sentence: inside this window `$TMUX` overrides `TMUX_TMPDIR`, a sandboxed tmux needs `-S`/`-L` or `env -u TMUX`, and a bare `tmux kill-server` kills *this* server.
+- **Every lane is told.** The identity lines pasted into a lane's window gain a sentence: inside this window `$TMUX` overrides `TMUX_TMPDIR`, a sandboxed tmux needs `-S`/`-L` or `env -u TMUX`, and a bare `tmux kill-server` kills *this* server.
 - **A test forbids it.** `tests/test_tmux_guard.py` fails the suite on a `tmux kill-server` or `kill-session` anywhere in the repository that is not `mux_tmux` or an explicit `-L`/`-S`, on any bare `tmux` at all in the files that drive the real server, and on a test sandbox that wraps `tmux` without also naming its socket to the scripts.
 - **A daemon never inherits a pane's `$TMUX`.** `muxtopus` starts a nohup'd watchdog under `env -u TMUX`, and the daemon drops the variable itself at start.
 

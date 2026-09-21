@@ -98,7 +98,7 @@ Settings returns to the esc menu without the main loop knowing either name.
 third and the fourth. **Ties sort by label, never by registration**, so two
 modules adding rows at one order produce the same menu whichever of them
 Python imported first. `dashboard/views/schedules.py` uses this for real:
-`Schedule ➥resume of <window>` is a row in the main view's session menu, at
+`Schedule resume of <window>` is a row in the main view's session menu, at
 `order=85`.
 
 **Badges.** `fn(app, session) -> Text | None`, drawn after the window name.
@@ -211,7 +211,7 @@ Five accessors on the main view, and nothing else:
 
 ```python
 app.view_of("main").cursor_sid()         "" on a lane row and on extras
-app.view_of("main").cursor_window()      the tmux name, ➥ markers and all
+app.view_of("main").cursor_window()      the tmux name, as tmux reports it
 app.view_of("main").cursor_cwd()
 app.view_of("main").listed_sessions()    (sid, window, pane, cwd) as drawn
 app.view_of("main").known_windows()      collapsed subtrees included

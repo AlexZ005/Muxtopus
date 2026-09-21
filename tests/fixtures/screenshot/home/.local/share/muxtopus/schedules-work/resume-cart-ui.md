@@ -2,7 +2,7 @@ type: work
 at: reset
 title: resume cart-ui
 slug: cart-ui
-window: ➥➥cart-ui
+window: cart-ui
 parent: checkout-refactor
 cwd: @SB@/home/src/acme/checkout
 model: fable

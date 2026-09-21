@@ -76,7 +76,7 @@ The **STATE** column is the watchdog's word for the window:
 | `needs you` | yellow: sitting at a permission or trust prompt. Also sent to the phone, with buttons — see [Notifications](notifications.md) |
 | `limited 14:30` | yellow: stopped at a usage limit, waiting for that reset |
 | `due 13:00` | red: the reset has passed and it is still sitting there; the watchdog prompts it on its next pass |
-| `stranded` | red: a `➥` lane, idle past `WATCHDOG_STRANDED`, with an open handover and no pending schedule entry naming it. A label, never a trigger — see [the watchdog](watchdog.md#stranded) |
+| `stranded` | red: a lane, idle past `WATCHDOG_STRANDED`, with an open handover and no pending schedule entry naming it. A label, never a trigger — see [the watchdog](watchdog.md#stranded) |
 | `resume due` | yellow: a window a **hard** wind-down told to stop, whose budget window has come back and whose handover is still open. Unlike `stranded` this one *is* going to be touched — see [resuming a wind-down](watchdog.md#resuming-a-wind-down) |
 | `(background)` | started with `claude --bg`. It has no terminal, so there is no window for enter to open and no pane for the watchdog to type into — it can be watched but never restarted from here |
 
@@ -123,7 +123,7 @@ Every reading is appended to `usage.log` with a timestamp. If a limit ever empti
 
 A window the scheduler opened from another one is drawn under it and indented. `←` folds that subtree (the parent then shows `+N`), `→` unfolds it, and `←` on a leaf steps out to the parent. With nothing parented the order is exactly what it always was — sessions by context — so the tree costs nothing until there is one. `t` turns the ordering off entirely.
 
-What the flat list *can* honour, it does: the depth rides on the window name (`➥lane`, `➥➥child`, `➥➥➥` below that) and a child is inserted after the last window of its parent's subtree, so a family stays contiguous as siblings arrive. How parentage is decided is on the [schedules page](schedules.md#parent-slug--draw-this-window-under-that-one); `claude-watchdog.sh --tree` prints the tree from the shell.
+What the flat list *can* honour, it does: a child is inserted after the last window of its parent's subtree, so a family stays contiguous as siblings arrive. The depth itself lives in the tree, which is what `t` draws. How parentage is decided is on the [schedules page](schedules.md#parent-slug--draw-this-window-under-that-one); `claude-watchdog.sh --tree` prints the tree from the shell.
 
 ## The menu (`space`)
 
@@ -141,26 +141,21 @@ Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.da
 
 ## A new claude session (`c`)
 
-**The name, then one screen.** `c` asks what to call the window, with an offer in the brackets, and then opens a form with every other parameter already filled in from the new-window defaults in Settings and `Create` on the first row — so a window you have no particular opinion about is **`c` `enter` `enter`**, and one you do is arrowing to that row and pressing enter on it. The form stays open while you change things: set the effort, think again about the folder, set it back. `esc` on a row leaves that row alone; `esc` on the form abandons the whole thing.
+**One screen, and no modal.** `c` opens a form with every parameter already filled in from the new-window defaults in Settings and `Create` on the first row — so a window you have no particular opinion about is **`c` `enter`**, and one you do is arrowing to that row and pressing enter on it. The form stays open while you change things: set the effort, think again about the folder, set it back. `esc` on a row leaves that row alone; `esc` on the form abandons the whole thing.
 
 ```
-╭────────────────────────────────────────────────────────────────╮
-│ name  (the slug: window ➥name, STATUS-name.md): _ [repo-b-quail]│
-│                       enter takes what is in brackets · esc cancel│
-╰────────────────────────────────────────────────────────────────╯
-
 ╭─ new session · ~/work/repo-b ──────────────────────────────────╮
-│  ▸ Create ➥repo-b-quail  and go to its window                  │
+│  ▸ Create [repo-b-quail        ]  and go to its window         │
+│                                   · type to rename             │
 │    ·········································                   │
-│    Sub-window ➥➥repo-b-quail under ➥lane  empty, no prompt     │
-│    Sub-window ➥➥repo-b-quail under ➥lane  continues from its   │
-│                                           handover             │
+│    Sub-window repo-b-quail under lane  empty, no prompt        │
+│    Sub-window repo-b-quail under lane  continues from its      │
+│                                        handover                │
 │    ·········································                   │
-│    Name: repo-b-quail  the window, the handover, `handover.sh` │
 │    Folder: ~/work/repo-b  where claude starts                  │
-│    Model: fable  a CLI alias                                   │
+│    Model: fable  (from ~/.claude/settings.json)                │
 │    Effort: high                                                │
-│    Permission mode: (account default)                          │
+│    Permission mode: unset  (no flag; the CLI's own default)    │
 │    Where: a top-level window                                   │
 │    First prompt: (none)  empty makes it a plan entry           │
 │    ·········································                   │
@@ -168,11 +163,15 @@ Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.da
 ╰────────────────────────────────────────────────────────────────╯
 ```
 
-### The name is asked, not assumed
+### The name is typed into the Create row
 
-It is the slug — the window `➥name`, `STATUS-name.md`, the `handover.sh done name` the worker is told to run — and it is the one parameter a default cannot choose well, so the line is yours to type. It starts **empty**: what is in the brackets is what `enter` takes if you type nothing, and anything you type replaces it rather than having to be backspaced away first.
+It is the slug — the window's own name, `STATUS-name.md`, the `handover.sh done name` the worker is told to run — so it is worth reading before you press enter, and what is in the brackets is what enter takes.
 
-What is offered is **the folder and one word**: `scripts-otter`, `repo-b-quail`. The word is there because the second window in a folder used to be `scripts-2` and the third `scripts-3`, and a digit tells you nothing about which of the three you are looking at, while a word can be said out loud and recognised in a list. It is checked against every live window and pending entry before it is offered, and the same folder always offers the same word — until that name is taken, which is the only thing that moves it on.
+Type and it is yours: the first character **replaces** the whole offer rather than being appended to it, backspace clears it, a typed space becomes the hyphen a slug would have had, and the field is padded so the form does not move sideways under you while you type. An empty or already-taken name is refused by `Create` with the reason on the notice line, and the form stays exactly as it was.
+
+It used to be a prompt drawn *over* the form and answered *before* it — a box that resized as you typed, a form that jumped when it closed, and a question you had to dismiss even when the offer was the answer.
+
+What is offered is **the folder and one word**: `scripts-otter`, `repo-b-quail`. The word is there because the second window in a folder used to be `scripts-2` and the third `scripts-3`, and a digit tells you nothing about which of the three you are looking at, while a word can be said out loud and recognised in a list. It is checked against every live window and pending entry before it is offered. **Press `c` again and you get a different word** — asking again is how you say you did not want that one.
 
 ### Two sub-window rows
 
@@ -180,26 +179,27 @@ Whenever the cursor is on a live session, two rows sit under `Create`, and each 
 
 | row | |
 |---|---|
-| **empty, no prompt** | a `➥➥` child of that window with nothing pasted into it — a `plan` entry, so the session gets its identity line and nothing invented |
-| **continues from its handover** | the same child, with the brief `Schedule ➥resume` pastes: read `STATUS-<parent>.md` and carry on from its *How to resume* section. Greyed, with the reason, until that lane has actually written one — `Wind down` in the session menu is what asks for it |
+| **empty, no prompt** | a child of that window with nothing pasted into it — a `plan` entry, so the session gets its identity line and nothing invented |
+| **continues from its handover** | the same child, with the brief `Schedule resume` pastes: read `STATUS-<parent>.md` and carry on from its *How to resume* section. Greyed, with the reason, until that lane has actually written one — `Wind down` in the session menu is what asks for it |
 
 `Create` itself is unchanged and still makes a top-level window.
 
 | row | |
 |---|---|
-| **Name** | enter reopens the prompt above; the brackets then hold the name it has now, so enter keeps it |
 | **Folder** | enter opens the candidates — the cursor's, the setting, every live session's, the dirty trees the watchdog publishes, the checkouts under `MUXTOPUS_HOME` — or a typed path, which must exist |
 | **Model** | a CLI *alias* (`opus`, `fable`, `sonnet`…): `--model opus-5`, the MODEL column's spelling, is refused by the CLI and kills the window after it has eaten the paste |
 | **Effort** | passed as `claude --effort` |
-| **Permission mode** | pinned for the life of the window — it cannot be fixed afterwards. `(account default)` passes no flag at all |
-| **Where** | a top-level window, or under a live one as `➥➥name`, inserted after that parent's subtree and drawn indented |
+| **Permission mode** | pinned for the life of the window — it cannot be fixed afterwards |
+| **Where** | a top-level window, or under a live one, inserted after that parent's subtree and drawn indented |
 | **First prompt** | empty writes a `plan` entry: the session receives its identity line and nothing invented |
+
+**Model, Effort and Permission mode say what you will actually get.** A row nobody has set used to read `(account default)`, which names the mechanism — no flag is passed — and not the outcome. Each now reads the value out of the settings.json layers that will apply (the project's `settings.local.json`, its `settings.json`, then the account's) and names it and the file. When nothing anywhere sets it the row says `unset`, which is a different and honest answer: the CLI's own built-in default applies, and that cannot be known without running claude.
 
 It was seven pickers in a fixed order, which meant answering six questions you had no opinion about to reach the one you did, with no way back to change your mind about the second without abandoning the flow.
 
 Then it **writes a schedule entry** with `at:` already past, and nothing else. It opens no window itself: the watchdog's next pass does the trust dialog, the readiness wait, the bracketed paste, the tree row and the log line, exactly as for any entry — one launcher, whoever asked. The entry carries `model:`, `effort:`, `permission-mode:`, `cwd:`, `parent:`/`window:`, and `watchdog: off` / `monitor: off` when Settings says a new window is not watched or monitored. An empty prompt writes a `plan` entry: the session receives its identity line and nothing invented.
 
-**And then it takes you there.** There is no window to jump to at the moment you press `Create` — the launcher has not opened it yet — so the form remembers the slug, the key line reads `opening ➥name`, and the tmux client moves to that window the moment it appears. The dashboard keeps running in window 0, so `Ctrl-b 0` comes straight back. After three minutes it stops waiting, and the window is simply there like any other.
+**And then it takes you there.** There is no window to jump to at the moment you press `Create` — the launcher has not opened it yet — so the form remembers the slug, the key line reads `opening <name>`, and the tmux client moves to that window the moment it appears. The dashboard keeps running in window 0, so `Ctrl-b 0` comes straight back. After three minutes it stops waiting, and the window is simply there like any other.
 
 Between the template and the editor comes [the options table](schedules.md#the-options-table): the contract sentences you would otherwise retype into every brief, as checkboxes.
 

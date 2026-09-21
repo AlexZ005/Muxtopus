@@ -9,7 +9,7 @@ had no opinion about to reach the one you did.
 
 THE NAME IS IN THE CREATE ROW, and it is typed there:
 
-    Create ➥[muxtopus-crane       ]  and go to its window  · type to rename
+    Create [muxtopus-crane       ]  and go to its window  · type to rename
 
 It was a prompt over the top of the form, asked before the form was drawn.
 Three things were wrong with that. The modal's box RESIZED as the name was
@@ -148,7 +148,7 @@ class NewSession:
         GOES: sanitise_slug is the executor's rule character for character and
         keeps it (a slug may legitimately contain one), but a folder called
         ~/.code would then offer `.code`, whose handover is the hidden file
-        STATUS-.code.md and whose window is ➥.code. Typing that is still
+        STATUS-.code.md and whose window is called .code. Typing that is still
         allowed; offering it is not something anybody meant to ask for."""
         base = os.path.basename(cwd.rstrip("/")).lstrip(".")
         if not base:
@@ -199,7 +199,7 @@ class NewSession:
         where = ("under %s" % ns["window"]) if ns.get("window") else "a top-level window"
         prompt = ns.get("prompt") or ""
         items = [
-            {"label": "Create ➥[%s]  and go to its window  · type to rename"
+            {"label": "Create [%s]  and go to its window  · type to rename"
                       % self._name_field(),
              "act": self._create, "edit": self._name_key},
             {"sep": True},
@@ -266,10 +266,10 @@ class NewSession:
             return []
         status = HANDOVERS_DIR / ("STATUS-%s.md" % lane)
         rows = [
-            {"label": "Sub-window ➥➥%s under %s  empty, no prompt"
+            {"label": "Sub-window %s under %s  empty, no prompt"
                       % (self.app.ns["slug"], win),
              "act": self._create_sub_empty},
-            {"label": "Sub-window ➥➥%s under %s  continues from its handover"
+            {"label": "Sub-window %s under %s  continues from its handover"
                       % (self.app.ns["slug"], win),
              "act": self._create_sub_handover},
         ]
@@ -298,7 +298,7 @@ class NewSession:
 
     def _create_sub_handover(self) -> str:
         """The child reads the parent's handover. The same template the
-        schedule view's `Schedule ➥resume` uses, resolved the same way, so a
+        schedule view's `Schedule resume` uses, resolved the same way, so a
         resume at the next reset and a fork right now say one thing to the
         session and not two."""
         _win, lane = self._quick_parent()
@@ -605,7 +605,8 @@ class NewSession:
     def _ns_where(self, c: str) -> str:
         if c.startswith("under "):
             win = c[len("under "):]
-            # window: is the tmux name (the launcher strips ➥ to find it);
+            # window: is the tmux name -- lane_slug_of takes the markers
+            # off an older release's;
             # parent: is the slug, which is what the tree is keyed on.
             self.app.ns["window"] = win
             self.app.ns["parent"] = lane_slug_of(win)
@@ -665,8 +666,8 @@ class NewSession:
             return ("wrote %s — but the watchdog is DISARMED, so nothing will "
                     "open it. Press w to arm it." % f.name)
         woke = self._nudge_watchdog()
-        msg = ("scheduled ➥%s — opening it now (%s)" if woke else
-               "scheduled ➥%s — the watchdog opens it within ~30s (%s)") % (slug, f.name)
+        msg = ("scheduled %s — opening it now (%s)" if woke else
+               "scheduled %s — the watchdog opens it within ~30s (%s)") % (slug, f.name)
         if ns.get("default_msg"):
             msg += " · settings.json %s" % ns["default_msg"]
         return msg
@@ -695,7 +696,7 @@ class NewSession:
     #
     # WHY IT IS A HINT. A hint runs on every main-view frame and may draw one
     # mark on the key line, which is exactly the shape this needs: something
-    # that looks each frame, says "opening ➥name" while it is looking, and
+    # that looks each frame, says "opening name" while it is looking, and
     # stops when it has looked long enough. The jump is a side effect of a
     # hint, which is unusual enough to say out loud -- but the alternative is
     # a per-frame seam invented for one caller, and the mark on the key line
@@ -718,7 +719,7 @@ class NewSession:
             self.follow = None
             self.goto_window(wid)
             return None
-        return Text("  · opening ➥%s" % f["slug"], style=YELLOW)
+        return Text("  · opening %s" % f["slug"], style=YELLOW)
 
     def goto_window(self, target: str) -> str:
         """Move the tmux client to a window id; the dashboard keeps running in
@@ -758,9 +759,9 @@ HELP_NEWSESSION = f"""
 
     THE NAME IS TYPED INTO THE CREATE ROW:
 
-        Create ➥[scripts-otter       ]  and go to its window  · type to rename
+        Create [scripts-otter       ]  and go to its window  · type to rename
 
-    It is the slug -- the window ➥name, STATUS-name.md, `handover.sh done
+    It is the slug -- the window name, STATUS-name.md, `handover.sh done
     name` -- so it is worth reading before you press enter, and what is in the
     brackets is what enter takes. Type and it is yours: the first character
     replaces the whole offer, backspace clears it, and the field is padded so
@@ -777,8 +778,8 @@ HELP_NEWSESSION = f"""
 
     TWO SUB-WINDOW ROWS sit under Create whenever the cursor is on a live
     session: `empty, no prompt`, and `continues from its handover`, which
-    pastes the same brief `Schedule ➥resume` does -- read STATUS-<parent>.md
-    and carry on from its "How to resume" section. Both make a ➥➥ child of
+    pastes the same brief `Schedule resume` does -- read STATUS-<parent>.md
+    and carry on from its "How to resume" section. Both make a  child of
     that window; the handover row is greyed with the reason until that lane
     has actually written one (`Wind down` in the session menu asks for it).
     Create itself is unchanged: a top-level window.
@@ -801,7 +802,7 @@ HELP_NEWSESSION = f"""
     and the file. When nothing anywhere sets it the row says `unset`, which is
     a different answer and an honest one: the CLI's own built-in default
     applies, and that cannot be known without running claude.
-    Where         a top-level window, or under a live one: ➥➥name, inserted
+    Where         a top-level window, or under a live one: name, inserted
                   after that parent's subtree and drawn indented
     First prompt  empty writes a PLAN entry: the session gets its identity
                   line and nothing invented
@@ -818,7 +819,7 @@ HELP_NEWSESSION = f"""
 
     AND THEN IT TAKES YOU THERE. There is no window to jump to when you press
     Create -- the launcher has not opened it yet -- so the form remembers the
-    slug, the key line reads `opening ➥name`, and the tmux client moves to
+    slug, the key line reads `opening name`, and the tmux client moves to
     that window the moment it appears. The dashboard keeps running in window
     0, so Ctrl-b 0 comes straight back. After three minutes it stops waiting
     and the window is simply there, like any other.

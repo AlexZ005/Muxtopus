@@ -1246,14 +1246,14 @@ def tell_lane(profile: str, path: str) -> str:
         return ""
     st = next((s for s in sessions(profile) if s.get("pane") == pane), None)
     if not st or st.get("state") != "idle":
-        return "➥%s is not idle -- not told" % slug
+        return "%s is not idle -- not told" % slug
     line = "Your questions are answered in %s -- read it and continue." % path
     if tmux("send-keys", "-t", pane, "-l", line).returncode != 0:
-        return "could not reach ➥%s" % slug
+        return "could not reach %s" % slug
     time.sleep(0.6)
     tmux("send-keys", "-t", pane, "Enter")
     log("told %s (%s): questions answered" % (slug, pane))
-    return "told ➥%s" % slug
+    return "told %s" % slug
 
 
 def answer_fork(group: dict, answer: str, said: str) -> tuple[str, str]:
