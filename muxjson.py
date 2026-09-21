@@ -574,6 +574,21 @@ def via_jq_py(filt, args, values, raw, out) -> int:
     return 0
 
 
+def whole_input(paths: list) -> str:
+    """Every byte of the input as one string -- what jq's -R -s means."""
+    if not paths:
+        return sys.stdin.read()
+    out = []
+    for path in paths:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                out.append(fh.read())
+        except OSError as exc:
+            sys.stderr.write("muxjson: %s\n" % exc)
+            raise SystemExit(2)
+    return "".join(out)
+
+
 def main(argv: list) -> int:
     raw = compact = null_input = slurp = raw_input = False
     args: dict = {}
@@ -646,6 +661,12 @@ def main(argv: list) -> int:
     try:
         if null_input:
             values = [None]
+        elif slurp and raw_input:
+            # -R -s TOGETHER: the whole input as ONE string, newlines and all.
+            # Not a list of lines -- that is -R alone. `jq -Rs .` is how a
+            # shell script JSON-escapes an arbitrary blob, and getting this
+            # wrong would quietly escape only its first line.
+            values = [whole_input(paths)]
         elif slurp:
             values = [list(read_values(paths, raw_input))]
         else:

@@ -19,8 +19,20 @@
 #
 # COST. The common case -- nothing to say to anybody -- is a builtin read and a
 # glob, with NO fork at all, because this runs after every single tool call.
-# jq is reached for only when a directive is actually being delivered.
+# a JSON reader is reached for only when a directive is actually being
+# delivered.
 set -uo pipefail
+
+# READ JSON, ON THE RARE PATH ONLY. mux_json lives in profile.sh, and this
+# hook deliberately does not source it (see THE ACCOUNT below): it runs after
+# every tool call and its whole design is to fork nothing when there is
+# nothing to say. So profile.sh is sourced INSIDE A SUBSHELL, here, where the
+# old code already forked jq -- the common path still costs a read and a glob.
+# The subshell also keeps profile.sh's variables out of this script's scope.
+_mux_json() (
+  . "$(dirname "$(readlink -f "$0")")/profile.sh" 2>/dev/null || exit 1
+  mux_json "$@"
+)
 
 # Drain stdin with a builtin rather than cat: the payload must be consumed
 # whether or not it is needed, and a fork here would be paid on every tool call.
@@ -46,7 +58,7 @@ pending=("$DIR"/*)
 sid="${payload#*\"session_id\":\"}"
 sid="${sid%%\"*}"
 if [ "${#sid}" -ne 36 ] || [ "${sid//[!-]/}" != "----" ]; then
-  sid="$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null)"
+  sid="$(printf '%s' "$payload" | _mux_json -r '.session_id // empty' 2>/dev/null)"
 fi
 [ -n "$sid" ] || exit 0
 
@@ -79,8 +91,8 @@ msg="$(<"$f")"
 rm -f "$f"
 [ -n "$msg" ] || exit 0
 
-# printf, not a here-string: <<< appends a newline, which jq -Rs then
+# printf, not a here-string: <<< appends a newline, which mux_json -Rs then
 # faithfully encodes into the injected text.
-esc="$(printf '%s' "$msg" | jq -Rs . 2>/dev/null)" || exit 0
+esc="$(printf '%s' "$msg" | _mux_json -Rs . 2>/dev/null)" || exit 0
 printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":%s}}\n' "$esc"
 exit 0

@@ -38,6 +38,14 @@
 # tests/fake_telegram.py instead of the real bot.
 set -uo pipefail
 
+# mux_json: the real jq when the machine has one, libjq via the `jq` python
+# wheel when it does not, and muxjson.py after that. THE TELEGRAM FILTERS ARE
+# THE ONES muxjson CANNOT DO -- test(), rindex(), `as $i`, unique_by(), string
+# interpolation -- so on a machine with neither jq nor the wheel this backend
+# says so (tg_needs_jq) instead of failing silently, which is what it did when
+# jq was an unchecked hard dependency.
+. "$(dirname "$(readlink -f "$0")")/profile.sh"
+
 CONF="${CLAUDE_NOTIFY_CONF:-$HOME/.config/claude-notify.conf}"
 LOG="${XDG_STATE_HOME:-$HOME/.local/state}/claude-watchdog/notify.log"
 # ONE PER MACHINE, not per account: getUpdates has a single consumer, and the
@@ -65,9 +73,28 @@ tg() {
   local tok="$1" method="$2"; shift 2
   curl -sS -m 20 -X POST "$TELEGRAM_API/bot$tok/$method" "$@" 2>&1
 }
-tg_ok() { [ "$(jq -r '.ok // false' <<<"$1" 2>/dev/null)" = true ]; }
+# CAN THIS MACHINE READ TELEGRAM'S JSON AT ALL? The filters below are the ones
+# muxjson.py deliberately does not implement -- test(), rindex(), `as $i`,
+# unique_by(), string interpolation -- so this backend needs either the real jq
+# or the `jq` python wheel. Said ONCE, plainly, instead of every call quietly
+# returning empty: before this, a machine without jq had Telegram fail with no
+# message anywhere, which is the failure mode the whole mux_json work exists to
+# end. Checked lazily so the answer costs nothing when jq is installed.
+tg_needs_jq() {
+  mux_have_jq && return 1
+  mux_resolve_python
+  "$MUX_PYTHON" -c 'import jq' 2>/dev/null && return 1
+  log "telegram: needs jq (or: $MUX_PYTHON -m pip install jq) -- its API replies"
+  log "  use filters muxtopus's own JSON reader does not implement"
+  echo "claude-notify: telegram needs jq, or the jq python wheel" >&2
+  echo "  install one:  sudo <pkg manager> install jq" >&2
+  echo "            or: $MUX_PYTHON -m pip install jq" >&2
+  return 0
+}
+
+tg_ok() { [ "$(mux_json -r '.ok // false' <<<"$1" 2>/dev/null)" = true ]; }
 tg_why() {
-  local w; w="$(jq -r '.description // empty' <<<"$1" 2>/dev/null)"
+  local w; w="$(mux_json -r '.description // empty' <<<"$1" 2>/dev/null)"
   printf '%s' "${w:-$1}"
 }
 
@@ -75,13 +102,14 @@ tg_why() {
 # everything after the LAST '=', so a label may carry one; Telegram caps it at
 # 64 bytes, which is why callers pass an opaque id rather than meaning.
 buttons_json() {
-  jq -cn --arg b "$1" '{inline_keyboard: ($b | split("||") | map(
+  mux_json -cn --arg b "$1" '{inline_keyboard: ($b | split("||") | map(
       split("|") | map(select(test("=")) | rindex("=") as $i
         | {text: .[:$i], callback_data: .[$i+1:]}))
       | map(select(length > 0)))}'
 }
 
 # ------------------------------------------------------------------ --setup
+# The guide parses every API reply, so it is the first thing that would fail.
 # THE GUIDE. Plain `read`, curl and jq, so it runs in a bare tmux window with
 # nothing installed. Every wait has an end, and giving up writes nothing.
 SETUP_WAIT="${NOTIFY_SETUP_WAIT:-180}"
@@ -167,8 +195,8 @@ EOF
     esac
     r="$(tg "$tok" getMe)"
     if tg_ok "$r"; then
-      name="$(jq -r '.result.first_name // ""' <<<"$r")"
-      user="$(jq -r '.result.username // ""' <<<"$r")"
+      name="$(mux_json -r '.result.first_name // ""' <<<"$r")"
+      user="$(mux_json -r '.result.username // ""' <<<"$r")"
       echo "token accepted: \"$name\" (@$user)"
       break
     fi
@@ -186,8 +214,8 @@ EOF
   while [ "$SECONDS" -lt "$until" ]; do
     r="$(tg "$tok" getUpdates --data-urlencode "timeout=0")"
     if tg_ok "$r"; then
-      last="$(jq -r '[.result[].update_id] | max // empty' <<<"$r")"
-      chats="$(jq -r '[.result[] | (.message // .edited_message // .my_chat_member // empty) | .chat
+      last="$(mux_json -r '[.result[].update_id] | max // empty' <<<"$r")"
+      chats="$(mux_json -r '[.result[] | (.message // .edited_message // .my_chat_member // empty) | .chat
                   | {id, label: (.first_name // .title // .username // "")}] | unique_by(.id)[]
                   | "\(.id)\t\(.label)"' <<<"$r")"
       [ -n "$chats" ] && break
@@ -272,16 +300,16 @@ EOF
   log "setup: telegram configured, test sent"
   echo "test message sent."
   if [ "$inbound" = on ]; then
-    mid="$(jq -r '.result.message_id' <<<"$r")"
+    mid="$(mux_json -r '.result.message_id' <<<"$r")"
     echo "Press \"It works\" under it in Telegram. Waiting up to $(setup_wait_txt)..."
     setup_lock
     until=$(( SECONDS + SETUP_WAIT ))
     while [ "$SECONDS" -lt "$until" ]; do
       r="$(tg "$tok" getUpdates --data-urlencode "timeout=0")"
       if tg_ok "$r"; then
-        last="$(jq -r '[.result[].update_id] | max // empty' <<<"$r")"
+        last="$(mux_json -r '[.result[].update_id] | max // empty' <<<"$r")"
         local qid
-        qid="$(jq -r --arg cb "$cb" --arg c "$chat" '.result[] | .callback_query // empty
+        qid="$(mux_json -r --arg cb "$cb" --arg c "$chat" '.result[] | .callback_query // empty
                 | select(.data == $cb and ((.message.chat.id|tostring) == $c)) | .id' <<<"$r" | head -1)"
         setup_confirm "$tok" "$last"
         if [ -n "$qid" ]; then
@@ -337,6 +365,9 @@ setup_pushbullet() {
 setup() {
   local SKIP_TEST=""
   echo "muxtopus -- phone notifications"
+  # Checked FIRST: the guide reads every API reply, so a machine that cannot
+  # parse them would walk the whole flow and fail at the end with nothing said.
+  tg_needs_jq && return 1
   if [ -n "$BACKEND" ]; then
     echo "configured already: $BACKEND ($CONF)"
     ask "[t]est it, [r]econfigure, or [k]eep as is? [k]"
@@ -404,14 +435,14 @@ case "${1:-}" in
       echo "Telegram refused that token: $(tg_why "$r")" >&2
       exit 1
     fi
-    if [ "$(jq -r '.result | length' <<<"$r")" = 0 ]; then
+    if [ "$(mux_json -r '.result | length' <<<"$r")" = 0 ]; then
       echo "Token is valid, but the bot has never heard from you." >&2
       echo "Open Telegram, find your bot, send it any message (/start will do)," >&2
       echo "then run this again." >&2
       exit 1
     fi
     echo "Chat id(s) that have messaged this bot:"
-    jq -r '.result[] | (.message // .edited_message // empty) | .chat
+    mux_json -r '.result[] | (.message // .edited_message // empty) | .chat
            | "  TELEGRAM_CHAT=\(.id)    \(.type)  \(.first_name // .title // "")"' <<<"$r" | sort -u
     exit 0 ;;
   -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
@@ -454,17 +485,18 @@ case "$BACKEND" in
     [ -n "$PUSHBULLET_TOKEN" ] || { log "pushbullet: token unset"; exit 0; }
     curl -fsS -m 15 -H "Access-Token: $PUSHBULLET_TOKEN" \
       -H "Content-Type: application/json" \
-      -d "$(jq -n --arg t "$TITLE" --arg b "$BODY" \
+      -d "$(mux_json -n --arg t "$TITLE" --arg b "$BODY" \
             '{type:"note",title:$t,body:$b}')" \
       "$PUSHBULLET_API/v2/pushes" >/dev/null 2>&1 && rc=0 ;;
   telegram)
     [ -n "$TELEGRAM_TOKEN" ] && [ -n "$TELEGRAM_CHAT" ] || {
       log "telegram: token or chat unset"; exit 0; }
+    tg_needs_jq && exit 0
     text="$TITLE
 $BODY"
     # 4096 is Telegram's cap; cut by CHARACTERS (jq), never by bytes, or a
     # quoted prompt box ending in a multibyte glyph is refused as bad UTF-8.
-    [ "${#text}" -gt 4000 ] && text="$(jq -Rrs '.[0:3990] + " …"' <<<"$text")"
+    [ "${#text}" -gt 4000 ] && text="$(mux_json -Rrs '.[0:3990] + " …"' <<<"$text")"
     args=(--data-urlencode "chat_id=$TELEGRAM_CHAT" --data-urlencode "text=$text")
     [ -n "$BUTTONS" ] && args+=(--data-urlencode "reply_markup=$(buttons_json "$BUTTONS")")
     method=sendMessage
@@ -480,7 +512,7 @@ $BODY"
     resp="$(tg "$TELEGRAM_TOKEN" "$method" "${args[@]}")"
     if tg_ok "$resp"; then
       rc=0
-      [ "$TESTING" = 1 ] || jq -r '.result.message_id // empty' <<<"$resp"
+      [ "$TESTING" = 1 ] || mux_json -r '.result.message_id // empty' <<<"$resp"
     else
       why="$(tg_why "$resp")"
     fi ;;

@@ -129,7 +129,11 @@ check "with its gist" grep -q "All three phases committed" <<<"$(texts)"
 check "naming the entry it released" grep -q "held.md" <<<"$(sb_calls sendMessage | jq -r .text | grep -A6 'done: lane-x')"
 n="$(msgs)"; pass
 check "done told once" [ "$(msgs)" = "$n" ]
-tmux kill-window -t "claude:➥held" 2>/dev/null
+# `held.md` was released by lane-x being marked done, so the daemon launched
+# a window for it. Named for its slug now -- the old name misses, the window
+# survives into the daemon phase below, and its trust prompt sends a SECOND
+# "needs you" that breaks "exactly one message over several passes".
+tmux kill-window -t "claude:held" 2>/dev/null
 
 echo "== questions (QUESTIONS off first)"
 setkey MUXTOPUS_NOTIFY_QUESTIONS off
@@ -179,14 +183,22 @@ mv "$CLAUDE_NOTIFY_CONF.off" "$CLAUDE_NOTIFY_CONF"
 screen; pass
 
 echo "== the sandbox DAEMON, killed by pid"
+# THE DAEMON MIGRATES THE NAME on its first start: this sandbox's window was
+# created as ➥lane-a by hand above (deliberately -- the earlier passes prove
+# an older release's windows are still read correctly), and a daemon start
+# takes the marker off it. So everything after this point asks for `lane-a`.
+# Worth saying rather than just editing: the two assertions below FAILED when
+# the markers were removed, and that failure was the migration working.
 setkey WATCHDOG_INTERVAL 1
 : > "$FAKE/calls.jsonl"
 "$W" --daemon >/dev/null 2>&1 & dpid=$!
 SB_PIDS+=("$dpid")
 sleep 2
 screen "$FIX/trust-folder.txt"
-for i in $(seq 40); do [ "$(state_of '➥lane-a')" = waiting ] && break; sleep 0.25; done
-check "daemon: waiting published" [ "$(state_of '➥lane-a')" = waiting ]
+for i in $(seq 40); do [ "$(state_of lane-a)" = waiting ] && break; sleep 0.25; done
+check "the daemon renamed ➥lane-a to lane-a on its first start" \
+  bash -c 'tmux list-windows -t claude -F "#{window_name}" | grep -qxF lane-a'
+check "daemon: waiting published" [ "$(state_of lane-a)" = waiting ]
 sleep 3
 check "daemon: exactly one message over several passes" [ "$(msgs)" = 1 ]
 kill "$dpid"; wait "$dpid" 2>/dev/null
