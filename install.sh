@@ -224,13 +224,33 @@ path_into_rc() {
       ok "$f: $line"
     fi
   done
-  warn "PATH changes at your next login; for this shell:  $line"
+  case ":$PATH:" in
+    *":$BIN:"*) : ;;
+    *) warn "PATH changes at your next login; for this shell:  $line" ;;
+  esac
 }
-case ":$PATH:" in
-  *":$BIN:"*) ok "$BIN is on PATH" ;;
-  *) if [ "$RC" = 1 ]; then path_into_rc
-     else warn "$BIN is NOT on PATH -- add it:  export PATH=\"$BIN:\$PATH\""; fi ;;
-esac
+
+# WRITE THE RC LINE ON ITS OWN MERITS, not on what THIS shell's PATH happens
+# to say. It used to ask "is $BIN on PATH?" first and do nothing if it was,
+# which has one bad case and it is the common one: export the directory by
+# hand to get at `muxtopus`, or run a second install in the same shell as the
+# first, and the installer sees a PATH that already has it, writes nothing and
+# says nothing -- so the export has to be typed again at every login, forever.
+# A PATH entry with no file behind it lasts until the shell closes.
+#
+# path_into_rc is the right thing to ask instead, because it already decides
+# per FILE: one that names the directory (Ubuntu's skel ~/.profile does) is
+# left alone and said so, and one that does not gets the line, once, behind a
+# marker. So calling it unconditionally writes nothing new on a machine that
+# was already set up and fixes the machine that only looked as though it was.
+if [ "$RC" = 1 ]; then
+  path_into_rc
+else
+  case ":$PATH:" in
+    *":$BIN:"*) ok "$BIN is on PATH" ;;
+    *) warn "$BIN is NOT on PATH -- add it:  export PATH=\"$BIN:\$PATH\"" ;;
+  esac
+fi
 echo "    shorthands, if you want them, go in your shell rc (interactive only):"
 echo "      alias cc='muxtopus'"
 echo "      alias cw='muxtopus --profile=work'"

@@ -153,7 +153,18 @@ scrape() {
     sleep 0.5
     txt="$(mux_tmux capture-pane -p -t "$PROBE_SESSION" 2>/dev/null || true)"
     bad=""
-    grep -qi 'trust the files\|Do you trust'                     <<<"$txt" && bad=trust
+    # THE WORDING DRIFTS, so this matches every phrasing the dialog has had
+    # rather than the one it had when this line was written. It said only
+    # 'trust the files' and 'Do you trust', and Claude Code now asks "Quick
+    # safety check: Is this a project you created or one you trust?" over a
+    # 'Yes, I trust this folder' -- so the probe stopped recognising the
+    # dialog, sat in front of it for its full twenty seconds, typed /usage
+    # into it and pressed Enter on the highlighted 'No, exit'. claude then
+    # quit, the pane went with it, and every read for two days ended as "no
+    # usage panel appeared" with an EMPTY capture to look at. The watchdog's
+    # own PROMPT_QUESTIONS had been updated and this had not;
+    # tests/test_trust_wording.py now fails if they drift apart again.
+    grep -qiE 'trust the files|Do you trust|trust this folder|or one you trust|Quick safety check' <<<"$txt" && bad=trust
     grep -qi 'Select login method\|Log in with your Claude'      <<<"$txt" && bad=login
     grep -qi "Let's get started\|looks best with your terminal"  <<<"$txt" && bad=setup
     if [ -n "$bad" ]; then
