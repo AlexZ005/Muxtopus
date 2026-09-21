@@ -7,7 +7,7 @@ it, and decides how much of that should happen without being asked.
     Settings ▸ Updates ▸       a menu kind of its own (esc_to="settings")
     esc ▸ Update to X ▸        a row that exists only while one is waiting
     the footer's `muxtopus X is out`
-    the header's `running 5.1.0 · 5.2.0 installed, press R`
+    the header's `running <version> · <new> installed, press R`
 
 NOTHING HERE TOUCHES THE NETWORK ON A FRAME. Every row reads the state file
 mux-update.sh writes, cached for a few seconds, because a menu is redrawn

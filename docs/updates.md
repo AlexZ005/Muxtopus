@@ -43,11 +43,11 @@ The dashboard offers it under `esc` while there is one waiting, and in `Settings
 
 | row | what it does |
 |---|---|
-| `Updates: 5.1.0 · 5.2.0 is out · checked 3h ago` | prints the full status, full screen |
+| `Updates: <running> · <new> is out · checked 3h ago` | prints the full status, full screen |
 | `Check now` | asks GitHub, ignoring the clock |
-| `What is in 5.2.0…` | that release's notes, full screen |
-| `Update to 5.2.0 and reload` | a confirm, then the install |
-| `Roll back to 5.1.0` | a confirm, then the move back |
+| `What is in <new>…` | that release's notes, full screen |
+| `Update to <new> and reload` | a confirm, then the install |
+| `Roll back to <previous>` | a confirm, then the move back |
 
 Taking one does this, in order:
 
@@ -59,7 +59,7 @@ Taking one does this, in order:
 
 **Your claude windows are not touched.** They are processes in tmux panes; nothing in this sequence signals them, and nothing about the tmux server changes. There is no "restart muxtopus to apply" because there is nothing that has to be restarted — the two things running muxtopus code reload themselves, and the work does not.
 
-If an update is applied from a terminal rather than from the menu, a dashboard that is already running is the one thing still on the old code. It notices, and its header says `v5.1.0 → 5.2.0 installed, press R` until you do.
+If an update is applied from a terminal rather than from the menu, a dashboard that is already running is the one thing still on the old code. It notices, and its header says `v<running> → <new> installed, press R` until you do.
 
 ## What it refuses
 
@@ -99,7 +99,7 @@ And one more, in `esc ▸ Settings ▸ Notifications`:
 |---|---|---|
 | `MUXTOPUS_NOTIFY_UPDATE` | `off` | tell the phone when a release is out, with the headline of its notes |
 
-That one is told **once per version, ever** — the fingerprint is the version number, so the ledger that stops a waiting prompt being announced twice a minute is the same one that stops "5.2.0 is out" arriving every day until it is installed. It never sends a "cleared" message either: installing a release is not an event a phone wants to hear about twice. It is off by default because it is news, not trouble, which is the same reason the budget bands are.
+That one is told **once per version, ever** — the fingerprint is the version number, so the ledger that stops a waiting prompt being announced twice a minute is the same one that stops "<new> is out" arriving every day until it is installed. It never sends a "cleared" message either: installing a release is not an event a phone wants to hear about twice. It is off by default because it is news, not trouble, which is the same reason the budget bands are.
 
 ## Proving it
 
