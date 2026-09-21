@@ -65,7 +65,7 @@ mkdir -p "$STATE_DIR"
 
 # Which model line to report. Default comes from settings.json ("fable[1m]" ->
 # "fable") so the row is labelled with whatever this machine actually runs.
-MODEL_KEY="${CLAUDE_USAGE_MODEL:-$(jq -r '.model // "opus"' "$MUX_CONFIG_DIR/settings.json" 2>/dev/null | sed 's/\[.*//')}"
+MODEL_KEY="${CLAUDE_USAGE_MODEL:-$(mux_json -r '.model // "opus"' "$MUX_CONFIG_DIR/settings.json" 2>/dev/null | sed 's/\[.*//')}"
 MODEL_KEY="${MODEL_KEY:-opus}"
 
 get() { awk -F'\t' -v k="$1" '$1==k{print $2; f=1} END{if(!f) print ""}' "$CACHE" 2>/dev/null; }
@@ -102,19 +102,34 @@ todate() { norm "$1" '%b %d, %H:%M'; }
 # ACCOUNT, so $HOME being trusted by the personal account says nothing about
 # the work one. Ask this account's own state file, and fall back to any folder
 # it has already accepted.
+#
+# READABLE, NOT MERELY ACCEPTED. Measured on a fresh box: the only folder the
+# account had accepted was /root, left there by a `claude` run under sudo, and
+# `[ -d /root ]` is false for the user who owns the session -- so the old test
+# chose it, failed the directory check, fell back to $HOME and reported the
+# trust dialog anyway. A folder this process cannot enter is not a candidate.
+#
+# jq IS NOT REQUIRED (mux_json). It used to be, silently: no jq meant no
+# candidate at all, so a machine with a perfectly good trusted folder probed
+# $HOME and stopped on the dialog.
 probe_dir() {
-  local j="$MUX_CONFIG_DIR/.claude.json" d=""
+  local j="$MUX_CONFIG_DIR/.claude.json" d="" c
   # The default account predates CLAUDE_CONFIG_DIR and keeps this file at
   # ~/.claude.json; a suffixed account keeps it inside its own config dir.
   [ -f "$j" ] || j="$HOME/.claude.json"
-  if [ -f "$j" ] && command -v jq >/dev/null 2>&1; then
-    d="$(jq -r --arg h "$HOME" '
-      if (.projects[$h].hasTrustDialogAccepted // false) then $h
-      else ([.projects // {} | to_entries[]
-             | select(.value.hasTrustDialogAccepted == true) | .key] | first // "")
-      end' "$j" 2>/dev/null)"
+  if [ -f "$j" ]; then
+    # $HOME first when it is accepted, then any other folder that is -- in the
+    # file's own order, which is the order Claude Code wrote them.
+    while IFS= read -r c; do
+      [ -n "$c" ] || continue
+      [ -d "$c" ] && [ -x "$c" ] || continue
+      if [ "$c" = "$HOME" ]; then d="$c"; break; fi
+      [ -n "$d" ] || d="$c"
+    done < <(mux_json -r '.projects // {} | to_entries | .[]
+                          | select(.value.hasTrustDialogAccepted == true)
+                          | .key' "$j" 2>/dev/null)
   fi
-  case "$d" in ""|null) d="$HOME" ;; esac
+  [ -n "$d" ] || d="$HOME"
   [ -d "$d" ] || d="$HOME"
   printf '%s' "$d"
 }
@@ -137,18 +152,27 @@ scrape() {
   [ -n "$MUX_PROFILE" ] || \
     mux_tmux set-environment -u -t "$PROBE_SESSION" CLAUDE_CONFIG_DIR 2>/dev/null
 
-  # THREE DEAD ENDS, each named rather than waited out. All of them sit on
-  # screen forever, and all of them used to end as "no usage panel appeared"
-  # twenty seconds later -- a message that says nothing about what to do.
+  # TWO DEAD ENDS, each named rather than waited out. Both sit on screen
+  # forever, and both used to end as "no usage panel appeared" twenty seconds
+  # later -- a message that says nothing about what to do.
+  #
+  # THE TRUST DIALOG IS NO LONGER ONE OF THEM. It is ANSWERED, exactly as
+  # claude-watchdog.sh's pane_ready answers it for every window the scheduler
+  # and the restore open: Down, then Enter, on 'Yes, I trust this folder'.
+  # Treating it as fatal here was the odd one out, and it cost the whole
+  # feature -- measured on a fresh box, every usage read for two hours ended
+  # as "personal has not trusted /home/user" while the launcher was quietly
+  # accepting the same dialog in the same folder all along. The probe opens
+  # claude in a folder this account already works in; there is nothing for it
+  # to decide that the launcher does not decide the same way.
   stuck_on() {
     case "$1" in
-      trust)  printf '%s has not trusted %s -- open a session there once and accept' "$MUX_LABEL" "$cwd" ;;
       login)  printf '%s is not logged in (%s)' "$MUX_LABEL" "$MUX_CONFIG_DIR" ;;
       setup)  printf '%s has never finished setup -- run claude once for it by hand' "$MUX_LABEL" ;;
     esac
   }
 
-  local i txt="" bad=""
+  local i txt="" bad="" trusted=""
   for i in $(seq 1 40); do          # up to ~20s for the TUI to be ready
     sleep 0.5
     txt="$(mux_tmux capture-pane -p -t "$PROBE_SESSION" 2>/dev/null || true)"
@@ -163,8 +187,16 @@ scrape() {
     # quit, the pane went with it, and every read for two days ended as "no
     # usage panel appeared" with an EMPTY capture to look at. The watchdog's
     # own PROMPT_QUESTIONS had been updated and this had not;
-    # tests/test_trust_wording.py now fails if they drift apart again.
-    grep -qiE 'trust the files|Do you trust|trust this folder|or one you trust|Quick safety check' <<<"$txt" && bad=trust
+    # tests/test_trust_wording.py now fails if they drift apart again --
+    # and it matters MORE now that the answer is a keypress and not a report:
+    # a dialog this does not recognise is one nothing ever answers.
+    if [ -z "$trusted" ] && \
+       grep -qiE 'trust the files|Do you trust|trust this folder|or one you trust|Quick safety check' <<<"$txt"; then
+      trusted=trust
+      mux_tmux send-keys -t "$PROBE_SESSION" Down 2>/dev/null; sleep 0.4
+      mux_tmux send-keys -t "$PROBE_SESSION" Enter 2>/dev/null; sleep 1
+      continue
+    fi
     grep -qi 'Select login method\|Log in with your Claude'      <<<"$txt" && bad=login
     grep -qi "Let's get started\|looks best with your terminal"  <<<"$txt" && bad=setup
     if [ -n "$bad" ]; then
@@ -366,7 +398,7 @@ case "${1:-}" in
                      "$(get session_pct)" "$(get session_reset)" \
                      "$(get week_pct)" "$(get week_reset)" \
                      "$(get model)" "$(get model_pct)" "$(age_minutes)" ;;
-  --json)          jq -n --arg sp "$(get session_pct)" --arg sr "$(get session_reset)" \
+  --json)          mux_json -n --arg sp "$(get session_pct)" --arg sr "$(get session_reset)" \
                         --arg wp "$(get week_pct)"    --arg wr "$(get week_reset)" \
                         --arg m  "$(get model)"       --arg mp "$(get model_pct)" \
                         --arg age "$(age_minutes)" \

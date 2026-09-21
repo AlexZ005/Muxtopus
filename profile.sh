@@ -226,6 +226,71 @@ mux_resolve_python() {
   return 0
 }
 
+# READ JSON: the real jq when the machine has one, muxjson.py when it does not.
+#
+# jq WAS A SILENT HARD DEPENDENCY. It is reached for at ~60 call sites across
+# six shipped scripts, and only three of them ever asked whether it was
+# installed -- so on a box without it the watchdog could not read
+# sessions/<pid>.json, found no sessions, no tokens and no model, and reported
+# that as "0 session(s)" rather than as a missing tool. install.sh warned once,
+# at install time, and nothing said it again.
+#
+# THE FALLBACK IS NOT A jq CLONE and must not be mistaken for one: it knows the
+# filter shapes muxtopus writes and REFUSES the rest, loudly (muxjson.py). That
+# is why the real jq is tried first -- where there is one, behaviour is jq's,
+# exactly, and the stand-in is never in the way.
+#
+# TAKEN ONCE per process, like mux_resolve_python, because `command -v` in a
+# function called per transcript line is a fork the token scan does not need.
+#
+# THREE TIERS, in this order, and the order is the whole argument:
+#
+#   jq            the real thing. Nothing changes for anyone who has it.
+#   jq.py         libjq behind a pip wheel (`pip install jq`), used when it
+#                 happens to be importable. Not fetched by the installer and
+#                 not depended on: it is jq's own semantics for free on a
+#                 machine that already carries it.
+#   muxjson.py    a stdlib file, always present, deliberately small.
+#
+# WHY NOT MAKE jq.py THE FALLBACK AND DELETE muxjson.py. It is a compiled
+# wheel: it needs pip, a network and glibc 2.28 at install time, and a box
+# that can reach PyPI for a C extension can almost always install jq itself.
+# The machine this exists for is the one that can do neither -- and naming.py
+# already states the rule, that the dashboard keeps working when the venv is
+# broken. Core JSON reading (sessions, tokens, the model) must not sit behind
+# a wheel. pyjq was considered and rejected outright: one macOS wheel, and a
+# source build of jq and oniguruma everywhere else.
+mux_have_jq() {
+  if [ -z "${_MUX_JQ_TAKEN:-}" ]; then
+    _MUX_JQ_TAKEN=1
+    _MUX_JQ=""
+    if command -v jq >/dev/null 2>&1; then
+      _MUX_JQ=jq
+    else
+      mux_resolve_python
+      if "$MUX_PYTHON" -c 'import jq' 2>/dev/null; then
+        _MUX_JQ=pyjq
+      fi
+    fi
+    export _MUX_JQ_TAKEN _MUX_JQ
+  fi
+  [ "${_MUX_JQ:-}" = jq ]
+}
+
+mux_json() {
+  mux_have_jq && { command jq "$@"; return $?; }
+  if [ "${_MUX_JQ:-}" = pyjq ]; then
+    "$MUX_PYTHON" "$_MUX_SELF_DIR/muxjson.py" --via-jq-py "$@"
+    return $?
+  fi
+  # BESIDE profile.sh, not under MUXTOPUS_DIR: muxjson.py is a sibling of this
+  # file by construction (it ships in the same tarball and is copied by the
+  # same install step), whereas MUXTOPUS_DIR is a CONFIGURED path that can
+  # point at another checkout entirely -- which is exactly how this was first
+  # found, resolving to an install that had no muxjson.py in it yet.
+  "$MUX_PYTHON" "$_MUX_SELF_DIR/muxjson.py" "$@"
+}
+
 # What each key means, for the files this tool writes. Kept beside the key
 # list rather than in it so the list stays parseable by a plain for-loop.
 mux_key_help() {

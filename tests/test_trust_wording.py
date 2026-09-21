@@ -9,9 +9,9 @@ will do anything, and two files here have to spot that screen:
     claude-watchdog.sh   PROMPT_QUESTIONS / PROMPT_YES_LABELS -- so a window
                          sitting on it is reported as `waiting` and the phone
                          can answer it
-    claude-usage.sh      the probe's `stuck_on trust` dead end -- so a failed
-                         reading says "test has not trusted /home/test" rather
-                         than something the reader cannot act on
+    claude-usage.sh      the probe's trust branch -- so it ANSWERS the dialog
+                         (Down, Enter on 'Yes, I trust this folder') exactly as
+                         pane_ready does, instead of stopping in front of it
 
 The wording changed. The watchdog's list was updated ("Is this a project you
 created or one you trust", "Yes, I trust this folder") and the probe's was
@@ -25,6 +25,10 @@ panel appeared" with nothing in the file the message points at.
 So: one file may not know a phrase the other knows. This does not assert any
 particular wording -- that is Claude Code's to change -- only that the two
 lists stay the same size as each other, which is the thing nobody notices.
+
+THIS MATTERS MORE SINCE v5.2.2, when the probe stopped treating the dialog as
+a dead end and started answering it. A phrase the probe does not know used to
+cost a readable error message; it now costs a dialog that nothing answers.
 """
 import pathlib
 import re
@@ -47,7 +51,7 @@ usage = (ROOT / "claude-usage.sh").read_text()
 watchdog = (ROOT / "claude-watchdog.sh").read_text()
 
 # The probe's matcher: the alternation it greps the pane with.
-m = re.search(r"grep -qiE '([^']*)'\s*<<<\"\$txt\" && bad=trust", usage)
+m = re.search(r"grep -qiE '([^']*)'\s*<<<\"\$txt\"; then", usage)
 ok(m is not None, "claude-usage.sh has a trust matcher this test can read")
 if m is None:
     sys.exit(1)
@@ -90,6 +94,16 @@ for line in SEEN_ON_A_REAL_MACHINE:
     low = line.lower()
     ok(any(p in low for p in probe),
        "the probe catches a dialog reading %r" % line[:48])
+
+# THE PROBE ANSWERS IT. The regression this guards against is someone
+# restoring the old dead end, which looked like a safe change and was the
+# whole bug: a usage read that reports the dialog is a usage read that never
+# happens, on a machine where the launcher accepts the same dialog all day.
+ok("bad=trust" not in usage,
+   "the probe does not treat the trust dialog as a dead end any more")
+ok(re.search(r"trusted=trust\b", usage) is not None
+   and re.search(r'send-keys -t "\$PROBE_SESSION" Down', usage) is not None,
+   "the probe answers the dialog with Down then Enter, as pane_ready does")
 
 print("%s" % ("all passed" if not fails else "%d failed" % fails))
 sys.exit(1 if fails else 0)

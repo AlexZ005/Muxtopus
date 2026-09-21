@@ -455,7 +455,7 @@ transcript_of() {
 context_tokens() {
   local f="$1" v
   v="$(tail -c 400000 "$f" 2>/dev/null | grep '"usage"' | tail -20 \
-       | jq -r '(.message.usage.cache_read_input_tokens // 0)
+       | mux_json -r '(.message.usage.cache_read_input_tokens // 0)
                 + (.message.usage.cache_creation_input_tokens // 0)' 2>/dev/null \
        | grep -v '^0$' | tail -1)"
   printf '%s' "${v:-0}"
@@ -484,7 +484,7 @@ token_totals() {
   if [ "$size" -gt "$off" ]; then
     read -r add_s add_r < <(
       tail -c +$(( off + 1 )) "$f" 2>/dev/null | grep '"usage"' \
-        | jq -r '[ (.message.usage.input_tokens // 0)
+        | mux_json -r '[ (.message.usage.input_tokens // 0)
                   + (.message.usage.cache_creation_input_tokens // 0)
                   + (.message.usage.output_tokens // 0),
                   (.message.usage.cache_read_input_tokens // 0) ] | @tsv' 2>/dev/null \
@@ -511,7 +511,7 @@ token_totals() {
 last_turn_epoch() {
   local f="$1" ts
   ts="$(tail -n 200 "$f" 2>/dev/null |
-        jq -r 'select(.type=="assistant" or .type=="user") | .timestamp // empty' 2>/dev/null |
+        mux_json -r 'select(.type=="assistant" or .type=="user") | .timestamp // empty' 2>/dev/null |
         tail -1)"
   [ -n "$ts" ] || return 1
   date -d "$ts" +%s 2>/dev/null
@@ -1504,9 +1504,9 @@ sched_pane_sid() {
   for i in $(seq 1 10); do
     for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
       [ -f "$f" ] || continue
-      t="$(jq -r '.tmux // empty' "$f" 2>/dev/null)"
+      t="$(mux_json -r '.tmux // empty' "$f" 2>/dev/null)"
       [ "${t##*.}" = "$pane" ] || continue
-      sid="$(jq -r '.sessionId // empty' "$f" 2>/dev/null)"
+      sid="$(mux_json -r '.sessionId // empty' "$f" 2>/dev/null)"
       [ -n "$sid" ] && { printf '%s' "$sid"; return 0; }
     done
     sleep 0.5
@@ -1687,9 +1687,9 @@ restore_live_sids() {
   local f pid
   for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
     [ -f "$f" ] || continue
-    pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"
+    pid="$(mux_json -r '.pid // empty' "$f" 2>/dev/null)"
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || continue
-    jq -r '.sessionId // empty' "$f" 2>/dev/null
+    mux_json -r '.sessionId // empty' "$f" 2>/dev/null
   done
 }
 
@@ -2068,7 +2068,7 @@ last_resumed() {
 model_of() {
   local f="$1" m
   m="$(tail -c 400000 "$f" 2>/dev/null | grep '"usage"' | tail -5 \
-       | jq -r '.message.model // empty' 2>/dev/null \
+       | mux_json -r '.message.model // empty' 2>/dev/null \
        | grep -v '^<' | tail -1)"
   # claude-opus-4-8 -> opus-4-8; the vendor prefix is the same on every row.
   printf '%s' "${m#claude-}"
@@ -2584,9 +2584,9 @@ notify_questions() {
         continue
       fi
       notify_send "" "" "$slug · fork $shown/$n" \
-        "$(jq -r --arg p "$path" --arg i "$id" 'select(.path==$p) | .forks[] | select(.id==$i) | .text' <<<"$rows")"
+        "$(mux_json -r --arg p "$path" --arg i "$id" 'select(.path==$p) | .forks[] | select(.id==$i) | .text' <<<"$rows")"
     done
-  done < <(jq -r '[.path, .slug, (.forks | map(.id) | join(","))] | @tsv' <<<"$rows")
+  done < <(mux_json -r '[.path, .slug, (.forks | map(.id) | join(","))] | @tsv' <<<"$rows")
   if [ -n "$first" ] && [ -n "$summary" ] && notify_on "$MUXTOPUS_NOTIFY_QUESTIONS" && [ "$NOTIFY_READY" = 1 ]; then
     notify_send "" "" "questions waiting" "unanswered QUESTIONS files: $summary"
   fi
@@ -2848,14 +2848,14 @@ pass() {
   rkey="$(usage_val session_reset_at)"
   for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
     [ -f "$f" ] || continue
-    pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
+    pid="$(mux_json -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
     kill -0 "$pid" 2>/dev/null || continue          # stale record, process gone
-    sid="$(jq -r '.sessionId // empty' "$f")"
-    cwd="$(jq -r '.cwd // empty' "$f")"
-    pane="$(jq -r '.tmux // empty' "$f")"
-    ver="$(jq -r '.version // "?"' "$f")"
-    st="$(jq -r '.status // "?"' "$f")"
-    kind="$(jq -r '.kind // "?"' "$f")"
+    sid="$(mux_json -r '.sessionId // empty' "$f")"
+    cwd="$(mux_json -r '.cwd // empty' "$f")"
+    pane="$(mux_json -r '.tmux // empty' "$f")"
+    ver="$(mux_json -r '.version // "?"' "$f")"
+    st="$(mux_json -r '.status // "?"' "$f")"
+    kind="$(mux_json -r '.kind // "?"' "$f")"
     [ -n "$sid" ] || continue
     # claude-usage.sh's throwaway probe lives in its own tmux session. It is a
     # real claude process, so it would otherwise be listed and -- worse -- be
@@ -2895,9 +2895,9 @@ pass() {
       # from and none to type into, so it can never be restarted from here. It
       # does carry a descriptive name and a job id, which are the two things
       # that make it findable -- `claude attach <jobid>` is how you reach it.
-      name="$(jq -r '.name // "(background)"' "$f")"
+      name="$(mux_json -r '.name // "(background)"' "$f")"
       [ ${#name} -gt 28 ] && name="${name:0:27}…"
-      jobid="$(jq -r '.jobId // empty' "$f")"
+      jobid="$(mux_json -r '.jobId // empty' "$f")"
     fi
 
     state="idle"; reset="-"; epoch=""
