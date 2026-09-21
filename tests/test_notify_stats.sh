@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # /stats: the usage ledger's totals on the phone, and the week/month/all buttons.
 #
-# Moved here from the insights lane (plan-dashboard-split.md §5) so that one
+# Moved here from the insights lane so that one
 # lane owns muxtelegram.py; the figures are muxstats', and what is proven is
 # that the phone says the same numbers as `muxtopus stats --json` for the
 # same period, out of the same ledger, with no collect of its own.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5: the watchdog's five-minute collect hook (docs/plan-insights.md §1).
+# The watchdog's five-minute collect hook (docs/stats.md).
 #
 #   bash tests/test_stats_watchdog.sh
 #
@@ -14,7 +14,7 @@
 #     exit non-zero, the pass still returns 0, still publishes status.tsv and
 #     still beats its heartbeat, and the log says what went wrong.
 #
-# SANDBOX DISCIPLINE (docs/plan-dashboard-menus.md §5, and this lane's brief):
+# SANDBOX DISCIPLINE (docs/contributing.md, "The sandbox"):
 # its own HOME, XDG_CONFIG_HOME, XDG_STATE_HOME, MUXTOPUS_CONFIG and
 # CLAUDE_CONFIG_DIR; a `tmux` wrapper pinned to -L mxstats so nothing here can
 # reach `claude:0` or any window you are working in; a `python3` wrapper that

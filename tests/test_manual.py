@@ -99,8 +99,6 @@ def liquid_safe(body: str, name: str) -> None:
 pages = {}
 headings = []
 for md in sorted(DOCS.glob("*.md")):
-    if md.name.startswith("plan-"):
-        continue                               # design notes, excluded from the site
     text = md.read_text()
     fm = front_matter(text)
     check(fm is not None, "%s: no front matter, so no title and no nav entry" % md.name)
@@ -139,9 +137,14 @@ for must in ("index.md", "install.md", "accounts.md", "dashboard.md", "schedules
              "configuration.md", "contributing.md", "dashboard-views.md"):
     check(must in pages, "the manual has no %s" % must)
 
-# The plans are excluded, or GitHub pages them.
+# THE DESIGN PLANS ARE GONE, deliberately. They were kept beside the manual
+# and excluded from the site; they went stale faster than the code they
+# described, which is the whole argument against shipping them. Every page in
+# docs/ is now a page of the manual, so there is nothing left to exclude --
+# and a plan-*.md reappearing here would silently be published as one.
 cfg = (DOCS / "_config.yml").read_text()
-check('"plan-*.md"' in cfg, "_config.yml no longer excludes plan-*.md")
+check(not list(DOCS.glob("plan-*.md")),
+      "docs/ has design plans again: %s" % [p.name for p in DOCS.glob("plan-*.md")])
 check("remote_theme:" in cfg, "_config.yml has no remote_theme")
 
 # Nothing the README used to say is gone.

@@ -64,7 +64,7 @@ export SANDBOX_SESSION="${SANDBOX_SESSION:-mxsplit}"
 # a muxtopus started from here talks to this sandbox's server and no other --
 # and the helpers of this harness use the same name through the function
 # below, never a bare tmux that would follow the $TMUX of the pane a test is
-# typed in (docs/plan-restore.md §3). bin/tmux stays for the dashboard's own
+# typed in (docs/restore.md). bin/tmux stays for the dashboard's own
 # forks, which are not this harness's to rewrite.
 export MUXTOPUS_TMUX_SOCKET="${SANDBOX_SOCKET:?}"
 mux_tmux() { command tmux -L "${SANDBOX_SOCKET:?}" "$@"; }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mux-restore: the window snapshot, its freeze when the session is gone, and
-# the restore that rebuilds the windows (docs/restore.md, docs/plan-restore.md).
+# the restore that rebuilds the windows (docs/restore.md).
 # The sandbox of tests/notify_sandbox.sh on a socket of its own (-L mxrestore):
 # a fake claude that records its argv and every key typed into it, a fake Bot
 # API. Nothing here reaches a real pane, session, account or config.

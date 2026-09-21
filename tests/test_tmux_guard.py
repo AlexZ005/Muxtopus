@@ -8,7 +8,7 @@ THE ACCIDENT THIS FORBIDS. 2026-09-19 09:04: a session in a lane window ran
 `TMUX_TMPDIR=$SB/sock tmux kill-server` to clean a test sandbox. Inside a
 pane $TMUX is set, and tmux takes its socket from $TMUX whenever neither -S
 nor -L is given -- TMUX_TMPDIR is ignored. It killed the real server: the
-dashboard, every lane window and five Claude sessions. So (docs/plan-restore.md
+dashboard, every lane window and five Claude sessions. So (docs/restore.md
 §3) profile.sh's mux_tmux passes -L/-S on every call, and this test holds
 two lines:
 

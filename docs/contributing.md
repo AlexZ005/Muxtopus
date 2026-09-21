@@ -126,20 +126,21 @@ nav_order: 13
 ---
 ```
 
-— then the body, wrapped in the same two Liquid tags every existing page starts and ends with (copy the line after the front matter and the last line of any page). Nothing else needs editing: the nav is built from the front matter, and `parent: For contributors` makes a page a sub-page of this one. The wrapping tags are there so that `{{SLUG}}` and its kind survive Liquid; `tests/test_manual.py` refuses a page that mentions a placeholder outside them, a page without a title, and a relative link to a file that does not exist. The `plan-*.md` files beside the pages are excluded from the site in `_config.yml`: they are the design notes the features were built from, kept for the record and read on GitHub, where the table below links them.
+— then the body, wrapped in the same two Liquid tags every existing page starts and ends with (copy the line after the front matter and the last line of any page). Nothing else needs editing: the nav is built from the front matter, and `parent: For contributors` makes a page a sub-page of this one. The wrapping tags are there so that `{{SLUG}}` and its kind survive Liquid; `tests/test_manual.py` refuses a page that mentions a placeholder outside them, a page without a title, and a relative link to a file that does not exist.
 
 To see it rendered before pushing, `docs/build-local.sh` runs the same container GitHub uses (`ghcr.io/actions/jekyll-build-pages`) and writes `docs/_site/`; it needs `podman` or `docker`, nothing else.
 
 ## Design notes
 
-The plans the features were built from, in the order they landed. Each records what was measured before designing, the forks and how they were answered, and what was deliberately not done.
+The plans each feature was built from are **not** in the repository. They
+recorded what was measured before designing, the forks and how they were
+answered, and what was deliberately not done — useful while the work was in
+flight, and steadily less true afterwards as the code moved on without them.
+A reader wants the manual and the code's own comments, both of which are kept
+current; a plan that is eighteen months stale is a confident description of
+software that no longer exists.
 
-| plan | what it became |
-|---|---|
-| [plan-dashboard-menus.md](https://github.com/AlexZ005/Muxtopus/blob/main/docs/plan-dashboard-menus.md) | the esc menu, Settings, the three menu layouts, `c`, the options table |
-| [plan-schedule-options.md](https://github.com/AlexZ005/Muxtopus/blob/main/docs/plan-schedule-options.md) | the options table and the placeholder contract |
-| [plan-dashboard-split.md](https://github.com/AlexZ005/Muxtopus/blob/main/docs/plan-dashboard-split.md) | the `dashboard/` package and its registries |
-| [plan-handover-visibility.md](https://github.com/AlexZ005/Muxtopus/blob/main/docs/plan-handover-visibility.md) | the handovers tab and the answer screen |
-| [plan-notify-telegram.md](https://github.com/AlexZ005/Muxtopus/blob/main/docs/plan-notify-telegram.md) | notifications, and the phone answering |
-| [plan-insights.md](https://github.com/AlexZ005/Muxtopus/blob/main/docs/plan-insights.md) | the ledger and the `i` view |
+They are kept outside the repo by the author. What survived them on purpose is
+here: the manual, and the long *why* comments at the top of every file, which
+is where the reasoning belongs when it has to stay true.
 {% endraw %}

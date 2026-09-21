@@ -174,7 +174,7 @@ SCHED_PROBE_EVERY=900
 # Working trees change far more slowly than sessions do, and each one costs a
 # git fork, so the repo sweep runs on its own slower clock.
 REPO_EVERY=120
-# THE STATS LEDGER (docs/plan-insights.md §1). muxstats reads what is new out
+# THE STATS LEDGER (docs/stats.md). muxstats reads what is new out
 # of the transcripts into a ledger that outlives them -- Claude Code deletes a
 # transcript after cleanupPeriodDays, so "everything to date" only exists if
 # something keeps its own record, and it has to accrue with no dashboard open.
@@ -2340,7 +2340,7 @@ snapshot_freeze() {
 }
 
 # ----------------------------------------------------------- notifications
-# TELL THE PHONE, ONCE PER CHANGE. docs/plan-notify-telegram.md §1.
+# TELL THE PHONE, ONCE PER CHANGE. docs/notifications.md.
 #
 # Four events -- waiting, questions, trouble, done -- each behind its own
 # MUXTOPUS_NOTIFY_* switch, sent through claude-notify.sh. A pass republishes
@@ -2655,7 +2655,7 @@ notify_questions() {
 }
 
 # ------------------------------------------------------------------ alerts
-# THE CONDITIONS WHERE EVERY LANE SILENTLY STOPS. docs/plan-notify-telegram.md
+# THE CONDITIONS WHERE EVERY LANE SILENTLY STOPS. docs/notifications.md
 # §1b. Each is an ALERT: told once when it starts (the dedupe above), told once
 # more as "cleared" when it ends, and behind a switch of its own:
 #

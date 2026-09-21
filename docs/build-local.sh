@@ -56,10 +56,6 @@ done <<<"$titles"
 # Liquid must not have eaten a placeholder.
 if grep -q '{{SLUG}}' "${OUT}/schedules.html"; then say ok "placeholders survived Liquid"
 else say FAIL "{{SLUG}} is gone from schedules.html: a page lost its raw tags"; fi
-# The plans are design notes, not pages: excluded, so neither rendered nor
-# copied (GitHub's optional-front-matter plugin would otherwise page them).
-if [ ! -f "${OUT}/plan-insights.md" ] && [ ! -f "${OUT}/plan-insights.html" ]; then say ok "plan-*.md left out of the site"
-else say FAIL "plan-*.md reached the site"; fi
 # Every #anchor a page links to is an id kramdown actually generated.
 while IFS=$'\t' read -r src target anchor; do
   [ -n "$anchor" ] || continue
