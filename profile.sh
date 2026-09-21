@@ -63,6 +63,7 @@ MUX_CONFIG_DASH="${MUX_CONFIG%/*}/dashboard.conf"
 MUX_CONFIG_KEYS="
 MUXTOPUS_HOME=-
 MUXTOPUS_DIR=-
+MUXTOPUS_PYTHON=-
 MUXTOPUS_SESSION_PREFIX=claude
 MUXTOPUS_QUESTIONS_DIR=-
 WATCHDOG_INTERVAL=30
@@ -170,7 +171,58 @@ mux_load_config() {
   # is installed. One directory, no suffix, whoever gets there first writes
   # it -- mux-update.sh --check returns at once when it is fresh.
   MUX_UPDATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/muxtopus-update"
+  mux_resolve_python
   export MUXTOPUS_DIR MUXTOPUS_HOME MUX_UPDATE_DIR
+  return 0
+}
+
+# SET FROM THE MOMENT THIS FILE IS SOURCED, so a caller that reads it before
+# loading an account's config -- `muxtopus stats` does, deliberately -- has a
+# command to run rather than an unset variable under `set -u`.
+MUX_PYTHON="${MUX_PYTHON:-python3}"
+
+# THE INTERPRETER THE PYTHON HALF RUNS ON, in MUX_PYTHON.
+#
+# `python3` used to be typed into every call site, which is right on a machine
+# that has a new enough one and wrong on the machine this exists for: the
+# installer can now fetch a standalone CPython into the data home when the
+# system has none, or has 3.9 (see install.sh, "Python"). That interpreter is
+# deliberately NOT on PATH -- it is muxtopus's, not the machine's, and putting
+# a python3 of our choosing in front of the user's own tools is not a thing an
+# installer should do -- so the only way it ever gets used is by being named
+# here, once, and read from MUX_PYTHON everywhere else.
+#
+# IN ORDER: what the config pins, the embedded one where the installer puts
+# it, the venv beside the checkout (which is a real interpreter with rich in
+# it), then whatever `python3` means on PATH. EACH ONE IS PROBED rather than
+# merely found, because the failure this has to survive is an OS update that
+# moves Python and leaves an executable venv symlink behind pointing at
+# nothing -- and a dashboard that cannot start is the one thing worse than a
+# dashboard without colours.
+#
+# ONCE PER PROCESS (_MUX_PY_TAKEN): the answer does not depend on the account,
+# and `muxtopus -l` loads the config for every account in turn.
+mux_resolve_python() {
+  [ -n "${_MUX_PY_TAKEN:-}" ] && return 0
+  local c
+  for c in "${MUXTOPUS_PYTHON:-}" \
+           "${MUXTOPUS_HOME:-}/python/bin/python3" \
+           "${MUXTOPUS_DIR:-}/.venv/bin/python" \
+           python3; do
+    [ -n "$c" ] || continue
+    command -v "$c" >/dev/null 2>&1 || continue
+    "$c" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null || continue
+    MUX_PYTHON="$c"
+    _MUX_PY_TAKEN=1
+    export MUX_PYTHON
+    return 0
+  done
+  # Nothing usable. `python3` is still the honest answer -- the caller's own
+  # error message ("no python3") is better than an empty command line -- and
+  # every caller of this already degrades when the python half will not run.
+  MUX_PYTHON=python3
+  _MUX_PY_TAKEN=1
+  export MUX_PYTHON
   return 0
 }
 
@@ -183,6 +235,10 @@ mux_key_help() {
                             echo "this is that account's OWN home, with the three folders unsuffixed." ;;
     MUXTOPUS_DIR)           echo "The checkout. Only needed when muxtopus is copied rather than"
                             echo "symlinked, so it cannot find its siblings by its own path." ;;
+    MUXTOPUS_PYTHON)        echo "The python3 the dashboard, stats and notifications run on. Set by"
+                            echo "install.sh when it had to fetch one (no python3 >= 3.10 here);"
+                            echo "unset means: the embedded one under MUXTOPUS_HOME, the venv beside"
+                            echo "the checkout, or python3 from PATH, whichever works." ;;
     MUXTOPUS_SESSION_PREFIX) echo "The tmux session name; a named account gets -<name> appended." ;;
     MUXTOPUS_QUESTIONS_DIR) echo "Where autonomous plan sessions park their questions (dashboard)." ;;
     WATCHDOG_INTERVAL)      echo "Seconds between watchdog passes." ;;

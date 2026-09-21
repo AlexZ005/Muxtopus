@@ -45,6 +45,7 @@ HOME = pathlib.Path.home()
 KEYS = {
     "MUXTOPUS_HOME": None,
     "MUXTOPUS_DIR": None,
+    "MUXTOPUS_PYTHON": None,
     "MUXTOPUS_SESSION_PREFIX": "claude",
     "MUXTOPUS_QUESTIONS_DIR": None,
     "WATCHDOG_INTERVAL": "30",

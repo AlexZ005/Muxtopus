@@ -39,12 +39,25 @@ Either way, `install.sh` does the same things. It symlinks `muxtopus` into `~/.l
 ./install.sh --bin DIR        # where the `muxtopus` link goes (default ~/.local/bin)
 ./install.sh --no-watchdog    # skip the watchdog service
 ./install.sh --no-venv        # do not build .venv; the dashboard then uses a system python3 with rich, or its bash renderer
+./install.sh --no-embedded-python   # never fetch a python; nothing is downloaded
 ./install.sh --no-rc          # do not add the bin dir to PATH in your shell rc
 ```
 
 If `~/.local/bin` is not on your `PATH`, the installer appends one line to `~/.profile` and `~/.bashrc`, or `~/.zshrc` under zsh, so the next shell finds `muxtopus`. A file that already mentions the directory is left alone, and a second install adds nothing. Under fish it prints the `fish_add_path` line instead. The shell you ran it from keeps its old `PATH`, so the installer prints the `export` line to paste there once.
 
 **Requirements:** `bash`, `tmux` ≥ 3.2 (for `new-window -e`), `git`, `jq`, `python3` ≥ 3.10 with its `venv` module (on Debian and Ubuntu that is the `python3-venv` package), `curl` or `wget`, and the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code). The installer builds the dashboard's [`rich`](https://github.com/Textualize/rich) venv itself. If it cannot, the dashboard falls back to a plain bash renderer instead of failing. `systemd --user` runs the watchdog where it is available; without it, the daemon is started as a plain background process.
+
+The check at the top of the install reports each of these **once**, with its version, and says what would install a missing one on this machine. A `tmux` older than 3.2 is called out there: below it, `new-window -e` does not exist, so a window cannot be given its own account.
+
+### No `python3` ≥ 3.10? It fetches one
+
+Debian 11, Ubuntu 20.04 and a bare container ship Python 3.9 or nothing, and the Python half of muxtopus — the Rich dashboard, the stats ledger, the notifications, the schedules view — needs 3.10. Rather than withhold most of the program for a reason you may not have root to fix, the installer downloads a standalone CPython from [astral-sh/python-build-standalone](https://github.com/astral-sh/python-build-standalone) (the same builds `uv` installs) into `<data home>/python`, and records it as `MUXTOPUS_PYTHON` in your config.
+
+- **It is muxtopus's Python, not the machine's.** Nothing is linked into `~/.local/bin`, nothing goes on `PATH`, and no system package is touched. The only thing that ever runs it is muxtopus. To undo it, delete that one directory and the `MUXTOPUS_PYTHON` line.
+- **It is checked.** The release publishes a `.sha256` beside every asset; a tarball whose sum does not match is refused and nothing is unpacked. Both come over TLS from the same release, so this catches a corrupted download or a swapped asset — not a compromised account.
+- **`--no-embedded-python` turns it off**, and a system `python3` ≥ 3.10 means it never runs at all.
+
+When it is not available — no network, an architecture with no build, or you said no — the dashboard falls back to its plain bash renderer, exactly as before.
 
 On Arch (and SteamOS in desktop mode, which already has most of these):
 

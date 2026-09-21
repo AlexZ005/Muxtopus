@@ -131,7 +131,7 @@ setup_inbound_key() {
   # The switches live in the settings store, not in this file: the conf holds
   # secrets per machine, a switch is a preference per account.
   local k="$1" v="$2" why
-  why="$(cd "$(dirname "$(readlink -f "$0")")" && python3 -c '
+  why="$(cd "$(dirname "$(readlink -f "$0")")" && "${MUX_PYTHON:-python3}" -c '
 import sys, muxsettings
 k = sys.argv[1]
 if k not in muxsettings.DASHBOARD_KEYS:
@@ -250,7 +250,7 @@ EOF
   TELEGRAM_TOKEN="$tok"; TELEGRAM_CHAT="$chat"
   # The bot's menu button: /status, /pending, ... (muxtelegram re-registers
   # whenever the list changes; this makes it appear before the first poll).
-  if [ "$inbound" = on ] && ( cd "$(dirname "$(readlink -f "$0")")" && python3 muxtelegram.py commands --force ) >/dev/null 2>&1; then
+  if [ "$inbound" = on ] && ( cd "$(dirname "$(readlink -f "$0")")" && "${MUX_PYTHON:-python3}" muxtelegram.py commands --force ) >/dev/null 2>&1; then
     echo "the bot's menu now offers /status, /pending, /questions, /blocked, /windows, /mute."
   fi
 

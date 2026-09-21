@@ -22,6 +22,7 @@ The same keys mean the same thing in all of them; the per-account files only nar
 |---|---|---|
 | `MUXTOPUS_HOME` | `${XDG_DATA_HOME:-~/.local/share}/muxtopus` | where schedules/, backups/ and handovers/ live. In a profile file: that account's **own** home, with the three folders unsuffixed inside it |
 | `MUXTOPUS_DIR` | the checkout `muxtopus` resolves to | only needed when `muxtopus` was copied rather than symlinked |
+| `MUXTOPUS_PYTHON` | the venv beside the checkout, else `python3` | the interpreter the Python half runs on. Written by `install.sh` when it had to [fetch one](install.md#no-python3--310-it-fetches-one); unset means: the embedded one under `MUXTOPUS_HOME`, the `.venv` beside the checkout, or `python3` from `PATH`, whichever answers `>= 3.10` first |
 | `MUXTOPUS_SESSION_PREFIX` | `claude` | tmux session name, suffixed per account |
 | `MUXTOPUS_QUESTIONS_DIR` | | a legacy folder where plan sessions parked their questions; still read by the handovers tab beside the account's own folder |
 | `WATCHDOG_INTERVAL` | `30` | seconds between watchdog passes |
