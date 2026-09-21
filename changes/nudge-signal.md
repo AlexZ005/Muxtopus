@@ -1,7 +1,7 @@
 ## the nudge no longer kills an older watchdog
 
-- v5.2.2 made the dashboard wake the watchdog with SIGUSR1 so a new window
-  appears in about a second. **SIGUSR1's default action is to terminate**, so
+- The previous release made the dashboard wake the watchdog with SIGUSR1 so
+  a new window appears in about a second. **SIGUSR1's default action is to terminate**, so
   the first `c` after upgrading killed any daemon still running the previous
   release's script — which is every daemon that had not been restarted yet.
   Where systemd manages the watchdog it came straight back and the only trace
