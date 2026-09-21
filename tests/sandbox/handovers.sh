@@ -175,13 +175,13 @@ done
 $K r
 has "r re-reads the folder"                  "handovers re-read"
 $K Escape
-has "esc leaves the tab for the main view"   "➥root-lane"
+has "esc leaves the tab for the main view"   "root-lane"
 $K s
 has "s always opens on the SCHEDULES tab"    "▸schedules 6"
 $K Right
 has "...and the handovers are one arrow away" "▸handovers"
 $K s
-has "s from the handovers tab leaves too"    "➥root-lane"
+has "s from the handovers tab leaves too"    "root-lane"
 
 echo "== enter opens: a questions file to edit, a handover READ-ONLY"
 # The section above left the dashboard on the MAIN view, where enter opens a
@@ -328,7 +328,7 @@ $K Down; $K Down                 # onto STATUS-launched-lane
 : > "$EDLOG"
 $K E
 has "E on a lane whose window is open asks first" "may rewrite this file while you edit"
-has "...naming the lane"                     "➥launched-lane"
+has "...naming the lane"                     "launched-lane"
 $K n
 check "n means the editor is not opened" \
   bash -c '! grep -q STATUS "'"$EDLOG"'"'
@@ -359,7 +359,7 @@ $K Down; $K Down
 $K Space
 has "a HANDOVER row offers a read-only view" "View (read-only)"
 has "...the force edit"                      "Edit anyway…"
-has "...its window, because that one is open" "Open its window ➥launched-lane"
+has "...its window, because that one is open" "Open its window launched-lane"
 has "...and Mark done"                       "Mark done…"
 $K Escape
 
@@ -463,16 +463,16 @@ $K s; $K Right
 $K Space
 snap
 check "the menu now offers to tell that window" \
-  grep -qF "Tell ➥root-lane its answers are in" "$NOW"
-pick "Tell ➥root-lane its answers are in"
+  grep -qF "Tell root-lane its answers are in" "$NOW"
+pick "Tell root-lane its answers are in"
 $K Enter
-has "and asks before touching a live pane"   "Type that into ➥root-lane"
+has "and asks before touching a live pane"   "Type that into root-lane"
 $K n
 check "n types nothing" bash -c '[ ! -s "'"${SB}"'/heard.txt" ]'
 # The menu is still open behind the answered confirm; space would close it.
 $K Escape
 $K Space
-pick "Tell ➥root-lane its answers are in"
+pick "Tell root-lane its answers are in"
 $K Enter
 $K y
 sleep 2
@@ -564,7 +564,7 @@ echo "== the main view says it in one character"
 "$HERE/clean.sh"
 "$HERE/stop.sh" >/dev/null
 "$HERE/start.sh" 40 >/dev/null
-has "the lane with an unanswered file carries a ?" "➥root-lane ?"
+has "the lane with an unanswered file carries a ?" "root-lane ?"
 snapc
 check "...in yellow" \
   bash -c 'grep -a "root-lane" "'"$COL"'" | grep -q "38;5;179m?"'

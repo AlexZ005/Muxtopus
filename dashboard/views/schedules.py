@@ -2,7 +2,7 @@
 
 One .md per window to open later. This module draws them, says why the
 selected one has not fired, and owns everything that writes one: the create
-flow, the options table, duplicate, launch-now, delete, and the ➥resume
+flow, the options table, duplicate, launch-now, delete, and the resume
 entry that the session menu offers from the main view.
 
 WHAT IT READS THAT IS NOT ITS OWN, and the only supported way across the
@@ -15,7 +15,7 @@ folder I am looking at" are both questions about the main view's cursor. The
 accessors exist so that coupling is a named call anybody can grep for,
 rather than `self.cursor` reached from the far side of the dashboard.
 
-THE ROW IT PUTS IN SOMEBODY ELSE'S MENU. `Schedule ➥resume of <window>` is a
+THE ROW IT PUTS IN SOMEBODY ELSE'S MENU. `Schedule a resume of <window>` is a
 row in the SESSION menu, which dashboard/views/main.py owns. It arrives
 through `app.add_rows("session", ..., order=85)` and not by editing that
 file -- which is the whole point of the registry, demonstrated on the one
@@ -571,7 +571,7 @@ class ScheduleView(View):
 
     def act_schedule_resume(self) -> str:
         """The wound-down flow's other half: a work item, due at the reset,
-        that opens a fresh ➥window right after this one and reads the STATUS
+        that opens a fresh window right after this one and reads the STATUS
         handoff the wind-down asked the session to write."""
         main = self.app.view_of("main")
         win = main.cursor_window()
@@ -610,7 +610,7 @@ class ScheduleView(View):
                          + "created: %s\n" % time.strftime("%Y-%m-%d %H:%M")
                          + "launched:\n"
                          + "---\n" + tpl.replace("{{STATUS_FILE}}", status_file))
-            return "scheduled ➥%s at the next reset (%s)" % (slug, f.name)
+            return "scheduled %s at the next reset (%s)" % (slug, f.name)
         except OSError as exc:
             return "schedule failed: %s" % exc
 
@@ -997,7 +997,7 @@ class ScheduleView(View):
 
     # ------------------------- the row this view puts in the session menu
     def session_rows(self, app) -> list[dict]:
-        """`Schedule ➥resume of <window>` -- a row in the MAIN view's session
+        """`Schedule a resume of <window>` -- a row in the MAIN view's session
         menu, registered rather than written into that view's file.
 
         It returns NOTHING for a lane row, the extras row or an empty cursor,
@@ -1009,7 +1009,7 @@ class ScheduleView(View):
         if not sid:
             return []
         label = main.cursor_window() or sid[:8]
-        return [{"label": "Schedule ➥resume of %s at the next reset  "
+        return [{"label": "Schedule a resume of %s at the next reset  "
                           "reads its STATUS file" % label,
                  "act": self.act_schedule_resume}]
 
@@ -1025,7 +1025,7 @@ HELP_SCHEDULES = f"""
     templates/; the folder README documents the format). The watchdog daemon
     launches due items: `at: reset` fires when the session limit resets or the
     budget simply reads fresh; an absolute time fires when it passes. The new
-    window opens right after its `window:` target, named with a leading ➥,
+    window opens right after its `window:` target, named for its slug,
     and the prompt lands as ONE bracketed paste. A file the view cannot parse
     shows as corrupted with the reason, and never launches.
     In the view: enter/e edit · c create (type, template, THE OPTIONS TABLE,

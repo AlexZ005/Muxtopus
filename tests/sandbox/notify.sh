@@ -141,7 +141,7 @@ mux_tmux kill-window -t "${SANDBOX_SESSION:?}:notify-setup" 2>/dev/null
 
 echo "== a waiting session is drawn yellow, as needs you"
 $K Escape; $K Escape
-printf 'gggg7777\t➥waiting-lane\t%%17\t2.0.1\t70000\twaiting\t\t\t0\t200000\t20000\t0\topus\t60\t\t%s/work/repo-a\t0\t0\t0\n' \
+printf 'gggg7777\twaiting-lane\t%%17\t2.0.1\t70000\twaiting\t\t\t0\t200000\t20000\t0\topus\t60\t\t%s/work/repo-a\t0\t0\t0\n' \
   "${SB:?}" >> "${WD:?}/status.tsv"
 sleep 2.5
 check "the STATE column says needs you, not waiting" bash -c '"'"$C"'" | grep -q "needs you"'

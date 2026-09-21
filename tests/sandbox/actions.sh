@@ -41,23 +41,23 @@ down_to() {
 
 "$HERE/clean.sh"
 
-echo "== the session menu: Schedule ➥resume of the cursor's window"
+echo "== the session menu: Schedule resume of the cursor's window"
 "$HERE/start.sh" 58 >/dev/null
-$K Space                      # the session menu over ➥root-lane
-down_to "Schedule ➥resume of ➥root-lane"
+$K Space                      # the session menu over root-lane
+down_to "Schedule resume of root-lane"
 $K Enter
 sleep 0.6
 check "it wrote the entry"            test -f "${S:?}/resume-root-lane.md"
 check "..with the lane's slug pinned" grep -q "^slug: resume-root-lane$" "${S:?}/resume-root-lane.md"
-check "..the window it resumes"       grep -q "^window: ➥root-lane$" "${S:?}/resume-root-lane.md"
+check "..the window it resumes"       grep -q "^window: root-lane$" "${S:?}/resume-root-lane.md"
 check "..the cursor's cwd"            grep -q "^cwd: ${SB:?}/work/repo-a$" "${S:?}/resume-root-lane.md"
 check "..and the STATUS path the wind-down asks for (HANDOVERS_DIR)" \
   grep -q "STATUS-root-lane.md" "${S:?}/resume-root-lane.md"
-check "the notice names it"           notice "scheduled ➥resume-root-lane"
+check "the notice names it"           notice "scheduled resume-root-lane"
 
 echo "== the session menu: Wind down now"
 $K Space
-down_to "Wind down ➥root-lane now"
+down_to "Wind down root-lane now"
 $K Enter
 sleep 0.6
 check "a directive was queued" test -f "${WD:?}/directives/aaaa1111"
@@ -76,7 +76,7 @@ check "..and back in"  bash -c '! grep -qx aaaa1111 "'"${WD:?}"'/optout"'
 
 echo "== the session menu: Rename, on a pane that is not there"
 $K Space
-down_to "Rename ➥root-lane"
+down_to "Rename root-lane"
 $K Enter
 $T "renamed-lane"
 $K Enter

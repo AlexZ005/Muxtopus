@@ -62,7 +62,7 @@ for H in 24 40 58; do
     # every height shows rather than the key line.
     shot "$H-$L-main"              "claude [mxsplit]"
     $K Space
-    shot "$H-$L-session-top"       "Restart ➥root-lane after a limit"
+    shot "$H-$L-session-top"       "Restart root-lane after a limit"
     for i in 1 2 3 4 5 6 7 8; do PAUSE=0.12 $K Down; done
     sleep 0.4
     shot "$H-$L-session-scrolled"  "esc close"
@@ -89,16 +89,16 @@ layout table
 
 # ============================================== the main view's own keys
 "$HERE/start.sh" 58 >/dev/null
-shot "main"                   "➥root-lane"
+shot "main"                   "root-lane"
 $K t;    shot "main-tree-off" "tree off: sessions by context"
 $K t;    shot "main-tree-on"  "children under their parent"
 $K f;    shot "main-lanes-all" "lanes: every account"
 $K f;    shot "main-lanes-mine" "lanes: mxsplit only"
-$K Left; shot "main-folded"   "collapsed ➥root-lane"
-$K Right; shot "main-unfolded" "expanded ➥root-lane"
-$K Down; shot "main-cursor-second" "➥➥kid-lane"
+$K Left; shot "main-folded"   "collapsed root-lane"
+$K Right; shot "main-unfolded" "expanded root-lane"
+$K Down; shot "main-cursor-second" "kid-lane"
 $K Down; $K Down; $K Down; $K Down
-shot "main-cursor-last"       "➥opted-out"
+shot "main-cursor-last"       "opted-out"
 $K Down; shot "main-cursor-extras" "enter reclaims"
 $K Space; shot "menu-extras"  "Reclaim or start desktop extras"
 $K Escape
@@ -130,63 +130,63 @@ $K Escape;  shot "settings-closed"      "q quit"
 
 # ============================================ c: a new claude session
 "$HERE/start.sh" 58 >/dev/null
-# THE NAME FIRST, with the offer in the brackets: `c` opens the prompt and
-# nothing else, and answering it is what opens the form.
-$K c;      shot "new-name"    "enter takes what is in brackets"
+# THE FORM OPENS DIRECTLY, and the NAME IS A FIELD ON THE CREATE ROW. `c`
+# used to draw a prompt over the top and open the form only once it was
+# answered; it now opens the form, and letters go into the first row.
+$K c;      shot "new-form"     "Create ["
 $T "route-lane"
-shot "new-name-typed"         "route-lane"
-$K Enter;  shot "new-form"    "Create ➥route-lane"
+shot "new-name-typed"          "route-lane"
 # THE TWO SUB-WINDOW ROWS sit under Create while the cursor is on a live
-# session, so one Down from Create is the first of them and not the Name row:
+# session, so one Down from Create is the first of them:
 #
-#   Create · | · empty sub-window · sub-window from its handover · | · Name …
+#   Create · | · empty sub-window · sub-window from its handover · | · Folder …
 #
-# and the second of them is REFUSED here (➥root-lane has written no handover),
+# and the second of them is REFUSED here (root-lane has written no handover),
 # which the mover skips exactly as it skips a separator. So two Downs from
-# Create is the Name row, and the shot after each one is what would catch a
-# miscount rather than photograph the wrong screen.
-$K Down;   shot "new-sub-empty" "Sub-window ➥➥route-lane"
+# Create is the FOLDER row -- it was the Name row, which no longer exists --
+# and the shot after each one is what would catch a miscount rather than
+# photograph the wrong screen.
+$K Down;   shot "new-sub-empty" "Sub-window route-lane"
 $K Down;   $K Enter
-shot "new-name-row"           "the slug"
-$K Escape; shot "new-form-named" "Name: route-lane"
+shot "new-folder"              "working folder"
+$K Escape; shot "new-folder-escaped" "Create ["
 $K Down;   $K Enter
-shot "new-folder"             "working folder"
-$K Escape; shot "new-folder-escaped" "Create ➥route-lane"
-$K Down;   $K Enter
-shot "new-model"              "CLI aliases"
+shot "new-model"               "CLI aliases"
 $K Escape
 $K Down;   $K Enter
-shot "new-effort"             "effort"
+shot "new-effort"              "effort"
 # The fixture account sets DASHBOARD_NEW_EFFORT=high, so the picker opens ON
 # high and one Down is xhigh -- the row below the one the form came in with.
 $K Down;   $K Enter
-shot "new-form-effort"        "Effort: xhigh"
+shot "new-form-effort"         "Effort: xhigh"
 $K Down;   $K Enter
-shot "new-mode"               "permission mode"
+shot "new-mode"                "permission mode"
 # ...and DASHBOARD_NEW_PERMISSION_MODE=ask, so the mode picker opens on
-# "(account default)" and bypassPermissions is three below it.
+# "(account default)" -- the PICKER's wording, which is unchanged; it is the
+# form's ROW that now names the value it would really get -- and
+# bypassPermissions is three below it.
 $K Down; $K Down; $K Down
-shot "new-mode-bypass"        "bypassPermissions"
-$K Enter;  shot "new-bypass"  "…and make it the default"
+shot "new-mode-bypass"         "bypassPermissions"
+$K Enter;  shot "new-bypass"   "…and make it the default"
 $K Down;   shot "new-bypass-permanent" "writes settings.json"
 $K Escape
 $K Down;   $K Enter
-shot "new-where"              "under ➥root-lane"
+shot "new-where"               "under root-lane"
 $K Escape
 $K Down;   $K Enter
-shot "new-prompt"             "first prompt"
+shot "new-prompt"              "first prompt"
 $K Escape
 $K Escape; shot "new-cancelled" "cancelled"
-# AND THE OTHER SUB-WINDOW ROW, live. ➥stranded-lane is the fixture's lane
+# AND THE OTHER SUB-WINDOW ROW, live. stranded-lane is the fixture's lane
 # with an OPEN handover, so the fork row that reads one is offered rather
-# than refused -- two Downs from the cursor's ➥root-lane.
+# than refused -- two Downs from the cursor's root-lane.
+#
+# The name offered here is NOT the one offered above: a second `c` asks for a
+# different word, which is the point of asking again.
 $K Down; $K Down
-$K c;      shot "new-name-stranded" "enter takes what is in brackets"
-$K Enter
-# Both sub-window rows are live here, so the second Down reaches the one that
-# reads a handover instead of skipping it.
+$K c;      shot "new-name-stranded" "Create ["
 $K Down;   $K Down
-shot "new-sub-handover"       "continues from its handover"
+shot "new-sub-handover"        "continues from its handover"
 $K Escape; shot "new-cancelled-2" "cancelled"
 "$HERE/stop.sh"
 
