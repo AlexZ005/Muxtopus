@@ -85,6 +85,32 @@ def load_modules(app: App) -> None:
                 app.module_failed(short, exc)
 
 
+# How long a LONE ESC waits to see whether it is really the head of an arrow.
+#
+# 100ms, AND THE NUMBER IS A COMPROMISE BETWEEN TWO MEASUREMENTS, both made
+# on this project:
+#
+#   * 250ms (what this was) is plainly laggy on the key pressed most -- esc
+#     leaves every view and opens the muxtopus menu, and a quarter second of
+#     nothing after it reads as a dashboard that did not hear the keypress.
+#   * 50ms was tried here before and recorded as TOO TIGHT OVER SSH: ESC and
+#     its tail arrived in separate reads, the sequence was abandoned, and the
+#     arrow did nothing while eating the two presses after it.
+#
+# So: comfortably above the split that was actually observed, and below the
+# ~150ms where a delay stops reading as instant. The overwhelming case is not
+# a race at all -- a terminal writes ESC [ A in ONE write, so the tail is
+# already in the kernel buffer and this budget is never spent.
+#
+# OVERRIDABLE, because the machine this can still be wrong on is a slow link:
+# MUXTOPUS_ESC_TIME=0.25 restores the old behaviour, 0.02 suits a local tty.
+# Clamped, so a typo cannot make Escape unusable in either direction.
+try:
+    ESC_TIME = min(0.5, max(0.005, float(os.environ.get("MUXTOPUS_ESC_TIME") or 0.10)))
+except ValueError:
+    ESC_TIME = 0.10
+
+
 def read_key(timeout: float) -> str | None:
     """One keypress, with the arrows decoded.
 
@@ -115,11 +141,31 @@ def read_key(timeout: float) -> str | None:
     # and "A" were then consumed as two further junk keypresses -- so the arrow
     # did nothing and ate the two presses after it. Keep reading while what we
     # hold is a prefix rather than a whole sequence.
-    deadline = time.time() + 0.25
+    #
+    # TWO BUDGETS, because the two waits are not the same question.
+    #
+    # A LONE ESC is ambiguous: it is either the Escape key or the first byte
+    # of a sequence whose tail has not arrived. Waiting 250ms to find out made
+    # Escape itself feel broken -- esc is how every view is left and how the
+    # muxtopus menu is opened, so a quarter second of nothing on the most
+    # pressed key on the dashboard is the one delay everybody notices. A
+    # terminal writes ESC [ A in a SINGLE write, so the tail is already in the
+    # kernel buffer in the overwhelming case and ESC_TIME only has to cover a
+    # packet boundary that split it. 40ms is the same order as tmux's
+    # escape-time and vim's ttimeoutlen, and is below what a keypress feels.
+    #
+    # ONCE WE HOLD "ESC [" OR "ESC O" there is no ambiguity left -- that is a
+    # sequence, and the only question is how long its tail takes -- so the
+    # generous budget stays exactly where it was earned.
+    esc_time = ESC_TIME if data == b"\x1b" else 0.25
+    deadline = time.time() + esc_time
     while data.startswith(b"\x1b") and not _complete_key(data):
         left = deadline - time.time()
         if left <= 0 or not select.select([fd], [], [], left)[0]:
             break
+        # The tail arrived: this is a real sequence, so allow the full budget
+        # for the rest of it rather than the short ambiguity window.
+        deadline = max(deadline, time.time() + 0.25)
         try:
             more = os.read(fd, 16)
         except OSError:
