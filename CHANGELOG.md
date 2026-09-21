@@ -4,6 +4,160 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.2.0 — 2026-09-21
+
+A minor release. muxtopus can now **keep itself current**, and **install a
+Python for itself when the machine has none** — each adds settings and
+command-line verbs, and nothing a user touches was renamed or moved. The one
+behaviour that changes under your hands is `c`: it asks what to call the
+window instead of choosing for you.
+
+Upgrade by running the new release's `get.sh`, with `muxtopus update` from a
+release install, or `git pull && ./install.sh` in a checkout.
+
+### Keeping itself current
+
+#### updates: muxtopus keeps itself current
+
+- It checks GitHub for a new release once a day and says so on the dashboard
+  — a line in the footer, a row under `esc`, and the full story in
+  `esc ▸ Settings ▸ Updates`. One request that follows the
+  `releases/latest` redirect: no token, and nothing about your machine in it.
+- Taking one swaps the install, keeps the release it replaced, and reloads
+  every watchdog and the dashboard onto the new code. **Your claude windows
+  keep running** — they are processes in panes and nothing touches them, so
+  there is no "restart to apply".
+- `muxtopus update --rollback` puts the kept release back, in one move, out
+  of `~/.local/lib/muxtopus.prev`. Rolling forward again works too.
+- Three settings, shared by every account: `MUXTOPUS_UPDATE_MODE`
+  (`notify`, `download` or `off`), `MUXTOPUS_UPDATE_EVERY` and
+  `MUXTOPUS_UPDATE_CHANNEL` (`stable` or `prerelease`). `off` means no
+  request is made at all.
+- A fourteenth notification switch, `MUXTOPUS_NOTIFY_UPDATE`, off by
+  default: the phone hears about a release once per version, ever.
+- It refuses to touch a git checkout (`git pull` is that one's update), and
+  refuses to run an installer whose sha256 is not the one published beside
+  it.
+- On the command line: `muxtopus update`, `--check`, `--apply`,
+  `--rollback`.
+
+### The dashboard
+
+#### dashboard: `c` is one screen, and it asks what to call the window
+
+- `c` opens **one screen** with every parameter on it — folder, model, effort,
+  permission mode, where it goes, first prompt — each already filled in from
+  the new-window defaults in Settings, and `Create` on the first row. It was
+  seven pickers in a fixed order, so changing your mind about the second
+  answer meant abandoning the flow and starting again. The form **stays open**
+  while you change things: `esc` on a row leaves that row alone, `esc` on the
+  form abandons the whole thing.
+- **The name is asked first**, with an offer in the brackets:
+  `name (the slug…): _ [repo-b-quail]`. The line starts empty, so typing a
+  name of your own is typing it rather than backspacing over one, and `enter`
+  on an empty line takes what is in the brackets. A window you have no
+  particular opinion about is `c` `enter` `enter`.
+- **The offer is the folder and one word** — `scripts-otter`, `repo-b-quail`
+  — checked against every window and every pending entry before it is
+  offered. The second window in a folder used to be `scripts-2` and the third
+  `scripts-3`, and a digit tells you nothing about which of the three you are
+  looking at, while a word can be said out loud. The same folder always offers
+  the same word until that name is taken, and a folder like `~/.code` no
+  longer suggests the hidden slug `.code`.
+- **Two sub-window rows under `Create`**, whenever the cursor is on a live
+  session: `empty, no prompt`, and `continues from its handover`, which pastes
+  the brief `Schedule ➥resume` uses — read `STATUS-<parent>.md` and carry on
+  from its *How to resume* section. Both make a `➥➥` child of that window, one
+  `enter` each; the handover row is greyed with the reason until that lane has
+  written one. `Create` still makes a top-level window.
+- **It takes you to the window.** There is none to jump to when you press
+  Create — the watchdog opens it a pass later — so the form remembers the
+  slug, the key line reads `opening ➥name`, and the tmux client moves there
+  the moment the window appears. `Ctrl-b 0` comes back to the dashboard.
+- **A picker, a prompt or a confirm now goes where `Menu layout` says**, like
+  the menu that opened it: centred on `modal` (the new default), under the
+  cursor's panel on `table`, in the footer on `bottom`. `modal` used to give a
+  centred menu and then a footer panel for the answers that menu was
+  collecting.
+- A permission mode of `(account default)` now writes **no**
+  `permission-mode:` header at all, which is what the launcher already meant
+  by an absent one: no `--permission-mode` flag, the account's own
+  `defaultMode`.
+
+#### dashboard: Page Up/Down and Home/End move a list instead of leaving it
+
+- **pgup/pgdn** move the cursor one screenful and **home/end** jump to the
+  first and last row, in the schedules table, the main dashboard list, the
+  handovers tab, the insights breakdown, every menu, the options table and the
+  pickers. A page is what that list is actually showing, so it is fewer rows on
+  a short terminal, and both keys clamp: pgup at the top is the first row, not
+  a wrap to the bottom
+- those four keys used to decode to a bare Escape, which is the views' own
+  "leave this screen" key — pressing End in the schedule view closed the
+  schedule view, and Home on the dashboard opened the muxtopus menu. So did
+  **F5, Insert, Delete and shift-Tab**, and an escape sequence the dashboard
+  cannot name is now ignored instead. A real Escape is unchanged
+- the key line on those screens lists the new keys, and `?` has a section on
+  them
+
+### Install
+
+#### install: each tool once, and a python when the machine has none
+
+- The check at the top of the install now reports **one line per tool**, with
+  its version on it: `+ tmux 3.5a`, `+ python3 3.13.5`. It used to print the
+  tool and then print it again from a second check — `+ tmux`, then
+  `+ tmux 3.5` — which buried the line that matters under a copy of the one
+  that does not. A missing tool now also carries the command that would
+  install it on **this** machine (`sudo apt install jq`, `sudo pacman -S jq`…).
+- **A `tmux` older than 3.2 is called out** with what it costs: `new-window
+  -e` does not exist below it, so a window cannot be given its own account —
+  and with the line that updates it.
+- **No `python3` ≥ 3.10? The installer fetches one.** Debian 11, Ubuntu 20.04
+  and a bare container ship 3.9 or nothing, and the Rich dashboard, the stats
+  ledger, the notifications and the schedules view all need 3.10; that is most
+  of the program, withheld for a reason you may not have root to fix. It now
+  downloads a standalone CPython (astral-sh/python-build-standalone, the same
+  builds `uv` installs) into `<data home>/python`, checks it against the
+  `.sha256` published beside it, and builds the venv from it.
+- **It is muxtopus's python, not the machine's.** Nothing is linked into
+  `~/.local/bin`, nothing goes on `PATH`, no system package is touched — the
+  only thing that ever runs it is muxtopus, through the new `MUXTOPUS_PYTHON`
+  config key. One directory to delete to undo it, and
+  `--no-embedded-python` never downloads anything.
+- The watchdog, `muxtopus stats` and the notifications resolve their
+  interpreter the same way, so stats and Telegram now work on a machine whose
+  own `python3` is too old rather than being quietly skipped.
+
+### Fixes
+
+#### watchdog: a hard wind-down no longer stops a window for good
+
+- a window told to wrap up and stop at the hard band is sent the continue
+  message once its budget window comes back, instead of sitting idle until
+  somebody notices. It never reached the usage-limit banner — it was told to
+  stop before it got there — so nothing used to restart it
+- only while its handover is still open: a lane whose handover is in `done/` is
+  finished and is left alone, as is one that is working, one that is opted out
+  of restarts or monitoring, and one whose budget window has not come back yet
+- it is visible before it happens: the state reads **`resume due`** on the
+  dashboard and in `--status`, and `--dry-run` says `WOULD-RESUME`.
+  `WATCHDOG_WOUND_RESUME=off` turns it off
+
+#### the usage probe recognises today's trust dialog
+
+- `claude-usage.sh` matched only the old wordings, so in an untrusted folder it
+  sat in front of the new "Is this a project you created or one you trust?"
+  dialog for its full twenty seconds, typed `/usage` into it and pressed Enter
+  — which on that screen confirms **No, exit**: the session died and took the
+  capture file the error pointed at with it. It now says `<account> has not
+  trusted <dir>` in a second or two, which is the dead end it was written to
+  report. Found on a machine with 679 consecutive failed readings
+- the installer writes the `PATH` line on its own merits instead of skipping it
+  whenever this shell's `PATH` already has the directory — which is exactly
+  when it was needed and never written: after a hand-typed `export`, or on a
+  second install in the same shell as the first
+
 ## v5.1.0 — 2026-09-19
 
 A minor release: window restore adds a command-line flag (`--restore`) and two

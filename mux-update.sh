@@ -433,7 +433,7 @@ do_rollback() {
   say "Press R in the dashboard to reload it too."
   # A rolled-back machine must not be handed the same update by the next
   # check. The clock is left where it is and the state says what happened;
-  # the row in the menu reads "5.2.0 available" again only after the user
+  # the row in the menu reads "<new> available" again only after the user
   # has asked for a check, which is the honest answer -- it IS available.
   return 0
 }
