@@ -95,7 +95,16 @@ if has_python_key; then bad "and no MUXTOPUS_PYTHON was written"
 else ok "and no MUXTOPUS_PYTHON was written"; fi
 
 # ------------------------------------------------------- 3. a release to fetch
-# The asset list the real one publishes, cut to the two fields this reads.
+# THE SHAPE OF THE REAL ONE, which the first version of this test got wrong in
+# the way that matters: python-build-standalone publishes ONE `SHA256SUMS`
+# beside the assets, not a `.sha256` per asset. Asking for the latter meant
+# every real download was refused and every machine quietly fell back to the
+# bash renderer -- a container install is what found it, because this test
+# had faithfully reproduced the assumption instead of the release.
+#
+# The list also carries the two kinds of asset that must NOT be chosen: a
+# pre-release (`3.15.0rc2`, which sorts above every stable version) and a
+# free-threaded build (a different runtime under a name that sorts the same).
 mkdir -p "$SB/rel/python/bin"
 cat > "$SB/rel/python/bin/python3" <<EOF
 #!/usr/bin/env bash
@@ -109,33 +118,50 @@ case "$(uname -m)" in
 esac
 ASSET="cpython-3.13.7+20260901-$ARCH-unknown-linux-gnu-install_only.tar.gz"
 OLDER="cpython-3.11.9+20260901-$ARCH-unknown-linux-gnu-install_only.tar.gz"
-( cd "$SB/rel" && tar -czf "$ASSET" python && cp "$ASSET" "$OLDER" )
-for a in "$ASSET" "$OLDER"; do
-  sha256sum "$SB/rel/$a" | cut -d' ' -f1 > "$SB/rel/$a.sha256"
-done
-# Both versions in the list, and the OLDER one first, so "it takes the newest"
-# is a claim this proves rather than one the order of the file made true.
+PRERELEASE="cpython-3.15.0rc2+20260901-$ARCH-unknown-linux-gnu-install_only.tar.gz"
+FREE="cpython-3.14.1+20260901-$ARCH-unknown-linux-gnu-freethreaded-install_only.tar.gz"
+( cd "$SB/rel" && tar -czf "$ASSET" python )
+for a in "$OLDER" "$PRERELEASE" "$FREE"; do cp "$SB/rel/$ASSET" "$SB/rel/$a"; done
+# One file, `<sum>  <name>` a line, with the name carrying a literal `+`.
+( cd "$SB/rel" && sha256sum "$ASSET" "$OLDER" "$PRERELEASE" "$FREE" > SHA256SUMS )
+# The URL spells that plus `%2B`, as the GitHub API does.
+enc() { printf '%s' "${1//+/%2B}"; }
 {
   printf '{"assets":[\n'
-  printf '  {"browser_download_url": "file://%s/rel/%s"},\n' "$SB" "$OLDER"
-  printf '  {"browser_download_url": "file://%s/rel/%s"}\n' "$SB" "$ASSET"
+  printf '  {"browser_download_url": "file://%s/rel/%s"},\n' "$SB" "$(enc "$OLDER")"
+  printf '  {"browser_download_url": "file://%s/rel/%s"},\n' "$SB" "$(enc "$ASSET")"
+  printf '  {"browser_download_url": "file://%s/rel/%s"},\n' "$SB" "$(enc "$FREE")"
+  printf '  {"browser_download_url": "file://%s/rel/%s"}\n'  "$SB" "$(enc "$PRERELEASE")"
   printf ']}\n'
 } > "$SB/rel/latest.json"
 export MUXTOPUS_PBS_API="file://$SB/rel/latest.json"
 
 if [ -n "$ARCH" ]; then
   echo "== the sha256 gate: a tarball that does not match is refused"
-  printf 'deadbeef' > "$SB/rel/$ASSET.sha256"
+  awk -v n="$ASSET" '{ print ($2 == n ? "deadbeef  " $2 : $0) }' \
+      "$SB/rel/SHA256SUMS" > "$SB/rel/SHA256SUMS.bad"
+  mv "$SB/rel/SHA256SUMS.bad" "$SB/rel/SHA256SUMS"
   out="$(inst --no-venv)"
   check "it says the sum did not match" grep -q "sha256 MISMATCH" <<<"$out"
   check "and unpacks nothing" test ! -d "$MUXHOME/python"
   if has_python_key; then bad "and still writes no MUXTOPUS_PYTHON"
   else ok "and still writes no MUXTOPUS_PYTHON"; fi
-  sha256sum "$SB/rel/$ASSET" | cut -d' ' -f1 > "$SB/rel/$ASSET.sha256"
+  ( cd "$SB/rel" && sha256sum "$ASSET" "$OLDER" "$PRERELEASE" "$FREE" > SHA256SUMS )
+
+  echo "== a release with NO SHA256SUMS at all is refused too"
+  mv "$SB/rel/SHA256SUMS" "$SB/rel/SHA256SUMS.away"
+  out="$(inst --no-venv)"
+  check "it says there is no published sum" grep -q "no published sha256" <<<"$out"
+  check "and unpacks nothing" test ! -d "$MUXHOME/python"
+  mv "$SB/rel/SHA256SUMS.away" "$SB/rel/SHA256SUMS"
 
   echo "== the fetch: checked, unpacked, probed, written down"
   out="$(inst --no-venv)"
-  check "it took the NEWEST build in the list" grep -q "cpython-3.13.7" <<<"$out"
+  check "it took the newest RELEASED build" grep -q "cpython-3.13.7" <<<"$out"
+  check "not the release candidate that sorts above it" \
+        bash -c '! grep -q "3.15.0rc2" <<<"$1"' _ "$out"
+  check "and not the free-threaded build" \
+        bash -c '! grep -q "freethreaded" <<<"$1"' _ "$out"
   check "it checked the sum" grep -q "sha256 matches the published sum" <<<"$out"
   check "the interpreter is there" test -x "$MUXHOME/python/bin/python3"
   check "and it runs" "$MUXHOME/python/bin/python3" -c 'import sys; sys.exit(0)'

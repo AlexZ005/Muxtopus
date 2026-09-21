@@ -94,14 +94,32 @@ echo "  config     $CFG"
 step "1/7  Checking what is here"
 missing=0
 
+# THE PACKAGE IS NOT ALWAYS THE COMMAND. `sudo pacman -S python3` fails on
+# Arch (the package is `python`), and `claude` is not in any distro at all --
+# both were printed by the first version of this, in a container, which is
+# where package names get checked. A tool with no package gets its own line.
 pkg_line() {   # how you would install $1 on THIS machine
-  if command -v apt-get >/dev/null 2>&1;   then echo "sudo apt install $1"
-  elif command -v dnf >/dev/null 2>&1;     then echo "sudo dnf install $1"
-  elif command -v pacman >/dev/null 2>&1;  then echo "sudo pacman -S $1"
-  elif command -v zypper >/dev/null 2>&1;  then echo "sudo zypper install $1"
-  elif command -v apk >/dev/null 2>&1;     then echo "sudo apk add $1"
-  elif command -v brew >/dev/null 2>&1;    then echo "brew install $1"
-  else echo "install $1 with your package manager"; fi
+  local p="$1"
+  if [ "$p" = claude ]; then
+    echo "https://docs.claude.com/en/docs/claude-code -- not a distro package"
+    return 0
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    # Debian and Ubuntu split the venv module out, and the dashboard's venv
+    # is what step 6 builds.
+    [ "$p" = python3 ] && p="python3 python3-venv"
+    echo "sudo apt install $p"
+  elif command -v dnf >/dev/null 2>&1;     then echo "sudo dnf install $p"
+  elif command -v pacman >/dev/null 2>&1; then
+    # Arch calls it `python`, and has had no `python3` package for years.
+    [ "$p" = python3 ] && p="python"
+    echo "sudo pacman -S $p"
+  elif command -v brew >/dev/null 2>&1; then
+    [ "$p" = python3 ] && p="python"
+    echo "brew install $p"
+  elif command -v zypper >/dev/null 2>&1;  then echo "sudo zypper install $p"
+  elif command -v apk >/dev/null 2>&1;     then echo "sudo apk add $p"
+  else echo "install $p with your package manager"; fi
 }
 
 # The version each tool reports, in ONE word. `claude` is not asked: it is a
@@ -342,7 +360,7 @@ PY_DIR="$HOME_DIR/python"
 PBS_API="${MUXTOPUS_PBS_API:-https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest}"
 
 embedded_python() {
-  local arch os url sha want got tmp
+  local arch os url name want got tmp
   case "$(uname -s)" in
     Linux) os="unknown-linux-gnu" ;;
     *) warn "no standalone build for $(uname -s) -- install python3 >= 3.10 yourself"; return 1 ;;
@@ -356,13 +374,30 @@ embedded_python() {
   command -v tar  >/dev/null 2>&1 || { warn "tar is needed to unpack python -- $(pkg_line tar)"; return 1; }
   command -v sha256sum >/dev/null 2>&1 || { warn "sha256sum is needed to check it -- $(pkg_line coreutils)"; return 1; }
 
-  # THE NEWEST 3.x INSTALL-ONLY BUILD for this machine, from the release's own
-  # asset list. Parsed with grep rather than jq, which is one of the tools this
-  # script is quite prepared to find missing.
+  # THE NEWEST RELEASED 3.x INSTALL-ONLY BUILD for this machine, from the
+  # release's own asset list. Parsed with grep rather than jq, which is one of
+  # the tools this script is quite prepared to find missing.
+  #
+  # TWO KINDS OF ASSET ARE REFUSED HERE and both were found by installing this
+  # in a container rather than by reading the list:
+  #
+  #   a PRE-RELEASE. The names carry the python version, and `3.15.0rc2` sorts
+  #   above `3.14.7` -- so the newest build in the list was a release
+  #   candidate, and a machine with no python3 would have been handed one. The
+  #   `%2B` in the pattern is what enforces it: it is the `+` that separates
+  #   the version from the build date, so a version with `rc` in it does not
+  #   reach it. (The API spells that plus as %2B.)
+  #
+  #   a FREE-THREADED build, which is a different runtime with a different
+  #   performance profile, offered beside the ordinary one under a name that
+  #   sorts identically. Nothing here asks for one.
   url="$(curl -fsSL --max-time 30 "$PBS_API" 2>/dev/null \
          | grep -o '"browser_download_url": *"[^"]*"' | cut -d'"' -f4 \
          | grep -- "-${arch}-${os}-install_only\.tar\.gz$" \
-         | sed 's|.*/cpython-\([0-9][0-9.]*\)+.*|\1 &|' | sort -V | tail -1 | cut -d' ' -f2-)"
+         | grep -v -- "-freethreaded-" \
+         | grep -E "/cpython-3\.[0-9]+\.[0-9]+(%2B|\+)" \
+         | sed 's|.*/cpython-\([0-9][0-9.]*\)\(%2B\|+\).*|\1 &|' \
+         | sort -V | tail -1 | cut -d' ' -f2-)"
   if [ -z "$url" ]; then
     warn "could not reach $PBS_API -- no network? install python3 >= 3.10 instead"
     return 1
@@ -373,10 +408,19 @@ embedded_python() {
   if ! curl -fsSL --max-time 600 -o "$tmp/py.tar.gz" "$url"; then
     warn "download failed"; rm -rf -- "${tmp:?}"; return 1
   fi
-  want="$(curl -fsSL --max-time 60 "$url.sha256" 2>/dev/null | tr -d '[:space:]')"
+  # THE SUMS ARE ONE FILE FOR THE WHOLE RELEASE -- `SHA256SUMS` beside the
+  # assets, `<sum>  <name>` a line -- and NOT a `.sha256` per asset, which is
+  # what this asked for first and what a container install proved does not
+  # exist: every download was refused and every machine fell back to the bash
+  # renderer, silently doing the old thing. The name in that file carries a
+  # literal `+` where the URL has `%2B`.
+  name="$(basename "$url")"
+  name="${name//%2B/+}"
+  want="$(curl -fsSL --max-time 60 "${url%/*}/SHA256SUMS" 2>/dev/null \
+          | awk -v n="$name" '$2 == n {print $1; exit}')"
   got="$(sha256sum "$tmp/py.tar.gz" | cut -d' ' -f1)"
   if [ -z "$want" ]; then
-    warn "no published sha256 for that asset -- refusing to unpack it"
+    warn "no published sha256 for $name -- refusing to unpack it"
     rm -rf -- "${tmp:?}"; return 1
   fi
   if [ "$want" != "$got" ]; then
