@@ -74,7 +74,7 @@ So the hard band now arms its own resume. A session gets the same continue messa
 
 ## Scheduled windows
 
-The daemon is the only launcher: the dashboard's `c` flow, a hand-written entry and a `Schedule ➥resume` from a row's menu all write a file into the schedules folder and the next pass opens it. The format, the fields and the verdicts are on [Scheduled windows](schedules.md); the two things the daemon decides are here.
+The daemon is the only launcher: the dashboard's `c` flow, a hand-written entry and a `Schedule resume` from a row's menu all write a file into the schedules folder and the next pass opens it. The format, the fields and the verdicts are on [Scheduled windows](schedules.md); the two things the daemon decides are here.
 
 ### `at: reset` is two gates
 
@@ -87,12 +87,12 @@ The launch line names which one fired. A budget *reading* older than `WATCHDOG_U
 
 ### `stranded`
 
-Not a field: a **state** the watchdog publishes for a window, beside `working`, `idle`, `limited`, `waiting` and `due`. A scheduled window (its name starts with `➥`) is called `stranded` instead of `idle` when all of these are true:
+Not a field: a **state** the watchdog publishes for a window, beside `working`, `idle`, `limited`, `waiting` and `due`. A lane is called `stranded` instead of `idle` when all of these are true:
 
 - it is idle — not mid-turn;
 - it has been idle for at least `WATCHDOG_STRANDED` minutes (default 120);
 - it has an **open** handover — `handovers/STATUS-<slug>.md`, not one in `done/`, so there is unfinished work;
-- and **no** pending entry in the schedules folder names it: not its slug, not the `resume-<slug>.md` the dashboard's "Schedule ➥resume" writes, and not an `after:` waiting on it.
+- and **no** pending entry in the schedules folder names it: not its slug, not the `resume-<slug>.md` the dashboard's "Schedule resume" writes, and not an `after:` waiting on it.
 
 `idle` is a fact about the last turn — the same word for a lane that finished ten minutes ago and for one that stopped mid-phase three days ago with its handover half-written. Measured: four lanes sat at `idle 3d` with open handovers, nothing pending named any of them, and nothing anywhere said so.
 

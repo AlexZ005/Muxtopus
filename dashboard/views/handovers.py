@@ -615,7 +615,7 @@ class HandoversView(View):
             self.app.pending_edit = str(row["path"])
             return ""
         self.app.confirm = {
-            "label": "⚠ ➥%s may rewrite this file while you edit; "
+            "label": "⚠ %s may rewrite this file while you edit; "
                      "whichever saves last wins." % row["slug"],
             "fn": lambda: self._do_edit(row)}
         return ""
@@ -685,7 +685,7 @@ class HandoversView(View):
         if f["i"] < 0:
             rows = [{"label": "Mark the file answered", "act": self.flow_mark}]
             if self.live_window(f["row"]["slug"]):
-                rows.append({"label": "Tell ➥%s its answers are in"
+                rows.append({"label": "Tell %s its answers are in"
                                       % f["row"]["slug"], "act": self.flow_tell})
             rows.append({"label": "Open the file in the editor", "act": self.flow_edit})
             rows.append({"label": "Close", "act": self.flow_close})
@@ -965,7 +965,7 @@ class HandoversView(View):
             path.name, "answered" if mark else "marker removed")
 
     def ask_tell(self) -> str:
-        """Tell ➥slug its answers are in. THE ONLY THING ON THIS TAB THAT
+        """Tell slug its answers are in. THE ONLY THING ON THIS TAB THAT
         TOUCHES A LIVE WINDOW, and it is never automatic: a confirm first,
         and it types one sentence into that pane and nothing else."""
         row = self.sel()
@@ -974,11 +974,11 @@ class HandoversView(View):
         node = read_tree().get(row["slug"])
         pane = node["pane"] if node else ""
         if not pane or not self.live_window(row["slug"]):
-            return "➥%s has no live pane" % row["slug"]
+            return "%s has no live pane" % row["slug"]
         line = ("Your questions are answered in %s -- read it and continue."
                 % row["path"])
         self.app.confirm = {
-            "label": "Type that into ➥%s's pane?" % row["slug"],
+            "label": "Type that into %s's pane?" % row["slug"],
             "fn": lambda: self._send(pane, line)}
         return ""
 
@@ -989,7 +989,7 @@ class HandoversView(View):
             time.sleep(0.6)
             subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"],
                            capture_output=True, timeout=5)
-            return "told ➥%s" % pane
+            return "told %s" % pane
         except (OSError, subprocess.SubprocessError) as exc:
             return "send failed: %s" % exc
 
@@ -1014,7 +1014,7 @@ class HandoversView(View):
             return "nothing selected"
         wid = self.live_window(row["slug"])
         if not wid:
-            return "➥%s has no live window" % row["slug"]
+            return "%s has no live window" % row["slug"]
         try:
             subprocess.run(["tmux", "select-window", "-t", wid],
                            capture_output=True, timeout=5)
@@ -1038,7 +1038,7 @@ class HandoversView(View):
                 rows.append({"label": "Mark answered", "act": self.mark_answered})
             else:
                 rows.append({"label": "Mark unanswered", "act": self.mark_unanswered})
-            rows.append({"label": "Tell ➥%s its answers are in" % row["slug"],
+            rows.append({"label": "Tell %s its answers are in" % row["slug"],
                          "act": self.ask_tell} if wid else
                         {"label": "Tell its window", "disabled": "no live window"})
             rows.append({"label": "Show its handover", "act": self.goto_handover})
@@ -1046,7 +1046,7 @@ class HandoversView(View):
         rows = [{"label": "View (read-only)", "act": self._act_view},
                 {"label": "Edit anyway…", "act": self.force_edit, "danger": True}]
         if wid:
-            rows.append({"label": "Open its window ➥%s" % row["slug"],
+            rows.append({"label": "Open its window %s" % row["slug"],
                          "act": self.goto_window})
         if row["state"] == "open":
             rows.append({"label": "Mark done…", "act": self.ask_mark_done})

@@ -48,7 +48,7 @@ k="$(tr -d '\n' < "$HOME/fake-claude.keys" 2>/dev/null)"
 check "the window received /rc" grep -qF '/rc' <<<"$k"
 check "..BEFORE the body" bash -c '[[ "$1" == *"/rc"*"carry"* ]]' _ "$k"
 check "the log says so" grep -q "schedule lane-on.md: sent /rc to" "$ST/log"
-check "the launch line records rc=on" grep -q "launched ➥lane-on.* rc=on" "$ST/log"
+check "the launch line records rc=on" grep -q "launched lane-on.* rc=on" "$ST/log"
 
 echo "== rc: off, and no header with the default off: no /rc"
 launch lane-off off

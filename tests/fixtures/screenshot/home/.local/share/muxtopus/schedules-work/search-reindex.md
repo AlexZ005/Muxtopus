@@ -2,7 +2,7 @@ type: work
 at: @DATE-1800@
 title: rebuild the search index
 slug: search-reindex
-window: ➥search-index
+window: search-index
 cwd: @SB@/home/src/acme/search
 status: pending
 created: @DATE-12000@

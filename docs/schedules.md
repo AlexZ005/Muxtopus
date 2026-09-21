@@ -30,7 +30,7 @@ launched:
 the prompt body that gets pasted into the new window
 ```
 
-The new window opens right after its `window:` target, named with a leading `➥`, and the prompt lands as **one bracketed paste** — never `send-keys`, which submits at every newline.
+The new window opens right after its `window:` target, named for its slug, and the prompt lands as **one bracketed paste** — never `send-keys`, which submits at every newline.
 
 ## The header, field by field
 
@@ -98,7 +98,7 @@ An entry fires on whichever comes first:
 The launch line names which one fired, so a launch can be explained after the fact:
 
 ```
-schedule lane-27-storage.md: launched ➥27-storage (pane %401) type=work
+schedule lane-27-storage.md: launched 27-storage (pane %401) type=work
   slug=27-storage -- due: the session window rolled over at 10:10
 ```
 
@@ -155,7 +155,7 @@ tmux has no window hierarchy: windows are a flat indexed list, with no parent to
 
 `parent:` is usually unnecessary. It is **derived** from `window:` whenever that names a live window — hand-made orchestrators included, which is how most lanes are actually launched. The named window is adopted as a root so the child has something to hang from, and a lane already recorded as a root is re-parented from its entry on the next pass, so an existing tree fills in without being rewritten. `parent:` set explicitly wins.
 
-What the flat list *can* honour, it does: the depth is carried by the name (`➥lane`, `➥➥child`, `➥➥➥` below that), and a child is inserted after the **last** window of its parent's subtree, so a family stays contiguous as siblings arrive.
+What the flat list *can* honour, it does: a child is inserted after the **last** window of its parent's subtree, so a family stays contiguous as siblings arrive. The depth itself lives in the tree, and `t` on the dashboard is what draws it.
 
 ```
 claude-watchdog.sh --tree     what the tree currently holds
@@ -167,7 +167,7 @@ The body is not a literal string. Seven names are resolved when the body is *pas
 
 ```
 {{SLUG}}       27-storage
-{{WINDOW}}     the tmux window name, arrows included: ➥27-storage
+{{WINDOW}}     the tmux window name: 27-storage
 {{HANDOVER}}   <handovers>/STATUS-27-storage.md
 {{QUESTIONS}}  <handovers>/QUESTIONS-27-storage.md
 {{SCHEDULES}}  the schedules folder
@@ -232,5 +232,5 @@ A block the reader cannot make sense of is shown greyed with its reason and cann
 
 An orchestrator doing two jobs at once — splitting a plan into lanes and writing their briefs, which needs a model, and noticing when a lane stops, which needs a clock — spends tokens on the second. Measured: four lanes settled into one state and stayed there for 3½ days, and the first change the watching loop saw woke the orchestrator to broadcast a pause to four windows, four turns for a message that said "do nothing". **So the liveness half belongs in the watchdog, a deterministic loop that costs nothing, and the judgment half belongs in a Claude window that stops between the two** — the window writes one entry per lane and one more with `after:` naming all of them, then ends its turn.
 
-That needs the scheduler to say when a lane has gone quiet for good, which is what [`stranded`](watchdog.md#stranded) is: a `➥` window, idle past `WATCHDOG_STRANDED` minutes, with an **open** handover, and no pending entry naming it — not its slug, not its `resume-` entry, not an `after:` waiting on it. `idle` is a fact about the last turn; `stranded` is a fact about the future, and it is shown to a human rather than acted on. Nothing automatically resumes a stranded lane: an unrequested turn is still a turn. (A window the daemon itself wound down hard *is* resumed once its budget comes back — see [resuming a wind-down](watchdog.md#resuming-a-wind-down). That is a different case: there the turn was requested, by the directive that told the window to stop.)
+That needs the scheduler to say when a lane has gone quiet for good, which is what [`stranded`](watchdog.md#stranded) is: a lane, idle past `WATCHDOG_STRANDED` minutes, with an **open** handover, and no pending entry naming it — not its slug, not its `resume-` entry, not an `after:` waiting on it. `idle` is a fact about the last turn; `stranded` is a fact about the future, and it is shown to a human rather than acted on. Nothing automatically resumes a stranded lane: an unrequested turn is still a turn. (A window the daemon itself wound down hard *is* resumed once its budget comes back — see [resuming a wind-down](watchdog.md#resuming-a-wind-down). That is a different case: there the turn was requested, by the directive that told the window to stop.)
 {% endraw %}

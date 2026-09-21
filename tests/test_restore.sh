@@ -46,13 +46,13 @@ check "..and four rows" test "$(rows)" = 4
 check "in index order" test "$(grep -v '^#' "$SNAP" | cut -f2 | paste -sd,)" = "0,1,2,3"
 check "the home window: no session, the shell's cwd" test "$(col home 6)" = "-" -a "$(col home 4)" = "$HOME"
 check "the hand-opened claude: a session id, no flags" bash -c '[[ "$1" == fake-* && "$2" == "-" ]]' _ "$(col plain 6)" "$(col plain 8)"
-check "➥lane-a: its session id" bash -c '[[ "$1" == fake-* ]]' _ "$(col ➥lane-a 6)"
-check "..its cwd from the session" test "$(col ➥lane-a 4)" = "$HOME/proj-a"
+check "lane-a: its session id" bash -c '[[ "$1" == fake-* ]]' _ "$(col lane-a 6)"
+check "..its cwd from the session" test "$(col lane-a 4)" = "$HOME/proj-a"
 check "..model, effort, permission-mode from /proc/<pid>/cmdline" \
-  test "$(col ➥lane-a 8)" = fable -a "$(col ➥lane-a 9)" = high -a "$(col ➥lane-a 10)" = bypassPermissions
-check "..a root, launched from lane-a.md" test "$(col ➥lane-a 7)" = "-" -a "$(col ➥lane-a 11)" = lane-a.md
-check "➥lane-b: parent lane-a, from the tree" test "$(col ➥➥lane-b 7)" = lane-a
-check "..its pid is the fake claude's" kill -0 "$(col ➥➥lane-b 12)"
+  test "$(col lane-a 8)" = fable -a "$(col lane-a 9)" = high -a "$(col lane-a 10)" = bypassPermissions
+check "..a root, launched from lane-a.md" test "$(col lane-a 7)" = "-" -a "$(col lane-a 11)" = lane-a.md
+check "➥lane-b: parent lane-a, from the tree" test "$(col lane-b 7)" = lane-a
+check "..its pid is the fake claude's" kill -0 "$(col lane-b 12)"
 check "nothing frozen, nothing sent" test ! -f "$LAST" -a "$(msgs)" = 0
 
 echo "== the server dies: the snapshot is frozen, not clobbered"
@@ -86,7 +86,7 @@ done
 
 echo "== WATCHDOG_RESTORE=auto: muxtopus -d rebuilds the windows"
 setkey WATCHDOG_RESTORE auto
-sid_a="$(col ➥lane-a 6 "$LAST")"; sid_p="$(col plain 6 "$LAST")"; sid_b="$(col ➥➥lane-b 6 "$LAST")"
+sid_a="$(col lane-a 6 "$LAST")"; sid_p="$(col plain 6 "$LAST")"; sid_b="$(col lane-b 6 "$LAST")"
 # Transcripts for two of the three sessions; lane-b's is gone.
 mkdir -p "$HOME/.claude/projects/p"
 : > "$HOME/.claude/projects/p/$sid_a.jsonl"; : > "$HOME/.claude/projects/p/$sid_p.jsonl"
@@ -96,17 +96,17 @@ out="$("$M" -n -d 2>&1)"
 check "muxtopus reported the restore" grep -q "restored 2 window(s) with their sessions, 2 plain" <<<"$out"
 lw="$(tmux list-windows -t claude -F $'#{window_name}\t#{pane_current_path}')"
 check "the windows, in the saved order, with their names" \
-  test "$(cut -f1 <<<"$lw" | paste -sd,)" = "status,home,plain,➥lane-a,➥➥lane-b"
-check "..in their saved cwds" test "$(awk -F'\t' '$1=="➥lane-a"{print $2}' <<<"$lw")" = "$HOME/proj-a" \
+  test "$(cut -f1 <<<"$lw" | paste -sd,)" = "status,home,plain,lane-a,lane-b"
+check "..in their saved cwds" test "$(awk -F'\t' '$1=="lane-a"{print $2}' <<<"$lw")" = "$HOME/proj-a" \
   -a "$(awk -F'\t' '$1=="plain"{print $2}' <<<"$lw")" = "$HOME"
 check "..a gone cwd falls back to HOME, and the log says so" \
-  test "$(awk -F'\t' '$1=="➥➥lane-b"{print $2}' <<<"$lw")" = "$HOME" -a "$(grep -c 'restore: ➥➥lane-b: .*proj-b is gone' "$ST/log")" = 1
+  test "$(awk -F'\t' '$1=="lane-b"{print $2}' <<<"$lw")" = "$HOME" -a "$(grep -c 'restore: lane-b: .*proj-b is gone' "$ST/log")" = 1
 argv="$(cat "$HOME/fake-claude.argv")"
-check "➥lane-a resumed with its model, effort and permission mode" \
+check "lane-a resumed with its model, effort and permission mode" \
   grep -qx -- "--resume $sid_a --model fable --effort high --permission-mode bypassPermissions" <<<"$argv"
 check "plain resumed with no flags" grep -qx -- "--resume $sid_p" <<<"$argv"
 check "lane-b (no transcript) was not resumed" bash -c '! grep -q -- "$1" <<<"$2"' _ "$sid_b" "$argv"
-check "..the log says which" grep -q "restore: ➥➥lane-b: no transcript for session $sid_b; a plain window" "$ST/log"
+check "..the log says which" grep -q "restore: lane-b: no transcript for session $sid_b; a plain window" "$ST/log"
 notes() { tr -d '\n\\' < "$HOME/fake-claude.keys" 2>/dev/null | grep -o 'restored after the tmux server was lost at' | wc -l; }
 for i in $(seq 60); do [ "$(notes)" = 2 ] && break; sleep 0.25; done   # the fake drains a paste slowly
 check "each resumed window got the note" test "$(notes)" = 2

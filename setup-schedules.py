@@ -176,7 +176,7 @@ window opens, over the template, the body and the work footer -- never over the
 already:
 
     {{SLUG}}       27-storage
-    {{WINDOW}}     the tmux window name, arrows included: ➥27-storage
+    {{WINDOW}}     the tmux window name: 27-storage
     {{HANDOVER}}   <handovers>/STATUS-27-storage.md
     {{QUESTIONS}}  <handovers>/QUESTIONS-27-storage.md
     {{SCHEDULES}}  this folder
@@ -290,7 +290,7 @@ Both of the entries run on 2026-09-12 took a different gate: the first fired on
 the reset epoch (10:10 had passed), the second on a 4% budget. The log now says
 WHICH, so a launch can be explained after the fact:
 
-    schedule lane-27-storage.md: launched ➥27-storage (pane %401) type=work
+    schedule lane-27-storage.md: launched 27-storage (pane %401) type=work
       slug=27-storage -- due: the session window rolled over at 10:10
 
 A budget reading older than WATCHDOG_USAGE_STALE minutes (default 180) cannot
@@ -358,7 +358,7 @@ Editing or deleting the entry is the escape hatch.
 ## `stranded` -- nothing is ever going to touch that window
 
 Not a field: a STATE the watchdog publishes for a window, beside `working`,
-`idle`, `limited` and `due`. A scheduled window (its name starts with `➥`) is
+`idle`, `limited` and `due`. A scheduled window (one the tree knows) is
 called `stranded` instead of `idle` when all five of these are true:
 
   * it is idle -- not mid-turn;
@@ -366,7 +366,7 @@ called `stranded` instead of `idle` when all five of these are true:
   * it has an OPEN handover -- `handovers/STATUS-<slug>.md`, not one in `done/`,
     so there is unfinished work;
   * and NO pending entry in this folder names it: not its slug, not the
-    `resume-<slug>.md` the dashboard's "Schedule ➥resume" writes, and not an
+    `resume-<slug>.md` the dashboard's "Schedule resume" writes, and not an
     `after:` waiting on it.
 
 `idle` is a fact about the last turn -- the same word for a lane that finished
@@ -393,7 +393,7 @@ after is in practice the window it was launched from. `window: Plan4` -- a
 hand-made window -- leaves the new entry a root, as before.
 
 What the flat list can honour, it does: the depth is carried by the name
-(`➥lane`, `➥➥child`, `➥➥➥` below that), and a child is inserted after the LAST
+(the tree's own parent column, drawn by `t`), and a child is inserted after the LAST
 window of its parent subtree, so a family stays contiguous as siblings arrive.
 
     claude-watchdog.sh --tree     what the tree currently holds
@@ -459,7 +459,8 @@ this is passed in rather than exported and hoped for.
 Handoffs are NOT written into the working tree any more: a wind-down writes
 STATUS-<slug>.md into the account's handovers/, and `handover.sh done <slug>`
 moves a finished one into done/. The SLUG, never the tmux display name: a
-scheduled window is called ➥<slug>, and building a path from the display name
+scheduled window is called <slug>, and a window from an older release still
+carries ➥ markers -- building a path from the display name
 would ask for STATUS-➥lane.md while the same window's own footer told the worker
 STATUS-lane.md. Two accounts working one repo would otherwise
 overwrite each other's STATUS file without a word.

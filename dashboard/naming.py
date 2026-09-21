@@ -1,6 +1,6 @@
 """dashboard.naming -- the name a new window is OFFERED, when nobody types one.
 
-THE NAME IS NOT DECORATION. It is the slug: the tmux window (➥name), the
+THE NAME IS NOT DECORATION. It is the slug: the tmux window itself, the
 handover file (STATUS-name.md), `handover.sh done name`, and the row an agent
 is told to write its handoff into. So it is read far more often than it is
 typed, and the two failures that matter are opposite ones -- a name that says

@@ -8,14 +8,14 @@ path is spelled with `@SB@` until setup.sh replaces it.
 
 The story it tells, because a screenshot of an empty dashboard shows nothing:
 
-    ➥checkout-refactor          working             a lane with three children
-      ➥➥cart-api                needs you           sitting on a permission prompt
-        ➥➥➥cart-qa           idle, handover done three levels deep
-      ➥➥cart-ui                 limited             wound down at the session limit, a resume entry pending
-    ➥billing-migration          stranded            idle 3h, handover open, nothing pending names it
-      ➥➥billing-db  ?       working             its QUESTIONS file has two unanswered forks
-    ➥search-index               due                 its reset has passed; the watchdog prompts it next pass
-    infra                       idle                a hand-made window, opted out of both switches
+    checkout-refactor      working              a lane with three children
+      cart-api             needs you            sitting on a permission prompt
+        cart-qa            idle, handover done  three levels deep
+      cart-ui              limited              wound down at the session limit, a resume entry pending
+    billing-migration      stranded             idle 3h, handover open, nothing pending names it
+      billing-db  ?        working              its QUESTIONS file has two unanswered forks
+    search-index           due                  its reset has passed; the watchdog prompts it next pass
+    infra                  idle                 a hand-made window, opted out of both switches
 
 Time is written relative to now -- `@T-3600@` an epoch, `@HM+5400@` a clock,
 `@DATE-1800@` a stamp, each that many seconds from now -- in every file that

@@ -80,6 +80,9 @@ ENABLED="$STATE_DIR/enabled"
 # how a box the no-systemd path never armed is told apart from one somebody
 # disarmed deliberately. See the daemon's first-start block.
 ARMED_ONCE="$STATE_DIR/armed.once"
+# Written once the live windows have had their ➥ markers taken off. See
+# migrate_window_names.
+NAMES_MIGRATED="$STATE_DIR/names.migrated"
 STATUS="$STATE_DIR/status.tsv"
 PROMPTED="$STATE_DIR/prompted"
 LOG="$STATE_DIR/log"
@@ -381,6 +384,15 @@ case "${1:---once}" in
                kill -CONT "$pid" 2>/dev/null && exit 0
              fi
              exit 1 ;;
+  # Lanes are named for their slug alone now; this takes the markers off the
+  # windows an older release opened. The daemon does it once on its first
+  # start, so this is for running it by hand, and --dry-run before that.
+  # MODE, not work done here: the case runs long before the functions below
+  # are defined, which is why --restore does the same. (Found by running it:
+  # "migrate_window_names: command not found", exit 0, nothing migrated.)
+  --migrate-names)
+             MODE=migrate
+             [ "${2:-}" = "--dry-run" ] && MIGRATE_DRY=dry ;;
   --monitor-on)  mkdir -p "$DIRECTIVES"; : > "$MONITOR"
                  echo "session monitoring enabled"; exit 0 ;;
   --monitor-off) rm -f "$MONITOR"; echo "session monitoring disabled"; exit 0 ;;
@@ -717,14 +729,16 @@ sched_body() {
   awk 'p{print} /^---$/{p=1}' "$1"
 }
 
-# THE LANE SLUG OF A LIVE WINDOW: its tmux name with the depth markers off.
+# THE LANE SLUG OF A LIVE WINDOW: its tmux name with any depth markers off.
 #
-# A scheduled window is named ➥<slug>, and the slug -- not the display name --
-# is what every handover path is built from. Without this a wind-down would ask
-# for STATUS-➥ 27-storage.md while the footer of the same window told the worker
-# STATUS-27-storage.md: the same divergence as the derived-slug bug below, one
-# layer down, and unfired only because no scheduled window has been wound down
-# yet.
+# A lane's window is now named for its slug alone (tree_wname), so for a window
+# this release opened this returns the name unchanged. IT STILL STRIPS, and
+# must keep stripping for a good while yet: windows opened by an older release
+# are still on screen, and windows.tsv snapshots taken by one are still on
+# disk. The slug -- never the display name -- is what every handover path is
+# built from, and a wind-down that asked for STATUS-➥27-storage.md while the
+# same window's footer told the worker STATUS-27-storage.md would be two files
+# for one lane with nothing watching the one that was written.
 lane_slug_of() {
   local n="${1//➥/}"
   printf '%s' "$n"
@@ -1205,18 +1219,104 @@ subtree_last_index() {
 # only knows what it opened itself would draw half a session. An adopted window
 # is a ROOT: its parentage is genuinely unknown, and inventing one would be
 # worse than saying so.
+# IS THIS WINDOW A LANE? The question the ➥ prefix used to answer.
+#
+# THE ARROW WAS A CACHE, written into the display name, of something already
+# recorded elsewhere -- and the window name is the worst place to keep it,
+# because it is the one field a person can edit. So the test is now positive
+# evidence, cheapest first:
+#
+#   1. the tree already knows this window or pane -- the normal case, written
+#      by tree_record the moment the launcher opens a lane;
+#   2. a schedule entry names the slug (its own, or a resume of it);
+#   3. HANDOVERS/STATUS-<slug>.md exists -- a lane that wrote a handover is a
+#      lane by the only definition that matters.
+#
+# THE INVARIANT THIS PROTECTS, and the reason it is a whitelist and never
+# "any window": A WINDOW OPENED BY HAND, WITH NO CLAUDE IN IT, IS NOT A LANE
+# AND MUST NOT BECOME ONE. `status`, `claude`, a `bash` window, a scratch
+# window named after whatever you were doing -- none of them can pass any of
+# the three tests above, which is exactly the behaviour to keep.
+tree_is_lane() {
+  local slug="$1" wid="$2" pane="$3"
+  [ -n "$slug" ] || return 1
+  if [ -n "$wid" ] || [ -n "$pane" ]; then
+    awk -F'\t' -v w="$wid" -v p="$pane" \
+      '($3!="" && $3==w) || ($4!="" && $4==p) { f=1 } END { exit !f }' \
+      "$TREE" 2>/dev/null && return 0
+  fi
+  sched_names_slug "$slug" && return 0
+  [ -f "$HANDOVERS/STATUS-$slug.md" ] && return 0
+  return 1
+}
+
+# ADOPT WINDOWS THE TREE DOES NOT KNOW. A lane's window can predate this file,
+# be renamed by hand, or belong to a lane resumed some other way -- and a tree
+# that only knows what it opened itself would draw half a session. An adopted
+# window is a ROOT: its parentage is genuinely unknown, and inventing one would
+# be worse than saying so.
 tree_adopt() {
   local wid name pane slug known
   mux_tmux has-session -t "=$MUX_TMUX" 2>/dev/null || return 0
   while IFS=$'\t' read -r wid name pane; do
-    case "$name" in ➥*) ;; *) continue ;; esac
     known="$(awk -F'\t' -v w="$wid" '$3==w{f=1} END{print f}' "$TREE" 2>/dev/null)"
     [ -n "$known" ] && continue
-    slug="${name//➥/}"
-    [ -n "$slug" ] || continue
+    # Old windows still carry the markers; lane_slug_of strips them.
+    slug="$(lane_slug_of "$name")"
+    tree_is_lane "$slug" "$wid" "$pane" || continue
     tree_record "$slug" "" "$wid" "$pane" "(adopted)"
   done < <(mux_tmux list-windows -t "$MUX_TMUX" \
              -F $'#{window_id}\t#{window_name}\t#{pane_id}' 2>/dev/null)
+  return 0
+}
+
+# TAKE THE ➥ MARKERS OFF THE WINDOWS THAT ALREADY HAVE THEM. Once, ever.
+#
+# Lanes are named for their slug now (tree_wname). Without this, every window
+# opened by an older release keeps its arrows for the rest of its life, so a
+# session reads as half-migrated forever and two lanes opened a day apart look
+# like different kinds of thing.
+#
+# CAREFUL, BECAUSE IT RENAMES WINDOWS IN A LIVE SESSION:
+#   * only windows whose name actually starts with a marker are touched;
+#   * only if tree_is_lane agrees -- a hand-made window someone happened to
+#     name with an arrow is not a lane and is left alone;
+#   * never onto a name another window already has, which would make two
+#     windows indistinguishable and break every lookup by name;
+#   * the tree is re-keyed in the same pass, so tree.tsv and tmux agree;
+#   * every rename is logged, and the whole thing is skipped after the first
+#     successful run (NAMES_MIGRATED).
+#
+# --migrate-names --dry-run prints what it would do and changes nothing.
+migrate_window_names() {
+  local dry="${1:-}" wid name pane slug taken n=0
+  mux_tmux has-session -t "=$MUX_TMUX" 2>/dev/null || return 0
+  taken="$(mux_tmux list-windows -t "$MUX_TMUX" -F $'#{window_name}' 2>/dev/null \
+           | paste -sd$'\n' -)"
+  while IFS=$'\t' read -r wid name pane; do
+    case "$name" in ➥*) ;; *) continue ;; esac
+    slug="$(lane_slug_of "$name")"
+    [ -n "$slug" ] || continue
+    if ! tree_is_lane "$slug" "$wid" "$pane"; then
+      log "migrate-names: $name is not a lane (no tree row, entry or handover); left alone"
+      continue
+    fi
+    if printf '%s\n' "$taken" | grep -qxF "$slug"; then
+      log "migrate-names: $name -> $slug REFUSED, a window is already called $slug"
+      continue
+    fi
+    if [ "$dry" = dry ]; then
+      echo "would rename $name -> $slug (win $wid)"
+    else
+      mux_tmux rename-window -t "$wid" "$slug" 2>/dev/null || continue
+      tree_record "$slug" "$(tree_field "$slug" 2)" "$wid" "$pane" "(renamed)"
+      log "migrate-names: $name -> $slug (win $wid)"
+    fi
+    taken="$taken"$'\n'"$slug"
+    n=$(( n + 1 ))
+  done < <(mux_tmux list-windows -t "$MUX_TMUX" \
+             -F $'#{window_id}\t#{window_name}\t#{pane_id}' 2>/dev/null)
+  [ "$dry" = dry ] || [ "$n" = 0 ] || log "migrate-names: $n window(s) renamed"
   return 0
 }
 
@@ -1294,15 +1394,25 @@ tree_reparent() {
   return 0
 }
 
-# The window name for a slug at a given depth. THE MARKER CARRIES THE DEPTH,
-# because the name is the only per-window string tmux will show: one arrow for
-# a scheduled window (unchanged), two for its child, three for anything below
-# that. Capped, or a deep chain eats the name it is supposed to label.
+# The window name for a slug. THE SLUG, AND NOTHING ELSE.
+#
+# It used to be `➥slug`, with a second arrow for a child and a third below
+# that, so the name carried both "this is a lane" and how deep it sat. Both
+# have better homes and always did:
+#
+#   * "is this a lane" is tree.tsv plus the schedules and handovers on disk
+#     (tree_is_lane) -- evidence that cannot be edited by renaming a window;
+#   * the DEPTH is tree.tsv's parent column, which is what `t` on the
+#     dashboard has always drawn the indented tree from. The arrows were a
+#     second copy of it, visible in tmux and read by nothing.
+#
+# And they cost something real: `➥➥cart-api` is three columns of a narrow tmux
+# status bar spent on punctuation, and the window a person could not type the
+# name of. `depth` is still taken so every caller reads the same, and so the
+# argument does not have to be unpicked from six call sites.
 tree_wname() {
-  local slug="$1" depth="${2:-0}" m="➥"
-  [ "$depth" -ge 1 ] && m="➥➥"
-  [ "$depth" -ge 2 ] && m="➥➥➥"
-  printf '%s%s' "$m" "$slug"
+  local slug="$1"
+  printf '%s' "$slug"
 }
 
 # `effort:` PINS THE REASONING EFFORT of the window's session -- the same knob
@@ -1734,8 +1844,8 @@ launch_schedule() {
 # with the saved model, effort and permission mode, then `exec bash` so a
 # claude that exits leaves a shell in the right place; a row with no
 # session, or one whose transcript is gone, is a plain shell there and the
-# log says which. Every ➥ window goes back into the tree with its saved
-# parent. `status` is skipped (muxtopus draws the dashboard itself), and so
+# log says which. Every LANE goes back into the tree with its saved parent
+# (the snapshot's own column, not its name). `status` is skipped (muxtopus draws the dashboard itself), and so
 # is a session already live in this account: running this twice cannot
 # resume a session twice.
 #
@@ -1831,10 +1941,18 @@ restore_windows() {
   done < "$f"
 
   # 2. The tree, in the same order, so a parent's row exists before its child's.
+  #
+  # WHICH WINDOWS GET A ROW was the ➥ prefix's question and is now the
+  # snapshot's own: a row whose `parent` column is filled is a lane by
+  # construction, and tree_is_lane answers for the roots. The name was always
+  # the weakest evidence here -- windows.tsv has carried the parentage in its
+  # own column all along, and this line was asking the display name for
+  # something the file next to it already knew.
   for i in "${!R_NAME[@]}"; do
-    case "${R_NAME[$i]}" in ➥*) ;; *) continue ;; esac
-    slug="${R_NAME[$i]//➥/}"
-    [ -n "$slug" ] && tree_record "$slug" "${R_PARENT[$i]}" "${R_WID[$i]}" "${R_PANE[$i]}" "(restored)"
+    slug="$(lane_slug_of "${R_NAME[$i]}")"
+    [ -n "$slug" ] || continue
+    [ -n "${R_PARENT[$i]}" ] || tree_is_lane "$slug" "${R_WID[$i]}" "${R_PANE[$i]}" || continue
+    tree_record "$slug" "${R_PARENT[$i]}" "${R_WID[$i]}" "${R_PANE[$i]}" "(restored)"
   done
 
   # 3. Wait for each claude, hand it the note.
@@ -3107,8 +3225,10 @@ pass() {
     # one it could not say.
     #
     # All five conditions, because each one removes a lane that IS accounted
-    # for: a ➥ name (it is a scheduled lane, not a window someone is sitting
-    # in), idle (not working), idle for long enough, an OPEN handover (there is
+    # for: an OPEN HANDOVER, which is what makes a window a lane rather than
+    # one someone is sitting in (it used to be the ➥ in the name, which a
+    # rename could remove), idle (not working), idle for long enough, an
+    # unfinished handover (there is
     # unfinished work; a done handover means the lane finished), and no pending
     # entry naming it -- its slug, its resume entry, or an `after:` waiting on
     # it -- because such an entry IS the thing that will touch it.
@@ -3142,14 +3262,12 @@ pass() {
     stranded=""; lane=""
     if [ "$state" = idle ] && [ "${STRANDED_MIN:-0}" -gt 0 ] 2>/dev/null \
        && [ "$idle" -ge $(( ${STRANDED_MIN:-0} * 60 )) ] 2>/dev/null; then
-      case "$name" in
-        ➥*) lane="$(lane_slug_of "$name")"
-            if [ -n "$lane" ] && [ -f "$HANDOVERS/STATUS-$lane.md" ] \
-               && [ ! -f "$HANDOVERS/done/STATUS-$lane.md" ] \
-               && ! sched_names_slug "$lane"; then
-              stranded=1
-            fi ;;
-      esac
+      lane="$(lane_slug_of "$name")"
+      if [ -n "$lane" ] && [ -f "$HANDOVERS/STATUS-$lane.md" ] \
+         && [ ! -f "$HANDOVERS/done/STATUS-$lane.md" ] \
+         && ! sched_names_slug "$lane"; then
+        stranded=1
+      fi
     fi
     if [ -n "$stranded" ]; then
       state=stranded
@@ -3235,6 +3353,15 @@ if [ "$MODE" = check ]; then
   exit $?
 fi
 
+if [ "$MODE" = migrate ]; then
+  if [ "${MIGRATE_DRY:-}" = dry ]; then
+    migrate_window_names dry
+  else
+    migrate_window_names && : > "$NAMES_MIGRATED"
+  fi
+  exit 0
+fi
+
 if [ "$MODE" = restore ]; then
   restore_windows "${RESTORE_FILE:-$SNAPSHOT_LAST}"
   exit $?
@@ -3268,6 +3395,14 @@ if [ "$MODE" = daemon ]; then
       log "armed: this install had no record of an arm/disarm decision" \
           "-- press w on the dashboard to disarm"
     fi
+  fi
+
+  # ONCE: take the ➥ markers off windows an older release opened, so a session
+  # is not half one convention and half the other for as long as those windows
+  # live. Guarded by its own file rather than by ARMED_ONCE -- an install that
+  # has been armed for months still needs this exactly once.
+  if [ ! -f "$NAMES_MIGRATED" ]; then
+    migrate_window_names && : > "$NAMES_MIGRATED"
   fi
   # RELOAD BY RE-EXEC. A running daemon is a bash loop holding the values it
   # parsed at start, so a config edit -- or SIGHUP, from --reload or from

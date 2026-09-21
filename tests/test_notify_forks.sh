@@ -173,7 +173,7 @@ check "the typed text is the answer, inside fork 3" \
 echo "== the last fork: the file is marked ANSWERED, and the idle lane is told"
 check "the marker is in the file" grep -q '^\*\*ANSWERED' "$HO/QUESTIONS-lane-q.md"
 check "..once" [ "$(grep -c 'ANSWERED' "$HO/QUESTIONS-lane-q.md")" = 1 ]
-check "the fork message says so" grep -q "marked ANSWERED · told ➥lane-q" <<<"$(last_edit)"
+check "the fork message says so" grep -q "marked ANSWERED · told lane-q" <<<"$(last_edit)"
 check "the typed reply got the same note back" grep -q "✓ your answer written from the phone" <<<"$(last_text)"
 typed="$(while IFS= read -r k; do eval "printf '%s' $k"; done < "$HOME/fake-claude.keys")"
 check "the lane's pane got the sentence" grep -qF "Your questions are answered in $HO/QUESTIONS-lane-q.md" <<<"$typed"

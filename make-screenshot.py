@@ -60,8 +60,8 @@ TIME_TOKEN = re.compile(r"@(T|HM|DATE)([+-]\d+)@")
 
 # The seven windows tree.tsv's @1..@7 stand for, opened in this order on the
 # sandbox server so the ids come out as written.
-WINDOWS = ["➥checkout-refactor", "➥➥cart-api", "➥➥➥cart-qa", "➥➥cart-ui",
-           "➥billing-migration", "➥➥billing-db", "➥search-index"]
+WINDOWS = ["checkout-refactor", "cart-api", "cart-qa", "cart-ui",
+           "billing-migration", "billing-db", "search-index"]
 # Two throwaway dev servers so the lanes table has rows that belong to the
 # sandbox account: (port, cwd under the fake HOME).
 SERVERS = [(5173, "src/acme/checkout"), (8000, "src/acme/billing")]

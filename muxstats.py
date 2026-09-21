@@ -960,6 +960,8 @@ def lanes_collect(state, wd_dir, schedules_dir, handovers_dir, cutoff: int = 0) 
         for _, rest in _log_lines(wd / "log"):
             m = re.match(r"^stranded: (\S+)", rest)
             if m:
+                # Lanes are named for their slug now; an older
+                # release's windows still carry the markers.
                 s = m.group(1).replace("➥", "")
                 stranded[s] = stranded.get(s, 0) + 1
         for s, n in stranded.items():

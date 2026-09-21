@@ -1,8 +1,8 @@
-a1b2c3d4	➥checkout-refactor	%1	2.0.1	412000	working			0	2140000	310000	0	opus	12		@SB@/home/src/acme/checkout	0	0	0
-e5f6a7b8	➥➥cart-api	%2	2.0.1	236000	waiting			0	910000	120000	0	fable	190		@SB@/home/src/acme/checkout	0	0	0
-c9d0e1f2	➥➥➥cart-qa	%3	2.0.1	88000	idle			0	260000	40000	0	sonnet	2880		@SB@/home/src/acme/checkout	0	0	0
-a3b4c5d6	➥➥cart-ui	%4	2.0.1	310000	limited	@HM+5400@		0	1180000	150000	0	fable	1320		@SB@/home/src/acme/checkout	@T-7200@	0	0
-e7f8a9b0	➥billing-migration	%5	2.0.1	505000	stranded			0	1960000	280000	0	opus	11400		@SB@/home/src/acme/billing	0	0	0
-c1d2e3f4	➥➥billing-db	%6	2.0.1	148000	working			0	520000	70000	0	opus[1m]	5		@SB@/home/src/acme/billing	0	0	0
-a5b6c7d8	➥search-index	%7	2.0.1	61000	due	@HM-1800@		@T-21600@	190000	20000	0	sonnet	2460		@SB@/home/src/acme/search	0	0	0
+a1b2c3d4	checkout-refactor	%1	2.0.1	412000	working			0	2140000	310000	0	opus	12		@SB@/home/src/acme/checkout	0	0	0
+e5f6a7b8	cart-api	%2	2.0.1	236000	waiting			0	910000	120000	0	fable	190		@SB@/home/src/acme/checkout	0	0	0
+c9d0e1f2	cart-qa	%3	2.0.1	88000	idle			0	260000	40000	0	sonnet	2880		@SB@/home/src/acme/checkout	0	0	0
+a3b4c5d6	cart-ui	%4	2.0.1	310000	limited	@HM+5400@		0	1180000	150000	0	fable	1320		@SB@/home/src/acme/checkout	@T-7200@	0	0
+e7f8a9b0	billing-migration	%5	2.0.1	505000	stranded			0	1960000	280000	0	opus	11400		@SB@/home/src/acme/billing	0	0	0
+c1d2e3f4	billing-db	%6	2.0.1	148000	working			0	520000	70000	0	opus[1m]	5		@SB@/home/src/acme/billing	0	0	0
+a5b6c7d8	search-index	%7	2.0.1	61000	due	@HM-1800@		@T-21600@	190000	20000	0	sonnet	2460		@SB@/home/src/acme/search	0	0	0
 e9f0a1b2	infra	%8	2.0.1	23000	idle			0	74000	9000	1	haiku	3900		@SB@/home/src/acme/infra	0	1	0
