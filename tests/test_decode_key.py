@@ -172,7 +172,36 @@ check(through_pipe([b"\x1b", b"[", b"1", b";", b"5", b"H"]) == "HOME",
       "six chunks still make one ctrl-Home")
 check(through_pipe([b"\x1b[4~"]) == "END", "and one chunk is the easy case")
 check(through_pipe([b"\x1b"]) == "\x1b",
-      "a lone ESC that never grows is still Escape (after the 250ms)")
+      "a lone ESC that never grows is still Escape (after ESC_TIME)")
+
+# ------------------------------------------------------------ the two budgets
+# esc is the most pressed key on the dashboard -- it leaves every view and
+# opens the muxtopus menu -- and it used to take the FULL 250ms sequence
+# budget to resolve, because a lone ESC is a prefix. It now has its own,
+# shorter one; a sequence that has actually started keeps the generous budget.
+t0 = time.time()
+k = through_pipe([b"\x1b"])
+esc_ms = (time.time() - t0) * 1000
+check(k == "\x1b", "a lone ESC is Escape")
+check(esc_ms < 200,
+      "...and resolves in well under the old 250ms (took %.0fms)" % esc_ms)
+check(esc_ms >= d.ESC_TIME * 1000 * 0.5,
+      "...but does wait long enough for a tail to arrive (%.0fms)" % esc_ms)
+
+t0 = time.time()
+k = through_pipe([b"\x1b[A"])
+arrow_ms = (time.time() - t0) * 1000
+check(k == "UP", "an arrow delivered in one write is an arrow")
+check(arrow_ms < 50,
+      "...and costs no wait at all, the usual case (%.1fms)" % arrow_ms)
+
+# A tail that arrives INSIDE the ambiguity window is still a sequence.
+check(through_pipe([b"\x1b", b"[A"], gap=d.ESC_TIME / 2) == "UP",
+      "ESC and its tail split by half the budget still decode as one arrow")
+# ...and once "ESC [" is in hand there is no ambiguity left, so a slow tail
+# has the full 250ms, well past ESC_TIME.
+check(through_pipe([b"\x1b[", b"A"], gap=d.ESC_TIME * 1.5) == "UP",
+      "a sequence already begun keeps the generous budget for its tail")
 check(through_pipe([b"\x1b["]) == d.IGNORED,
       "a lone ESC [ that never grows is IGNORED, not Escape")
 check(through_pipe([b"q"]) == "q", "an ordinary key does not wait at all")

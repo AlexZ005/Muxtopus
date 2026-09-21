@@ -1,18 +1,36 @@
 """dashboard.views.newsession -- c: a new claude session, on ONE screen.
 
-A FORM, NOT A WIZARD. `c` asks for the name and opens a menu with every other
-parameter on it, each row already carrying the default it would use, and
-`Create` on the first row -- so the whole of "give me a window" is `c enter
-enter`, and changing something is arrowing to that row and pressing enter on
-it. It was seven pickers in a fixed order, which meant answering six questions
-you did not have an opinion about to reach the one you did, and no way to go
-back and change your mind about the second one without abandoning the flow.
+A FORM, NOT A WIZARD, AND NOT A MODAL EITHER. `c` opens one menu with every
+parameter on it, each row already carrying the value it would use, and
+`Create` on the first row -- so the whole of "give me a window" is `c enter`,
+and changing something is arrowing to that row and pressing enter on it. It
+was seven pickers in a fixed order, which meant answering six questions you
+had no opinion about to reach the one you did.
 
-THE NAME IS THE ONE QUESTION ASKED OUT LOUD, because it is the one nothing
-else can answer: it is the window in the tree, STATUS-<name>.md, and what the
-lane is called for the rest of its life. It is asked with an offer in the
-brackets -- the folder and one word, `scripts-otter` (dashboard/naming.py) --
-so enter takes it and anything typed replaces it.
+THE NAME IS IN THE CREATE ROW, and it is typed there:
+
+    Create ➥[muxtopus-crane       ]  and go to its window  · type to rename
+
+It was a prompt over the top of the form, asked before the form was drawn.
+Three things were wrong with that. The modal's box RESIZED as the name was
+typed and the form jumped when it closed; the name was answered before the
+folder it is derived from could be seen; and it was a question you had to
+dismiss even when the offer was the answer. Now the row IS the field --
+letters and backspace go into it (App._menu_edit), everything else belongs to
+the menu -- it is padded to MAX_SLUG so nothing moves as you type, and the
+first character typed replaces the whole offer rather than appending to it.
+
+THE OFFER MOVES ON when you ask again. `c`, then `c` again, used to suggest
+the same name twice: the offer was seeded from the folder alone and the only
+thing that advanced it was a name being TAKEN -- which a name you just
+declined is not. The form counts its opens and passes that as naming.suggest's
+nonce.
+
+A NAME IS REFUSED BY Create, not while it is typed. There is no modal to put
+back up, so an empty or taken name leaves the form exactly as it is with the
+reason on the notice line, and the fix is to keep typing. sanitise_slug runs
+once, on Create, and never per keystroke -- a field that rewrites the
+character under the cursor is not a field.
 
 TWO SUB-WINDOW ROWS, under Create. A fork of the lane the cursor is on, empty
 or carrying on from that lane's handover, is the common second window and was
@@ -78,6 +96,10 @@ class NewSession:
         # The window this form asked for and has not landed in yet:
         # {"slug", "until"}. See follow_hint.
         self.follow: dict | None = None
+        # How many times `c` has been pressed this run. It is the nonce the
+        # offered name is seeded with, so asking again asks for a different
+        # word -- see start_new_session.
+        self._opens = 0
 
     # ------------------------------------------------ c: the form
     # ONE MENU, every parameter on it, Create first. app.ns holds the answers
@@ -99,19 +121,25 @@ class NewSession:
             "window": "", "parent": "", "prompt": "",
             "title": "", "slug": "",
         }
-        # Worked out ONCE, so a name refused as taken is asked again with the
-        # same offer still in the brackets -- a suggestion that changed under
-        # a retyped answer would be a third name to read.
-        self.app.ns["offer"] = self._suggested_name()
-        # THE NAME IS ASKED FIRST, and it is the only thing that is. Not
-        # because it is hard -- enter answers it -- but because it is the one
-        # parameter nothing else can choose well: it is the window in the
-        # tree, the handover file and what a lane is called for the rest of
-        # its life, and a form that quietly filled it in was a form that
-        # handed out names nobody had read. The offer is in the brackets, so
-        # the window nobody has an opinion about is still one gesture:
-        # `c enter enter`, one keystroke more than it was.
-        self._ask_name(first=True)
+        # A SECOND `c` OFFERS A SECOND NAME. The offer used to be seeded from
+        # the folder alone, so pressing `c`, reading `muxtopus-crane` and
+        # pressing `c` again offered `muxtopus-crane` again -- the only thing
+        # that moved it on was a name being TAKEN, and a name you just
+        # declined is not taken. The counter is what "ask me again" means.
+        self._opens += 1
+        self.app.ns["offer"] = self._suggested_name(self._opens - 1)
+        # NO MODAL. The name is the one parameter nothing else can choose
+        # well, so it is still the first thing on the screen -- but it is now
+        # typed INTO the Create row rather than into a prompt over the top of
+        # it. `c` used to open a modal whose box resized as the name was
+        # typed, which meant the form underneath jumped when it closed and the
+        # answer was given before the folder it belongs to could be seen.
+        # The row is the field, the field is fixed width, and `c enter` is one
+        # keystroke SHORTER than it was.
+        self.app.ns["slug"] = self.app.ns["offer"]
+        self.app.ns["title"] = self.app.ns["offer"]
+        self.app.ns["typed"] = False
+        self.app.open_menu("newsession")
         return ""
 
     @staticmethod
@@ -127,7 +155,7 @@ class NewSession:
             base = os.path.basename(os.path.dirname(cwd.rstrip("/"))).lstrip(".")
         return sanitise_slug(base)
 
-    def _suggested_name(self) -> str:
+    def _suggested_name(self, nonce: int = 0) -> str:
         """The name in the brackets: the folder and one word (naming.py).
 
         WHY NOT THE FOLDER ALONE, which is what it used to be: the second
@@ -139,7 +167,7 @@ class NewSession:
         the first one in a folder gets a word too, so there is no odd one
         out and no renaming when the second arrives."""
         return naming.suggest(self._name_for(self.app.ns["cwd"]),
-                              self._taken_slugs())
+                              self._taken_slugs(), nonce=nonce)
 
     def _default_cwd(self) -> str:
         """Where a session starts when nobody says otherwise: the setting, the
@@ -171,23 +199,22 @@ class NewSession:
         where = ("under %s" % ns["window"]) if ns.get("window") else "a top-level window"
         prompt = ns.get("prompt") or ""
         items = [
-            {"label": "Create ➥%s  and go to its window" % ns["slug"],
-             "act": self._create},
+            {"label": "Create ➥[%s]  and go to its window  · type to rename"
+                      % self._name_field(),
+             "act": self._create, "edit": self._name_key},
             {"sep": True},
         ]
         items += self._quick_rows()
         items += [
-            {"label": "Name: %s  the window, the handover, `handover.sh done`" % ns["slug"],
-             "act": self._edit_name, "stay": True},
             {"label": "Folder: %s  where claude starts" % self._short(ns["cwd"]),
              "act": self._edit_cwd, "stay": True},
             {"label": "Model: %s  a CLI alias; the MODEL column's names are refused"
-                      % (ns["model"] or "(account default)"),
+                      % self._shows("model", ns["model"]),
              "act": self._edit_model, "stay": True},
-            {"label": "Effort: %s" % (ns["effort"] or "(account default)"),
+            {"label": "Effort: %s" % self._shows("effort", ns["effort"]),
              "act": self._edit_effort, "stay": True},
             {"label": "Permission mode: %s  cannot be changed after launch"
-                      % (ns["mode"] or "(account default)"),
+                      % self._shows("mode", ns["mode"]),
              "act": self._edit_mode, "stay": True},
             {"label": "Where: %s" % where, "act": self._edit_where, "stay": True},
             {"label": "First prompt: %s  empty makes it a plan entry"
@@ -284,6 +311,78 @@ class NewSession:
                    "before stopping.")
         return self._create_sub(tpl.replace("{{STATUS_FILE}}", status).strip())
 
+    # ------------------------------------------- the name, typed in the row
+    # FIXED WIDTH, and that is the point of padding a field nobody asked to
+    # be padded. The Create row is the widest thing on this menu, so the
+    # MENU's width followed the name: every character typed re-measured the
+    # box and the whole form twitched sideways under the cursor. Padded to
+    # MAX_SLUG the row is the same width empty, full, and at every keystroke
+    # in between -- and the blank space is the budget, which is worth seeing
+    # on a field that is silently cut at 22.
+    def _name_field(self) -> str:
+        return self.app.ns["slug"].ljust(naming.MAX_SLUG)
+
+    def _name_key(self, key: str) -> bool:
+        """Type into the Create row. True for a key this took.
+
+        WHAT IT TAKES is deliberately narrow: the characters a slug may hold,
+        and backspace. Everything else -- enter, the arrows, esc, the page
+        keys -- belongs to the menu, so the row is a field without ever
+        becoming a mode you have to leave. sanitise_slug is not applied per
+        keystroke: it would rewrite the character under the cursor as it was
+        typed, which is the one thing a text field must never do. It is
+        applied once, on Create."""
+        ns = self.app.ns
+        if key in ("\x7f", "\b"):
+            # THE OFFER GOES WHOLE on the first backspace. Deleting one
+            # character of a name you never typed leaves `muxtopus-cran`,
+            # which is not a name anybody wanted and is one keystroke from
+            # being created by accident.
+            ns["slug"] = "" if not ns.get("typed") else ns["slug"][:-1]
+            ns["typed"] = True
+            ns["title"] = ns["slug"]
+            return True
+        # SPACE IS A HYPHEN, and it must be CONSUMED either way. A slug has no
+        # spaces, so the obvious reading of a typed space is the one
+        # sanitise_slug always gave it -- `typed one` is `typed-one`. Letting
+        # it fall through instead would hand it to the menu, where space
+        # CLOSES the form: typing a two-word name would have thrown the whole
+        # thing away mid-word.
+        if key == " ":
+            key = "-"
+        if len(key) == 1 and key.isprintable():
+            if not ns.get("typed"):
+                # The first character REPLACES the offer rather than being
+                # appended to it: the offer is a suggestion, and typing is
+                # how you decline it.
+                ns["slug"] = ""
+                ns["typed"] = True
+            if len(ns["slug"]) < naming.MAX_SLUG:
+                ns["slug"] += key
+                ns["title"] = ns["slug"]
+            return True
+        return False
+
+    # ------------------------------------------ what a default actually IS
+    def _shows(self, what: str, chosen: str) -> str:
+        """The value a row reports: what was picked, or -- when nothing was --
+        WHAT WILL ACTUALLY HAPPEN.
+
+        These three rows used to read "(account default)", which names the
+        mechanism (no flag is passed) and not the outcome, and the outcome is
+        the only part anyone wants to know before pressing Create. So the
+        settings.json layers are read and the value is named. When nothing
+        sets it anywhere, that is said too -- and it is a different answer
+        from a value, not a worse one: it means the CLI's own built-in
+        default applies, which this cannot know without running claude."""
+        if chosen:
+            return chosen
+        value, where = muxsettings.effective_default(
+            what, self.app.ns["cwd"], CONFIG_DIR)
+        if value:
+            return "%s  (from %s)" % (value, where)
+        return "unset  (no flag; the CLI's own default)"
+
     @staticmethod
     def _short(path: str) -> str:
         home = os.path.expanduser("~")
@@ -308,55 +407,17 @@ class NewSession:
     def _stay(self) -> str:
         return ""
 
-    def _edit_name(self) -> str:
-        return self._ask_name(first=False)
-
-    def _ask_name(self, first: bool, title: str = "", buf: str = "") -> str:
-        """The name prompt, on `c` and on the Name row alike.
-
-        THE BRACKETS HOLD WHAT ENTER WOULD TAKE -- the offered name on `c`,
-        the current one on the row -- and the line itself starts EMPTY, so
-        typing a name of your own is typing it, not clearing a prefilled one
-        first. App.prompt_key is where an empty line becomes the placeholder.
-
-        `first` is the difference between the two callers and it is only
-        about what surrounds the prompt: on `c` there is no form yet, so
-        answering opens it and esc abandons a flow that has produced nothing;
-        on the row the form is open underneath and both answers go back to
-        it."""
-        self.app.prompt = {
-            "title": title or "name  (the slug: window ➥name, STATUS-name.md)",
-            "buf": buf,
-            "placeholder": self.app.ns["offer"] if first else self.app.ns["slug"],
-            "fn": self._name_then_form if first else self._set_name,
-            "keep_menu": not first,
-            "on_cancel": self._cancel if first else self._stay}
-        return ""
-
-    def _name_then_form(self, text: str) -> str:
-        """`c`'s own prompt: take the name, then open the form on it. A name
-        that was refused has put the prompt back up, and that is the test --
-        the form opens on an accepted name and on nothing else."""
-        self._set_name(text, first=True)
-        if self.app.prompt is None:
-            self.app.open_menu("newsession")
-        return ""
-
-    def _set_name(self, text: str, first: bool = False) -> str:
-        slug = sanitise_slug(text.strip())
-        why = ""
+    # THE NAME IS CHECKED ON CREATE, not as it is typed. There is no modal
+    # to put back up any more, so a refusal has to be something the form can
+    # say while staying open: Create reports why and changes nothing, the
+    # name is still in the row, and the fix is to keep typing.
+    def _name_problem(self) -> str:
+        """Why this name cannot be used, or "" when it can."""
+        slug = sanitise_slug(self.app.ns["slug"].strip())
         if not slug:
-            why = "empty"
-        elif slug != self.app.ns["slug"] and slug in self._taken_slugs():
-            why = "%s is taken (a window or an entry has it)" % slug
-        if why:
-            # Said in the prompt's own title, and asked again with what was
-            # typed still on the line: the notice is not drawn while a prompt
-            # owns the footer.
-            self._ask_name(first, title="%s — name" % why, buf=text.strip())
-            return ""
-        self.app.ns["title"] = text.strip()
-        self.app.ns["slug"] = slug
+            return "the name is empty — type one into the Create row"
+        if slug in self._taken_slugs():
+            return "%s is taken (a window or an entry has it) — type another" % slug
         return ""
 
     def _edit_cwd(self) -> str:
@@ -441,7 +502,19 @@ class NewSession:
         return "cancelled"
 
     def _create(self) -> str:
-        """Write the entry, then watch for the window it will become."""
+        """Write the entry, then watch for the window it will become.
+
+        The name is checked HERE because there is no longer a modal to refuse
+        it in. A bad one leaves the form open, exactly as it was, with the
+        reason on the notice line -- so the fix is to carry on typing rather
+        than to start again."""
+        why = self._name_problem()
+        if why:
+            return why
+        # Sanitised once, at the end, rather than per keystroke: applying the
+        # slug rule while someone is typing rewrites the character under the
+        # cursor, which is the one thing a text field must not do.
+        self.app.ns["slug"] = sanitise_slug(self.app.ns["slug"].strip())
         slug = self.app.ns["slug"]
         msg = self._ns_write()
         if not msg.startswith("could not"):
@@ -675,23 +748,32 @@ class NewSession:
 # deck_status.py -- the split moved who owns the words, not the words.
 HELP_NEWSESSION = f"""
   [{DIM}]A NEW CLAUDE SESSION (c)[/]
-    ONE SCREEN, not a questionnaire. `c` asks for the NAME, with an offer in
-    the brackets, and then opens a form with every other parameter already
-    filled in from Settings ▸ the new-window defaults and `Create` on the
-    first row -- so a window you have no particular opinion about is
-    [bold]c enter enter[/], and one you do is arrowing to that row and
-    pressing enter on it. The form stays open while you do: set the effort,
-    change your mind about the folder, set it back. esc on a row leaves that
-    row alone; esc on the form abandons the whole thing.
+    ONE SCREEN, not a questionnaire and no modal in front of it. `c` opens a
+    form with every parameter already filled in from Settings ▸ the new-window
+    defaults and `Create` on the first row -- so a window you have no
+    particular opinion about is [bold]c enter[/], and one you do is arrowing
+    to that row and pressing enter on it. The form stays open while you do:
+    set the effort, change your mind about the folder, set it back. esc on a
+    row leaves that row alone; esc on the form abandons the whole thing.
 
-    THE NAME IS ASKED, NOT ASSUMED. It is the slug -- the window ➥name,
-    STATUS-name.md, `handover.sh done name` -- and it is the one parameter a
-    default cannot choose well, so the line is yours to type. What is in the
-    brackets is what enter takes if you type nothing: the FOLDER AND ONE WORD,
-    `scripts-otter`, checked against every window and pending entry first. The
-    word is there because the second window in a folder used to be `scripts-2`
-    and the third `scripts-3`, and a digit tells you nothing about which of
-    the three you are looking at.
+    THE NAME IS TYPED INTO THE CREATE ROW:
+
+        Create ➥[scripts-otter       ]  and go to its window  · type to rename
+
+    It is the slug -- the window ➥name, STATUS-name.md, `handover.sh done
+    name` -- so it is worth reading before you press enter, and what is in the
+    brackets is what enter takes. Type and it is yours: the first character
+    replaces the whole offer, backspace clears it, and the field is padded so
+    the form does not move under you while you type. An empty or already-taken
+    name is refused by Create with the reason on the notice line, and the form
+    stays exactly as it was.
+
+    THE OFFER IS THE FOLDER AND ONE WORD, `scripts-otter`, checked against
+    every window and pending entry first. The word is there because the second
+    window in a folder used to be `scripts-2` and the third `scripts-3`, and a
+    digit tells you nothing about which of the three you are looking at. Press
+    `c` again and you get a different word -- asking again is how you say you
+    did not want that one.
 
     TWO SUB-WINDOW ROWS sit under Create whenever the cursor is on a live
     session: `empty, no prompt`, and `continues from its handover`, which
@@ -700,8 +782,6 @@ HELP_NEWSESSION = f"""
     that window; the handover row is greyed with the reason until that lane
     has actually written one (`Wind down` in the session menu asks for it).
     Create itself is unchanged: a top-level window.
-    Name          enter reopens the prompt; the brackets then hold the name
-                  it has now, so enter keeps it
     Folder        enter opens the candidates -- the cursor's folder, the
                   setting, every live session's, the dirty trees the watchdog
                   publishes, the checkouts under MUXTOPUS_HOME -- or a typed
@@ -711,7 +791,16 @@ HELP_NEWSESSION = f"""
                   the paste, so the MODEL column's names are not offered
     Effort        passed as claude --effort
     Permission    pinned for the life of the window; it cannot be fixed
-                  afterwards. (account default) passes no flag at all
+                  afterwards
+
+    MODEL, EFFORT AND PERMISSION SAY WHAT YOU WILL GET. A row nobody has set
+    used to read "(account default)", which names the mechanism -- no flag is
+    passed -- and not the outcome. It now reads the value out of the
+    settings.json layers that will actually apply (the project's
+    settings.local.json, its settings.json, then the account's) and names it
+    and the file. When nothing anywhere sets it the row says `unset`, which is
+    a different answer and an honest one: the CLI's own built-in default
+    applies, and that cannot be known without running claude.
     Where         a top-level window, or under a live one: ➥➥name, inserted
                   after that parent's subtree and drawn indented
     First prompt  empty writes a PLAN entry: the session gets its identity

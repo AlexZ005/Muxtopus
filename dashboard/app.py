@@ -525,6 +525,25 @@ class App:
         if j is not None:
             self.menu["i"] = j
 
+    def _menu_edit(self, key: str) -> bool:
+        """Hand `key` to the row under the cursor, if that row is a FIELD.
+
+        A row becomes one by carrying `"edit": fn`, where fn(key) returns True
+        for a key it consumed and False for one it did not -- so a field takes
+        the letters and backspace and leaves everything else to the menu. This
+        is deliberately the whole of the mechanism: the row owns its buffer and
+        its rules, and App only has to know where in the key order to ask.
+
+        Returns True when the row took the key."""
+        if self.menu is None:
+            return False
+        items = self.menu_entries()
+        i = self.menu["i"]
+        if not (0 <= i < len(items)):
+            return False
+        fn = items[i].get("edit")
+        return bool(fn and fn(key))
+
     def menu_activate(self) -> None:
         if self.menu is None:
             return
@@ -828,11 +847,19 @@ class App:
                 self.menu_page(key)
             elif key in ("\r", "\n"):
                 self.menu_activate()
-            elif key in ("\x1b", " ", "q", "Q"):
-                if key == "\x1b":
-                    self.menu_esc()
-                else:
-                    self.menu = None
+            elif key == "\x1b":
+                self.menu_esc()
+            # A ROW THAT IS ALSO A FIELD. The new-session form's Create row
+            # holds the name, typed into the row itself rather than into a
+            # modal over the top of it -- so `c` is one screen from start to
+            # finish and the layout never jumps. Checked here, AFTER esc and
+            # the movers (which a field has no business stealing) and BEFORE
+            # q/space, which are ordinary characters in a name and must not
+            # close the menu while one is being typed.
+            elif self._menu_edit(key):
+                pass
+            elif key in (" ", "q", "Q"):
+                self.menu = None
             return True
         view = self.view_of()
         # ←→ BELONG TO THE TAB STRIP when there is one, and to the view when

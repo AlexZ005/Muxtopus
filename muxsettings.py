@@ -251,6 +251,61 @@ def settings_json_path(scope: str, cwd: str, config_dir: str | pathlib.Path) -> 
     return pathlib.Path(cwd) / ".claude" / "settings.json"
 
 
+# WHAT "THE ACCOUNT DEFAULT" ACTUALLY IS. The new-session form used to print
+# "(account default)" on three rows, which names the MECHANISM (no flag is
+# passed) and not the OUTCOME -- and the outcome is the only part anybody
+# wants: "which model am I about to get". So read it, and say the value.
+#
+# THE LAYERS ARE CLAUDE CODE'S, not ours, most specific first: a project's
+# settings.local.json, its settings.json, then the account's. Only these
+# three, because they are the ones a dashboard can read without guessing at
+# enterprise policy paths that may not exist on this machine.
+_SETTINGS_KEYS = {
+    "model": ("model",),
+    "effort": ("effortLevel",),
+    "mode": ("permissions", "defaultMode"),
+}
+
+
+def _dig(data, path):
+    for k in path:
+        if not isinstance(data, dict) or k not in data:
+            return None
+        data = data[k]
+    return data if isinstance(data, str) and data else None
+
+
+def effective_default(what: str, cwd: str, config_dir) -> tuple[str, str]:
+    """(value, where) for `what` in ("model", "effort", "mode").
+
+    ("", "") when nothing sets it, which is a real answer and a different one
+    from a value: it means no flag is passed AND no file names it, so the CLI's
+    own built-in default applies and this cannot say what that is without
+    running claude. Saying "unset" is honest; inventing "opus" would not be.
+    """
+    keys = _SETTINGS_KEYS.get(what)
+    if not keys:
+        return "", ""
+    for path in (pathlib.Path(cwd) / ".claude" / "settings.local.json",
+                 pathlib.Path(cwd) / ".claude" / "settings.json",
+                 pathlib.Path(config_dir) / "settings.json"):
+        try:
+            data = json.loads(path.read_text() or "{}")
+        except (OSError, ValueError):
+            continue
+        found = _dig(data, keys)
+        if found:
+            # ~/.claude/settings.json rather than the whole path: the row it
+            # goes on is already long, and which of the three it was is the
+            # part that matters.
+            where = str(path)
+            home = os.path.expanduser("~")
+            if where.startswith(home + "/"):
+                where = "~" + where[len(home):]
+            return found, where
+    return "", ""
+
+
 def set_default_mode(path: pathlib.Path, mode: str) -> tuple[str, str]:
     """THE ONE WRITE to a Claude settings.json: permissions.defaultMode.
 

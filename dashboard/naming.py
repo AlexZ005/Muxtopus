@@ -23,16 +23,21 @@ the venv is broken: it is two lists and a shuffle. The lists are short words
 (six letters at most) for the same reason the slug is cut to 22 -- both ends
 of it are read in a tmux window name and in a table column.
 
-    suggest(base, taken, rng=None) -> str     the name to offer
-    words()                        -> (adjectives, nouns)
+    suggest(base, taken, rng=None, nonce=0) -> str   the name to offer
+    words()                                 -> (adjectives, nouns)
 
-THE SAME FOLDER ALWAYS OFFERS THE SAME WORD, because the shuffle is seeded
-from the folder's own name and not from the clock. A suggestion that changed
-every time you looked at it would be one nobody could learn -- open `c`,
-change your mind, open it again, and the window you were about to make is
-called something else -- and it would make the dashboard's golden screens a
-coin flip. What moves the offer on is a name being TAKEN, which is the only
-thing that should.
+THE SAME FOLDER AND NONCE ALWAYS OFFER THE SAME WORD, because the shuffle is
+seeded from those and never from the clock: `suggest` is a pure function of
+its arguments, so the dashboard's golden screens are fixed rather than a coin
+flip.
+
+THE NONCE IS THE CALLER SAYING "NOT THAT ONE". Pressing `c`, seeing
+`scripts-otter` and pressing `c` again used to offer `scripts-otter` a second
+time, because the only thing that moved the offer on was a name being TAKEN
+-- and the name you just declined is not taken. So the form counts its own
+opens and passes the count here; asking again asks for a different word,
+which is what asking again means. Everything else about the seeding is
+unchanged, and nonce=0 is exactly the old answer.
 
 PURE: no I/O, no dashboard state, no Rich. `taken` is any container answering
 `in`, and `rng` is a random.Random a caller (a test) can pass to override the
@@ -76,12 +81,18 @@ def words() -> tuple[tuple[str, ...], tuple[str, ...]]:
     return ADJECTIVES, NOUNS
 
 
-def _stable_rng(base: str) -> random.Random:
-    """A generator seeded from `base` alone. blake2b rather than hash(),
-    whose string seed is salted per PROCESS -- the two `c`s either side of a
-    dashboard reload would disagree, which is exactly the surprise this
-    exists to avoid."""
-    digest = hashlib.blake2b(base.encode("utf-8", "replace"), digest_size=8)
+def _stable_rng(base: str, nonce: int = 0) -> random.Random:
+    """A generator seeded from `base` (and `nonce`) alone. blake2b rather than
+    hash(), whose string seed is salted per PROCESS -- two `c`s either side of
+    a dashboard reload would disagree, and the golden screens would be a coin
+    flip.
+
+    THE NONCE IS WHAT MAKES A SECOND LOOK A SECOND OFFER. `suggest` is still
+    a pure function of its arguments -- same base, same nonce, same name, so
+    the goldens stay fixed -- but the caller can now say "not that one" by
+    passing a different number, which is what pressing `c` again means."""
+    seed = base if not nonce else "%s\x00%d" % (base, nonce)
+    digest = hashlib.blake2b(seed.encode("utf-8", "replace"), digest_size=8)
     return random.Random(int.from_bytes(digest.digest(), "big"))
 
 
@@ -96,7 +107,8 @@ def _fits(base: str, word: str) -> str:
     return "%s-%s" % (base[:room].rstrip("-."), word)
 
 
-def suggest(base: str, taken=(), rng: random.Random | None = None) -> str:
+def suggest(base: str, taken=(), rng: random.Random | None = None,
+            nonce: int = 0) -> str:
     """The name to offer for a new window: `base-word`, free of `taken`.
 
     `base` is what the folder suggests, already sanitised by the caller (this
@@ -109,7 +121,7 @@ def suggest(base: str, taken=(), rng: random.Random | None = None) -> str:
     the first and then have to count. When the lists really are exhausted (47
     windows in one folder), it counts -- `scripts-otter-2` -- because an
     offered name that is already taken is worse than an ugly one."""
-    rng = rng or _stable_rng(base)
+    rng = rng or _stable_rng(base, nonce)
     nouns = list(NOUNS)
     rng.shuffle(nouns)
     if base:
