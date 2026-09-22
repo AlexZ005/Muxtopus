@@ -17,18 +17,19 @@
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ new session · <SB>/work/repo-b ─<pad>╮
-│    Create [repo-b-vale           ]  and go to its window  · type to rename                                                                                   │
+│    Create [repo-b-vale           ]                                                                                                                           │
 │    ····················································                                                                                                      │
-│    Sub-window repo-b-vale under stranded-lane  empty, no prompt                                                                                              │
-│  ▸ Sub-window repo-b-vale under stranded-lane  continues from its handover                                                                                   │
+│    Sub-window repo-b-vale under stranded-lane: empty                                                                                                         │
+│  ▸ Sub-window repo-b-vale under stranded-lane: from its handover                                                                                             │
 │    ····················································                                                                                                      │
-│    Folder: <SB>/work/repo-b  where claude starts <pad>│
-│    Model: fable  a CLI alias; the MODEL column's names are refused                                                                                           │
+│    Folder: <SB>/work/repo-b <pad>│
+│    Model: fable                                                                                                                                              │
 │    Effort: high                                                                                                                                              │
-│    Permission mode: unset  (no flag; the CLI's own default)  cannot be changed after launch                                                                  │
+│    Permission mode: unset  (no flag; the CLI's own default)                                                                                                  │
 │    Where: a top-level window                                                                                                                                 │
-│    First prompt: (none)  empty makes it a plan entry                                                                                                         │
+│    First prompt: (none)                                                                                                                                      │
 │    ····················································                                                                                                      │
 │    Cancel                                                                                                                                                    │
+│    continues from its handover -- STATUS-stranded-lane.md is read into its first prompt                                                                      │
 │    ↑↓ pick · enter set · esc cancel                                                                                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

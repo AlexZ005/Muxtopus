@@ -1,14 +1,14 @@
 ╭──────────────────────────────────────────────────────────────────────────── deck ────────────────────────────────────────────────────────────────────────────╮
 │ <machine: deck>
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────── steamdeck · <n> threads · desktop mode · v<n>.<n> ─╯
-╭─ lanes · <n> server(s) · <n> <unit> · mxsplit · <n> hidden  (f: all) ─<pad>╮
+╭─ lanes · <n> server(s) · <n> <unit> · mxsplit · <n> hidden ─<pad>╮
 │ <machine: lanes>
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ claude [mxsplit] · 6 session(s) · 3.17M spent · watchdog on · scan <age> ago · monitor on ─<pad>╮
 │                                                                                                                                                              │
 │        MON    WINDOW               MODEL         CONTEXT                            SPENT     IDLE   STATE              DIRTY   WOUND          RESUMED       │
 │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
-│  ▸✔    on     root-lane ?          opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
+│   ✔    on     root-lane ?          opus          ████████······  62% 620k           1.45M      42s   working                7   —              —             │
 │   ✔    on       └ kid-lane         fable         ████··········  31% 310k            880k      15m   limited 14:30          3   Jan 2 03:06    —             │
 │   ✔    on     stranded-lane        sonnet        ██············  18% 180k            410k       2h   stranded               7   —              —             │
 │   ✔    on     due-lane             opus[1m]      █·············   9% 90k             250k       5m   due 13:00              3   —              Jan 2 05:53   │
@@ -27,18 +27,24 @@
 ╭─ system ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ <machine: system>
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ menu · root-lane ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│    Restart root-lane after a limit: YES                                                                                                                      │
-│    Wind root-lane down near the limit: YES                                                                                                                   │
+╭─ settings · <SB>/config/muxtopus/profiles/mxsplit.dashboard.conf ─<pad>╮
+│  ▸ Menu layout: table                                                                                                                                        │
+│    Default permission mode for a new window: ask                                                                                                             │
+│    Where "make it permanent" writes: project                                                                                                                 │
+│    Watch a new window: ON                                                                                                                                    │
+│    Monitor a new window: off                                                                                                                                 │
+│    Default model for a new window: fable                                                                                                                     │
+│    Default effort for a new window: high                                                                                                                     │
+│    Default working folder: <SB>/work/repo-b <pad>│
+│    Send /rc to a new window: off                                                                                                                             │
+│    Handovers: show finished rows: off                                                                                                                        │
+│    Handovers: show question rows: ON                                                                                                                         │
+│    Notifications ▸                                                                                                                                           │
+│    Tabs ▸                                                                                                                                                    │
+│    Updates ▸                                                                                                                                                 │
+│    Columns ▸                                                                                                                                                 │
+│    Panels ▸                                                                                                                                                  │
+│    Hints ▸                                                                                                                                                   │
 │    ····················································                                                                                                      │
-│    Open root-lane                                                                                                                                            │
-│    Rename root-lane                                                                                                                                          │
-│    Wind down root-lane now                                                                                                                                   │
-│    Resume root-lane now                                                                                                                                      │
-│    Continue root-lane at low priority                                                                                                                        │
-│    Schedule a resume of root-lane at the next reset                                                                                                          │
-│    ····················································                                                                                                      │
-│  ▸ Close root-lane                                                                                                                                           │
-│    kills the claude session in it                                                                                                                            │
-│    ↑↓ pick · enter choose · esc close                                                                                                                        │
+│    Back                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

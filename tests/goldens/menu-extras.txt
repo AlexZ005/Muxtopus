@@ -31,5 +31,6 @@
 │  ▸ Reclaim or start desktop extras                                                                                                                           │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
+│    stop Steam, Discover and the Plasma shell to free RAM, or bring them back                                                                                 │
 │    expanded root-lane   ·   ↑↓ pick · enter choose · esc close                                                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

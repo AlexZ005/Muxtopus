@@ -12,12 +12,13 @@
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ←→ tab ─╯
 ╭─ menu · d-launched.md ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │  ▸ Edit d-launched.md                                                                                                                                        │
-│      Options  the checkbox table, pre-ticked from the header  (only a pending entry; this one is launched)                                                   │
-│      Launch now  make it due; the watchdog opens it within ~30s  (only a pending entry; this one is launched)                                                │
-│    Duplicate as a new pending entry  and open it in the editor                                                                                               │
-│    Check  resolve it without launching: slug, window, paste, verdict                                                                                         │
+│      Options  (only a pending entry; this one is launched)                                                                                                   │
+│      Launch now  (only a pending entry; this one is launched)                                                                                                │
+│    Duplicate as a new pending entry                                                                                                                          │
+│    Check                                                                                                                                                     │
 │    Open its window  @0                                                                                                                                       │
 │    ····················································                                                                                                      │
 │    Delete d-launched.md                                                                                                                                      │
+│                                                                                                                                                              │
 │    ↑↓ pick · enter choose · esc close                                                                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
