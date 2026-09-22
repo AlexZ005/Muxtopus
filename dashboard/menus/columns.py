@@ -98,27 +98,34 @@ class ColumnsMenu:
         return view.column_plans() if view is not None else {}
 
     def state_of(self, table: str, name: str) -> tuple[str, str]:
-        """(state, note) for one column: what it is, and where it is."""
+        """(label tail, description) for one column.
+
+        The LABEL carries what the row is and where it is -- "pinned",
+        "shown · off-screen right (shift-→)" -- because that is what the
+        user is scanning the list for and it must survive a narrow
+        terminal. The sentence that explains the state goes in `desc`,
+        which the menu engine reserves a line for under the cursor.
+        """
         hidden = columnsmod.hidden_columns(PROFILE).get(table, set())
         pinned = columnsmod.pinned_columns(PROFILE).get(table, set())
         if name in hidden:
-            return "hidden", "not drawn; its data is unchanged"
+            return "hidden", "not drawn, and its data is unchanged: the row, the session menu and enter never read a column"
         plan = self.plans().get(table)
         keep, left, right = (plan[0], plan[1], plan[2]) if plan else ([], [], [])
         if name in pinned:
-            return "pinned", "always drawn, never squeezed, never scrolls off"
+            return "pinned", "always drawn, at its full width, wherever the window is: it never scrolls off and is never squeezed"
         if name in left:
-            return "shown", "off-screen left (shift-←)"
+            return "shown · off-screen left (shift-←)", "scrolled off the left of this table; shift-← brings it back"
         if name in right:
-            return "shown", "off-screen right (shift-→)"
+            return "shown · off-screen right (shift-→)", "scrolled off the right of this table; shift-→ reaches it"
         if name in keep:
-            return "shown", "on screen"
+            return "shown", "drawn on this frame, at its full width"
         # In neither list and not hidden: the frame does not have this
         # column at all, which today is ACCOUNT under a filtered lanes
         # table. Say which, rather than leaving a row with no state.
         if (table, name) in ONLY_WITH_F:
-            return "shown", "only with f: all accounts"
-        return "shown", "not in this frame"
+            return "shown", "only with f: all accounts -- the filtered table has no such column, and this choice is kept for when it comes back"
+        return "shown", "not a column of this frame"
 
     def counts(self) -> tuple[int, int]:
         hidden = columnsmod.hidden_columns(PROFILE)
@@ -135,14 +142,15 @@ class ColumnsMenu:
             if items:
                 items.append({"sep": True})
             for name in COLUMNS[table]:
-                state, note = self.state_of(table, name)
+                state, why = self.state_of(table, name)
                 items.append({
-                    "label": "%s · %-8s %s · %s" % (table, name, state, note),
+                    "label": "%s · %-8s %s" % (table, name, state),
+                    "desc": why,
                     # `on` is the green/dim marker every toggle row uses.
                     # SHOWN AND PINNED ARE BOTH ON: the question the colour
                     # answers is "is this column in the table", and pinned
                     # is the most in it a column can be.
-                    "on": state != "hidden", "stay": True,
+                    "on": not state.startswith("hidden"), "stay": True,
                     "act": (lambda t=table, n=name: self.cycle(t, n))})
         items.append({"sep": True})
         items.append({"label": "Back", "sub": "settings"})
@@ -202,8 +210,8 @@ class PanelsMenu:
         for name in columnsmod.PANELS:
             shown = name not in off
             items.append({
-                "label": "%-12s %s  %s" % (name, "shown" if shown else "hidden",
-                                           PANEL_HOLDS[name]),
+                "label": "%-12s %s" % (name, "shown" if shown else "hidden"),
+                "desc": PANEL_HOLDS[name],
                 "on": shown, "stay": True,
                 "act": (lambda n=name: self.toggle(n))})
         if "system" in off:
@@ -214,6 +222,8 @@ class PanelsMenu:
             # the label says why it is here.
             items.append({"sep": True})
             items.append({"label": self.extras_label(),
+                          "desc": "the system line this row's action lives on "
+                                  "is hidden, so the action is here instead",
                           "act": self.extras, "stay": True})
         items.append({"sep": True})
         items.append({"label": "Back", "sub": "settings"})
@@ -229,11 +239,8 @@ class PanelsMenu:
 
     def extras_label(self) -> str:
         mb = self.extras_mb()
-        if mb:
-            return ("Desktop extras: reclaim (%s)   the system line is hidden, "
-                    "so the action is here" % human_mb(mb))
-        return ("Desktop extras: start   the system line is hidden, "
-                "so the action is here")
+        return ("Desktop extras: reclaim (%s)" % human_mb(mb) if mb
+                else "Desktop extras: start")
 
     def extras(self) -> str:
         view = self.app.view_of("main")

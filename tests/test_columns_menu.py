@@ -20,7 +20,10 @@ What is promised:
   * a bad item is refused with its text, and a name for a column that is not
     in this frame is kept (that is ACCOUNT under a filtered lanes table);
   * COLUMNS here does not drift from the view's specs: every name listed,
-    ACCOUNT aside, is a column of the real wide frame.
+    ACCOUNT aside, is a column of the real wide frame;
+  * the LABEL carries the state and the position -- what a narrow terminal
+    must keep -- and the sentence explaining it is the row's `desc`, the
+    line the menu engine reserves under the cursor.
 
 toggle_extras is REPLACED for the one check that presses it: the real one
 runs deck-ram.sh against this machine, which a test may not do. What is
@@ -120,8 +123,9 @@ check("hidden wins" in app.menu_hint() and "esc back" in app.menu_hint(),
 print("== the rows say what is true THIS frame")
 check("WINDOW   pinned" in row(app, "columns", "claude · WINDOW")["label"],
       "WINDOW is pinned by default: %r" % row(app, "columns", "claude · WINDOW")["label"])
-check("on screen" in row(app, "columns", "claude · SPENT")["label"],
-      "at 200 columns SPENT is on screen")
+check(row(app, "columns", "claude · SPENT")["label"].endswith("shown")
+      and "drawn on this frame" in row(app, "columns", "claude · SPENT")["desc"],
+      "at 200 columns SPENT is shown, and the desc says so")
 
 narrow, nview = fresh(width=80)
 lab = row(narrow, "columns", "claude · RESUMED")["label"]
@@ -139,8 +143,9 @@ print("== ACCOUNT is listed even when the lanes table has not got it")
 app, view = fresh()
 view.lanes_all = False
 view.build_main()
-lab = row(app, "columns", "lanes · ACCOUNT")["label"]
-check("only with f: all accounts" in lab, "the row says when it appears: %r" % lab)
+it = row(app, "columns", "lanes · ACCOUNT")
+check("only with f: all accounts" in it["desc"],
+      "the row's desc says when it appears: %r" % it["desc"])
 
 print("== COLUMNS does not drift from the view's specs")
 wide, wview = fresh(width=260)
@@ -205,8 +210,8 @@ app, view = fresh()
 items = [it for it in rows(app, "panels") if it.get("on") is not None]
 check([it["label"].split()[0] for it in items] == list(columnsmod.PANELS),
       "four rows, deck lanes uncommitted system")
-check("the claude/playwright/home/extras line" in
-      row(app, "panels", "system")["label"], "each says what it holds")
+check(row(app, "panels", "system")["desc"] ==
+      "the claude/playwright/home/extras line", "each says what it holds")
 check(all(it["on"] for it in items), "all shown to begin with")
 
 print("== enter hides one, through the file")
@@ -227,8 +232,8 @@ check(not any("Desktop extras" in it.get("label", "") for it in rows(app, "panel
 row(app, "panels", "system")["act"]()
 extras = [it for it in rows(app, "panels") if "Desktop extras" in it.get("label", "")]
 check(len(extras) == 1, "hiding the system line puts one there")
-check("the system line is hidden, so the action is here" in extras[0]["label"],
-      "...and the row says why: %r" % extras[0]["label"])
+check("is hidden, so the action is here instead" in extras[0]["desc"],
+      "...and the row says why: %r" % extras[0]["desc"])
 called = []
 view.toggle_extras = lambda: called.append(True) or "extras: done"
 check(extras[0]["act"]() == "extras: done" and called,
