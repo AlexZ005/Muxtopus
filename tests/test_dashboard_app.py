@@ -512,6 +512,80 @@ a.say("PROJECT_DIR is not a directory")
 check("not a directory" in (a.menu_hint() or ""),
       "...and a notice still gets the line back, rather than going nowhere")
 
+print("== Settings ▸ Hints ▸: WHAT A NOTICE SURVIVES")
+# THE BUG THIS EXISTS TO PREVENT is the one CLAUDE.md calls the worst in this
+# repo's history: a screen that reports nothing while nothing is happening.
+# "Menu hint line: off" takes away the line the notice shares, so the notice
+# has to take the line back for its eight seconds or a Settings row that
+# refuses a value refuses it to nobody. Rendered, not just returned: the
+# question is whether the words reach the panel.
+real_knob = appmod.knob
+try:
+    def knobs(values):
+        """A knob that answers the four HINTS keys from `values` and gives
+        every other key the layout these checks are drawn in."""
+        return lambda key, prof=None: values.get(key, "bottom")
+
+    OFF = {k: "off" for k in appmod.HINT_KEYS.values()}
+
+    def drawn(a):
+        lines = a.console.render_lines(a.place_menu([], 0), a.console.options)
+        return [len(lines), "".join(seg.text for line in lines for seg in line)]
+
+    a = app()
+    a.add_view(Spy("main"))
+    a.add_menu("mux", lambda: DESC_ROWS)
+    a.open_menu("mux")
+    # ONTO THE ROW THAT HAS A DESCRIPTION (DESC_ROWS' "Watchdog: ON"), because
+    # a description is drawn only under the cursor: checked from row 0 every
+    # assertion below about descriptions would pass without the code.
+    a.menu["i"] = 2
+
+    appmod.knob = knobs({}); a.forget_guide()
+    check(a.guide("menu") and a.guide("rows"),
+          "every hint is ON when nothing sets it -- an existing user sees no change")
+    tall, on_frame = drawn(a)
+    check("esc close" in on_frame, "...and the menu draws its hint line")
+    check("restart a limited window" in on_frame, "...and the cursor's description")
+
+    appmod.knob = knobs(OFF); a.forget_guide()
+    check(a.menu_hint() is None, "Menu hint line: off returns no line at all")
+    short, off_frame = drawn(a)
+    check("esc close" not in off_frame, "...and the panel draws none")
+    # EXACTLY two lines, not "fewer": the hint line and the reserved
+    # description line, and NOTHING left blank where they were. An earlier
+    # cut of this gate left one -- place_menu's row budget re-measured the
+    # descriptions menu_panel had been told to skip -- and a blank line
+    # inside the panel is indistinguishable from a bug in the reservation.
+    check(short == tall - 2,
+          "...and the panel is exactly two lines shorter, with no blank left "
+          "behind (%d -> %d)" % (tall, short))
+    check("restart a limited window" not in off_frame,
+          "Row descriptions: off draws no description for the cursor's row")
+
+    a.say("PROJECT_DIR is not a directory")
+    noticed, notice_frame = drawn(a)
+    check("not a directory" in notice_frame,
+          "A NOTICE STILL REACHES THE PANEL with every hint off")
+    check(a.menu_hint() == "PROJECT_DIR is not a directory",
+          "...carrying the notice alone, with nothing to share the line with")
+    check(noticed == short + 1,
+          "...on ONE line the panel grew for it (%d -> %d)" % (short, noticed))
+    a.notice_at -= 9
+    expired, _ = drawn(a)
+    check(expired == short,
+          "...and gave back when it expired -- a height change on an EVENT, "
+          "never on a cursor move")
+
+    # The four are independent: turning the menu line off must not take the
+    # descriptions with it, which a single shared flag would.
+    appmod.knob = knobs({appmod.HINT_KEYS["menu"]: "off"}); a.forget_guide()
+    _, one_off = drawn(a)
+    check("esc close" not in one_off and "restart a limited window" in one_off,
+          "the four are independent: the menu line off keeps the descriptions")
+finally:
+    appmod.knob = real_knob
+
 print("== the panel height does not move as the cursor crosses a description")
 real_knob = appmod.knob
 try:

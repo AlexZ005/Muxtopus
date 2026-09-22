@@ -506,6 +506,11 @@ class App:
         spec = self._menus.get(kind) or {}
         fn = spec.get("hint")
         hint = fn() if fn else MENU_HINT
+        # Settings ▸ Hints ▸ Menu hint line. The line goes, and menu_panel
+        # reserves nothing for it -- the same None a menu that declines its
+        # own hint returns, so there is one code path and not two.
+        if not self.guide("menu"):
+            hint = None
         # THE NOTICE HAS TO LIVE HERE while a menu is open: the menu replaces
         # the footer that normally shows it, and a Settings row that stays
         # open would otherwise report "not a directory" to nobody -- the same
@@ -516,7 +521,12 @@ class App:
             # comes back for the eight seconds the notice lasts rather than
             # the notice going nowhere. A menu grown by one line for a
             # message is the honest failure; a message nobody sees is not.
-            return "%s   ·   %s" % (self.notice, hint or "")
+            # THAT IS WHY "Menu hint line: off" CANNOT SWALLOW ANYTHING: with
+            # the line off there is nothing to share it with, so the notice
+            # takes it alone -- a height change on an EVENT (the notice
+            # arriving and expiring eight seconds later), never on a cursor
+            # move, which is the reservation menulayout protects.
+            return "%s   ·   %s" % (self.notice, hint) if hint else self.notice
         return hint
 
     def menu_desc(self) -> str:
@@ -571,7 +581,13 @@ class App:
         # functions and the same width, because the row budget below is what
         # decides whether this menu fits at all.
         desc_rows: int | None = None
-        chrome, least = self._menu_budget(items, header, hint, width)
+        # Settings ▸ Hints ▸ Row descriptions. Nothing is PASSED rather than
+        # something being blanked, so no line is reserved and the panel is
+        # genuinely shorter -- which is also why the goldens taken with the
+        # defaults cannot move: on, this is the code that was already here.
+        if not self.guide("rows"):
+            header, desc_rows = "", 0
+        chrome, least = self._menu_budget(items, header, hint, width, desc_rows)
         if room < least:
             layout, kept, room = "modal", [], height
             title += "[/] [%s](modal: no room below)" % DIM
@@ -579,7 +595,7 @@ class App:
             # the cap: a description that fitted on one line across the whole
             # console may want two inside 78 columns.
             width = modal_width(self.console.size.width)
-            chrome, least = self._menu_budget(items, header, hint, width)
+            chrome, least = self._menu_budget(items, header, hint, width, desc_rows)
         if height < least:
             # THE EXPLANATIONS GO BEFORE THE LIST DOES, and this is checked
             # last, at the width the panel will really be drawn at. A terminal
@@ -599,13 +615,20 @@ class App:
         return Group(*kept, panel)
 
     def _menu_budget(self, items: list, header: str, hint: str | None,
-                     width: int) -> tuple[int, int]:
+                     width: int, desc_rows: int | None = None) -> tuple[int, int]:
         """(the lines that are not items, the fewest rows the menu can hold).
 
         One place, so place_menu's budget and menu_panel's drawing cannot
-        disagree about how many lines the header and the descriptions took."""
+        disagree about how many lines the header and the descriptions took.
+
+        `desc_rows` IS THE SAME OVERRIDE menu_panel takes and has to be
+        passed here too: measuring the items when the drawing was told 0
+        buys a row nothing fills, and the panel comes out with a blank line
+        in it where the description would have been. Measured -- it is what
+        "Row descriptions: off" drew before this argument existed."""
         chrome = menu_chrome(hint is not None,
-                             menu_desc_lines(items, width),
+                             menu_desc_lines(items, width) if desc_rows is None
+                             else desc_rows,
                              menu_head_lines(header, width))
         return chrome, chrome + BODY_MIN
 
@@ -991,8 +1014,14 @@ class App:
                 DIM, " %d/%d" % (tabs.index(view) + 1, len(tabs))
                 if fitted.scrolled else "",
                 # Hidden tabs are said where the strip is, so a user who
-                # forgot hiding one can see there is more to find.
-                " · %d hidden (esc ▸ Settings ▸ Tabs)" % gone if gone > 0 else "")
+                # forgot hiding one can see there is more to find. THE COUNT
+                # IS A FACT AND STAYS; only the "which keys" half is a note
+                # Settings ▸ Hints ▸ Inline table notes can turn off, because
+                # a strip that silently showed fewer tabs than the group has
+                # would be the dashboard lying about what it holds.
+                (" · %d hidden" % gone + (" (esc ▸ Settings ▸ Tabs)"
+                                          if self.guide("notes") else ""))
+                if gone > 0 else "")
             panel.subtitle_align = "right"
         sub = self._submode_foot()
         if sub is not None:

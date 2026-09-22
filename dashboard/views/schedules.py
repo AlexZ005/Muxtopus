@@ -917,7 +917,10 @@ class ScheduleView(View):
                           DIM)),
                 border_style=FRAME, box=box.ROUNDED))
 
-        keys = Text.assemble(
+        # Settings ▸ Hints ▸ Footer key line, gated as the main view's is:
+        # an empty Text, so the notice prepended below still lands and the
+        # panel above keeps the height it measured against.
+        keys = Text() if not self.app.guide("footer") else Text.assemble(
             (" ↑↓", DIM), " pick  ", ("pgup/dn home/end", DIM), " jump  ",
             ("space", DIM), " menu  ",
             ("enter", DIM), "/", ("e", DIM), " edit  ",

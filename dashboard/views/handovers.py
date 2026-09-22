@@ -543,7 +543,10 @@ class HandoversView(View):
             body.append(text, style=style)
 
     def foot(self) -> Text:
-        keys = Text.assemble(
+        # Settings ▸ Hints ▸ Footer key line, gated as the main view's is:
+        # an empty Text, so the notice prepended below still lands and the
+        # panel above keeps the height it measured against.
+        keys = Text() if not self.app.guide("footer") else Text.assemble(
             (" ↑↓", DIM), " pick  ", ("pgup/dn home/end", DIM), " jump  ",
             ("←→", DIM), " tab  ",
             ("enter", DIM), " open/answer  ", ("e", DIM), " edit  ",

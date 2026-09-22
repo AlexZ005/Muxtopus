@@ -734,17 +734,23 @@ class MainView(View):
             self.lane_keys = [LANES_EMPTY]
             sel = self.cursor == LANES_EMPTY
             empty = "no dev servers running" if not hidden else f"none for {PROFILE_LABEL}"
-            if sel:
+            if sel and self.app.guide("notes"):
                 empty += "  (enter: %s)" % ("mine" if self.lanes_all else "all")
             cells = [Text("▸" if sel else " ", style="bold #c9a0dc"), Text("—", style=DIM), "", "",
                      Text(empty, style="#c9a0dc" if sel else DIM), "", ""]
             if self.lanes_all:
                 cells.insert(5, "")
             lane_rows.append(cells)
+        # The SCOPE is a fact about what the table is showing and stays
+        # whatever Hints says; the "(f: …)" that names the key to change it
+        # is the note. The hidden COUNT stays too -- a table quietly showing
+        # fewer rows than it has is the failure this whole group must not be.
+        note = self.app.guide("notes")
         if self.lanes_all:
-            lane_scope = " · every account  (f: this one)"
+            lane_scope = " · every account" + ("  (f: this one)" if note else "")
         elif hidden or MULTI_ACCOUNT:
-            lane_scope = f" · {PROFILE_LABEL}" + (f" · {hidden} hidden  (f: all)" if hidden else "")
+            lane_scope = f" · {PROFILE_LABEL}" + (
+                f" · {hidden} hidden" + ("  (f: all)" if note else "") if hidden else "")
         else:
             lane_scope = ""
 
@@ -935,8 +941,14 @@ class MainView(View):
         lane_names = {lane_name(g["pid"]).rsplit("/", 1)[-1] for g in shown.values()}
 
         ex_sel = (self.cursor == EXTRAS_SENTINEL)
-        ex_hint = ("  (enter %s)" % ("reclaims" if extras else "starts")) if ex_sel \
-                  else "  (navigate by arrows)"
+        # Both halves of this one are pure coaching -- what enter does here,
+        # and how to get anywhere at all -- so Hints takes the whole note.
+        if not self.app.guide("notes"):
+            ex_hint = ""
+        elif ex_sel:
+            ex_hint = "  (enter %s)" % ("reclaims" if extras else "starts")
+        else:
+            ex_hint = "  (navigate by arrows)"
         sysrow = Text.assemble(
             ("claude ", "bold"), f"{len(claude)} · {human_mb(sum(p.rss_mb for p in claude))}",
             "     ", ("playwright ", "bold"), (human_mb(pw) if pw else "—"),
@@ -946,7 +958,14 @@ class MainView(View):
             (ex_hint, "#c9a0dc" if ex_sel else DIM),
         )
 
-        keys = Text.assemble(
+        # SETTINGS ▸ HINTS ▸ FOOTER KEY LINE. Off, this starts from an EMPTY
+        # Text rather than returning None: the notice, the marks other
+        # modules append below and the reset flourish are news and are not
+        # what was turned off -- only the legend is. An empty Text is still
+        # one line, so every table that measures this footer keeps its
+        # arithmetic; a footer that vanished would reflow four views to hide
+        # a line the user only asked to be blank.
+        keys = Text() if not self.app.guide("footer") else Text.assemble(
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " schedules  ",
             ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("pgup/dn home/end", DIM), " jump  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",
