@@ -199,7 +199,11 @@ def register(app) -> None:
         "label": "Hints ▸",
         "sub": "hints",
         # Under the last setting with the other submenu rows: Notifications
-        # and Tabs take +5, Updates +6. +7 keeps this one last and ties with
-        # nothing -- and a tie would only sort by label anyway.
-        "order": len(muxsettings.DASHBOARD_KEYS) * 10 + 7}])
-    app.add_help("HINTS", HELP_HINTS, order=32)
+        # and Tabs take +5, Updates +6, and dash-columns' Columns ▸ and
+        # Panels ▸ took +7 and +8 when they merged. +9 keeps this one last
+        # and ties with nothing -- a tie would only sort by label, but an
+        # order nobody shares is one less thing to reason about.
+        "order": len(muxsettings.DASHBOARD_KEYS) * 10 + 9}])
+    # 32 is COLUMNS AND PANELS'; 33 puts this after it, beside the menus it
+    # is about rather than in the middle of them.
+    app.add_help("HINTS", HELP_HINTS, order=33)
