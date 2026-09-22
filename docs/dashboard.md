@@ -194,7 +194,7 @@ Whenever the cursor is on a live session, two rows sit under `Create`, and each 
 
 | row | |
 |---|---|
-| **empty, no prompt** | a child of that window with nothing pasted into it — a `plan` entry, so the session gets its identity line and nothing invented |
+| **empty, no prompt** | a child of that window with nothing pasted into it — a `plan` entry, so the session opens at a blank prompt with its identity in the system prompt and nothing invented |
 | **continues from its handover** | the same child, with the brief `Schedule resume` pastes: read `STATUS-<parent>.md` and carry on from its *How to resume* section. Greyed, with the reason, until that lane has actually written one — `Wind down` in the session menu is what asks for it |
 
 `Create` itself is unchanged and still makes a top-level window.
@@ -206,13 +206,13 @@ Whenever the cursor is on a live session, two rows sit under `Create`, and each 
 | **Effort** | passed as `claude --effort` |
 | **Permission mode** | pinned for the life of the window — it cannot be fixed afterwards |
 | **Where** | a top-level window, or under a live one, inserted after that parent's subtree and drawn indented |
-| **First prompt** | empty writes a `plan` entry: the session receives its identity line and nothing invented |
+| **First prompt** | empty writes a `plan` entry: nothing is pasted, the window opens at a blank prompt, and its identity rides in the system prompt |
 
 **Model, Effort and Permission mode say what you will actually get.** A row nobody has set used to read `(account default)`, which names the mechanism — no flag is passed — and not the outcome. Each now reads the value out of the settings.json layers that will apply (the project's `settings.local.json`, its `settings.json`, then the account's) and names it and the file. When nothing anywhere sets it the row says `unset`, which is a different and honest answer: the CLI's own built-in default applies, and that cannot be known without running claude.
 
 It was seven pickers in a fixed order, which meant answering six questions you had no opinion about to reach the one you did, with no way back to change your mind about the second without abandoning the flow.
 
-Then it **writes a schedule entry** with `at:` already past, and nothing else. It opens no window itself: the watchdog's next pass does the trust dialog, the readiness wait, the bracketed paste, the tree row and the log line, exactly as for any entry — one launcher, whoever asked. The entry carries `model:`, `effort:`, `permission-mode:`, `cwd:`, `parent:`/`window:`, and `watchdog: off` / `monitor: off` when Settings says a new window is not watched or monitored. An empty prompt writes a `plan` entry: the session receives its identity line and nothing invented.
+Then it **writes a schedule entry** with `at:` already past, and nothing else. It opens no window itself: the watchdog's next pass does the trust dialog, the readiness wait, the bracketed paste, the tree row and the log line, exactly as for any entry — one launcher, whoever asked. The entry carries `model:`, `effort:`, `permission-mode:`, `cwd:`, `parent:`/`window:`, and `watchdog: off` / `monitor: off` when Settings says a new window is not watched or monitored. An empty prompt writes a `plan` entry: nothing is pasted and nothing is typed, so the window opens at a blank prompt; its identity (window, slug, handover file) is in the session's system prompt, where it costs no turn.
 
 **And then it takes you there.** There is no window to jump to at the moment you press `Create` — the launcher has not opened it yet — so the form remembers the slug, the key line reads `opening <name>`, and the tmux client moves to that window the moment it appears. The dashboard keeps running in window 0, so `Ctrl-b 0` comes straight back. After three minutes it stops waiting, and the window is simply there like any other.
 

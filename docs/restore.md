@@ -61,7 +61,7 @@ Plain `muxtopus` (no `-d`) that finds no session and a `windows.last.tsv` younge
 ## So it does not happen again
 
 - **Every tmux call names its server.** `profile.sh`'s `mux_tmux` passes `-L <name>` (or `-S <path>`) from `MUXTOPUS_TMUX_SOCKET` on every call `muxtopus`, the watchdog, the usage probe and the test sandbox make. With `-L` or `-S` given, tmux does not consult `$TMUX`, so a sandbox's server and the real one are two different arguments rather than two different environments. The default, `default`, is the socket a bare `tmux` uses outside tmux; nothing changes for anyone who never set the key.
-- **Every lane is told.** The identity lines pasted into a lane's window gain a sentence: inside this window `$TMUX` overrides `TMUX_TMPDIR`, a sandboxed tmux needs `-S`/`-L` or `env -u TMUX`, and a bare `tmux kill-server` kills *this* server.
+- **Every lane is told.** The identity lines in a lane's system prompt carry a sentence: inside this window `$TMUX` overrides `TMUX_TMPDIR`, a sandboxed tmux needs `-S`/`-L` or `env -u TMUX`, and a bare `tmux kill-server` kills *this* server.
 - **A test forbids it.** `tests/test_tmux_guard.py` fails the suite on a `tmux kill-server` or `kill-session` anywhere in the repository that is not `mux_tmux` or an explicit `-L`/`-S`, on any bare `tmux` at all in the files that drive the real server, and on a test sandbox that wraps `tmux` without also naming its socket to the scripts.
 - **A daemon never inherits a pane's `$TMUX`.** `muxtopus` starts a nohup'd watchdog under `env -u TMUX`, and the daemon drops the variable itself at start.
 

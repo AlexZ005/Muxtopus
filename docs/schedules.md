@@ -36,7 +36,7 @@ The new window opens right after its `window:` target, named for its slug, and t
 
 | field | required | values | |
 |---|---|---|---|
-| `type` | yes | `plan` · `work` | a `work` entry pastes its body as the prompt and must have one; a `plan` entry may have an empty body — the session then receives its identity line and nothing invented — and may name a `template:` |
+| `type` | yes | `plan` · `work` | a `work` entry pastes its body as the prompt and must have one; a `plan` entry may have an empty body — nothing is then pasted and the window opens at a blank prompt — and may name a `template:` |
 | `at` | yes | `reset` · `YYYY-MM-DD HH:MM` | when it is due. `reset` is [two gates](#at-reset-is-two-gates); an absolute time (anything `date -d` accepts, but the dashboard's linter wants `YYYY-MM-DD HH:MM[:SS]`) fires when it passes |
 | `title` | yes | free text | what the row says; the slug is derived from it unless `slug:` is set |
 | `slug` | no | `[A-Za-z0-9._-]`, ≤ 22 | pins [the lane's name](#the-slug-is-the-lanes-name-in-four-places) and wins over the title |
@@ -163,7 +163,7 @@ claude-watchdog.sh --tree     what the tree currently holds
 
 ## Placeholders in the body
 
-The body is not a literal string. Seven names are resolved when the body is *pasted*, over the template, the body and the work footer — never over the `[muxtopus]` identity lines at the top, which are built from the resolved values already:
+The body is not a literal string. Seven names are resolved when the body is *pasted*, over the template, the body and the work footer — never over the `[muxtopus]` identity lines, which are built from the resolved values already and go into the session's system prompt (`claude --append-system-prompt-file`) rather than the paste:
 
 ```
 {{SLUG}}       27-storage

@@ -621,23 +621,30 @@ if [ "$DRY" = 1 ]; then
   echo "dry run only -- nothing was written."
   exit 0
 fi
-if [ "${#BLOCKERS[@]}" -gt 0 ]; then
-  echo "Done, but muxtopus cannot run yet:"
-  for b in "${BLOCKERS[@]}"; do warn "$b"; done
-  echo "    then run $SRC/install.sh again for a clean report"
+# THE SHAPE IS CLAUDE CODE'S OWN INSTALLER'S: a "Setup notes" block with a
+# warning sign, one sentence on what is wrong and the exact line to run,
+# because that is what the same user has just read for `claude` and it is
+# what the next line of their terminal history will look like.
+echo "Done."
+if [ "${#BLOCKERS[@]}" -gt 0 ] || [ "$ON_PATH_NOW" = 0 ]; then
   echo
-else
-  echo "Done."
-  echo
-fi
-if [ "$ON_PATH_NOW" = 0 ]; then
-  if [ "$RC" = 1 ]; then
-    echo "$PATH_TILDE is on PATH from your next shell. For this shell, paste:"
-  else
-    echo "$PATH_TILDE is NOT on PATH (--no-rc). For this shell, paste:"
+  echo "⚠  Setup notes:"
+  for b in "${BLOCKERS[@]}"; do
+    echo "  ● $b"
+  done
+  [ "${#BLOCKERS[@]}" -gt 0 ] && echo "    Fix that, then run $SRC/install.sh again for a clean report."
+  if [ "$ON_PATH_NOW" = 0 ]; then
+    if [ "$RC" = 1 ]; then
+      echo "  ● $PATH_TILDE is not on PATH in this shell (new shells will have it). To run"
+      echo "    muxtopus now, execute this line first:"
+    else
+      echo "  ● $PATH_TILDE is not on PATH (--no-rc left your shell rc alone). To run"
+      echo "    muxtopus, execute this line first:"
+    fi
+    echo
+    echo "    $PATH_LINE"
   fi
-  echo "    $PATH_LINE"
-  echo
 fi
+echo
 echo "Start with:   muxtopus"
 echo "More:         muxtopus -h   (a second account, named sessions, what is running)"
