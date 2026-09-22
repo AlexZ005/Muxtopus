@@ -32,6 +32,8 @@
 │    Notifications ▸  what the phone is told, and what it may answer                                                                                           │
 │    Tabs ▸  which tabs the strip shows (0 hidden)                                                                                                             │
 │    Updates ▸  new releases: whether to look, what to take, and what to keep                                                                                  │
+│    Columns ▸  which columns the two tables show (0 hidden, 2 pinned)                                                                                         │
+│    Panels ▸  which panels the main view shows (0 hidden)                                                                                                     │
 │    ····················································                                                                                                      │
 │    Back                                                                                                                                                      │
 │    table: under the panel · modal: centred · bottom: the footer                                                                                              │

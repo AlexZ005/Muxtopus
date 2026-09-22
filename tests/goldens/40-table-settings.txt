@@ -28,7 +28,7 @@
 │    Default working folder: <SB>/work/repo-b <pad>│
 │    Send /rc to a new window: off                                                                                                                             │
 │    Handovers: show finished rows: off                                                                                                                        │
-│    ▼ 6 more                                                                                                                                                  │
+│    ▼ 8 more                                                                                                                                                  │
 │    table: under the panel · modal: centred · bottom: the footer                                                                                              │
 │    ↑↓ pick · enter change · esc back                                                                                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
