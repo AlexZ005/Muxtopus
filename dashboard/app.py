@@ -55,6 +55,23 @@ from dashboard.menulayout import (BODY_MIN, PAGE_KEYS,
 # The setting that hides tabs (dashboard/menus/tabs.py draws its menu).
 TABS_KEY = "DASHBOARD_TABS_HIDDEN"
 
+# WHAT THE DASHBOARD EXPLAINS ON SCREEN, by the short name the call sites use
+# (dashboard/menus/hints.py draws the menu; App.guide reads them). The keys
+# live here for the same reason TABS_KEY does: app.py is what every drawer
+# already imports, and a view asking `app.guide("notes")` must not have to
+# reach into a menu module to do it.
+#
+# "hints" is the GROUP. The older `hint` names in this file mean narrower
+# things -- MENU_HINT and App.menu_hint are the line inside a panel,
+# App.add_hint is a note appended to the main footer -- and only the first of
+# those is what "menu" below turns off. hints.py's docstring has the table.
+HINT_KEYS = {
+    "rows":   "DASHBOARD_HINTS_ROW_DESC",     # a row's desc, and a menu's header desc
+    "menu":   "DASHBOARD_HINTS_MENU_LINE",    # the ↑↓/enter/esc line inside a panel
+    "footer": "DASHBOARD_HINTS_FOOTER_KEYS",  # the key list under the main view
+    "notes":  "DASHBOARD_HINTS_TABLE_NOTES",  # (navigate by arrows) and its like
+}
+
 # The hint under a menu when its kind does not name its own.
 MENU_HINT = "↑↓ pick · enter choose · esc close"
 
@@ -212,6 +229,7 @@ class App:
         # DASHBOARD_TABS_HIDDEN, read at most once a second: tabs_of is asked
         # several times a frame, and the menu that writes it says forget.
         self._hidden: tuple | None = None
+        self._guide: tuple | None = None
 
     def module_failed(self, name: str, exc: Exception) -> None:
         """A view or a menu module that would not load. Said out loud and
@@ -357,6 +375,28 @@ class App:
 
     def forget_hidden(self) -> None:
         self._hidden = None
+
+    def guide(self, kind: str) -> bool:
+        """Does the dashboard still explain `kind` on screen? (HINT_KEYS.)
+
+        ONE READ PER FRAME AT MOST, not one per row, cached exactly the way
+        hidden_tabs above is and for the same reason: `notes` is asked on
+        every table title and `rows` once per menu draw, and each ask is a
+        knob() that walks the config layers. All four are read together --
+        they come off the same file, so four cached values cost one read --
+        and the menu that writes them calls forget_guide so the very next
+        frame draws the change rather than up to a second later.
+
+        An unset key is ON: an existing user sees no change until they ask
+        for one, which is the whole default of this group."""
+        now = time.time()
+        if self._guide is None or now - self._guide[0] > 1.0:
+            self._guide = (now, {k: (knob(key, PROFILE) or "on") != "off"
+                                 for k, key in HINT_KEYS.items()})
+        return self._guide[1].get(kind, True)
+
+    def forget_guide(self) -> None:
+        self._guide = None
 
     def badges(self, session) -> list:
         out = []

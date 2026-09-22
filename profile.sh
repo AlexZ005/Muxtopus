@@ -114,6 +114,10 @@ MUXTOPUS_UPDATE_MODE=notify
 MUXTOPUS_UPDATE_EVERY=24
 MUXTOPUS_UPDATE_CHANNEL=stable
 MUXTOPUS_NOTIFY_UPDATE=off
+DASHBOARD_HINTS_ROW_DESC=on
+DASHBOARD_HINTS_MENU_LINE=on
+DASHBOARD_HINTS_FOOTER_KEYS=on
+DASHBOARD_HINTS_TABLE_NOTES=on
 "
 
 # The checkout these scripts live in, from this file's own location, so a
@@ -435,6 +439,22 @@ mux_key_help() {
                             echo "candidates, for a machine you dogfood your own tags on." ;;
     MUXTOPUS_NOTIFY_UPDATE) echo "on: tell the phone when a new muxtopus release is out, with the"
                             echo "headline of its notes. Off by default: it is news, not trouble." ;;
+    DASHBOARD_HINTS_ROW_DESC) echo "on|off. The dim sentence under the cursor's menu row, and the"
+                            echo "description a submenu draws under its own title. Off: neither is"
+                            echo "drawn and no line is reserved for them, so every panel is shorter."
+                            echo "Settings > Hints, or Expert mode there, sets all four HINTS keys." ;;
+    DASHBOARD_HINTS_MENU_LINE) echo "on|off. The line inside a menu panel that says what the keys do"
+                            echo "(up/down pick, enter choose, esc close). Off: the line is gone --"
+                            echo "EXCEPT while a notice is showing, when it comes back for its eight"
+                            echo "seconds carrying the notice, so a refusal still reaches you." ;;
+    DASHBOARD_HINTS_FOOTER_KEYS) echo "on|off. The key list under the main view (q quit, r refresh,"
+                            echo "R reload and the rest). Off: the key list is gone, and the notice,"
+                            echo "the counts other modules put on that line and the reset flourish"
+                            echo "still draw -- the footer loses its legend, not its news." ;;
+    DASHBOARD_HINTS_TABLE_NOTES) echo "on|off. The parenthesised notes inside the tables: (navigate by"
+                            echo "arrows) on the extras row, (enter reclaims)/(enter starts),"
+                            echo "(f: all) and (f: this one) on the lanes title, (enter: all) on an"
+                            echo "empty lanes table. Off: the numbers stay, the coaching goes." ;;
     *)                      echo "(undocumented)" ;;
   esac
 }
