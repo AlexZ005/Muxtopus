@@ -12,7 +12,8 @@ somebody else's file:
     add_menu(kind, entries_fn, ...)             a menu of your own
     add_rows(menu_kind, rows_fn, order=50)      a row in someone else's menu
     add_badge(fn, order=50) / add_hint(fn)      a mark on a session row, a
-                                                note in the main footer
+      / add_version_note(fn)                    note in the main footer, a
+                                                note beside the version
     add_help(title, text, order=50)             one section of `?`
     add_state(name, label, style)               how a watchdog state is drawn
 
@@ -171,6 +172,7 @@ class App:
         self._badges: list = []
         self._badge_broken: set = set()
         self._hints: list = []
+        self._version_notes: list = []
         self._help: list = []
         # What did not load. The notice says it once when it happens; this
         # keeps it for a screen that wants to say it again (phase 5's `?`).
@@ -257,6 +259,21 @@ class App:
         """A note for the main view's footer: fn(app) -> Text | None."""
         self._hints.append(fn)
 
+    def add_version_note(self, fn) -> None:
+        """A note beside the VERSION in the deck header: fn(app) -> markup|None.
+
+        add_hint's sibling, and it exists for the same reason: the one module
+        that knows a new release is waiting is dashboard/menus/update.py, and
+        the header is drawn by dashboard/views/main.py. Without this, saying
+        so in the header would be main.py importing the update menu -- the
+        cross-view reach every registry here exists to end.
+
+        MARKUP, not Text, because the subtitle it joins is markup already
+        (the "-> X installed, press R" the stale() check appends is the line
+        this was modelled on). Escape anything that came off disk.
+        """
+        self._version_notes.append(fn)
+
     def add_help(self, title: str, text: str, order: int = 50) -> None:
         """One section of `?`. Sections print in order; ties sort by title."""
         self._help.append((order, title, text, self._next()))
@@ -338,6 +355,15 @@ class App:
         for fn in self._hints:
             mark = fn(self)
             if mark is not None:
+                out.append(mark)
+        return out
+
+    def version_notes(self) -> list:
+        """What the loaded modules want said beside the version, as markup."""
+        out = []
+        for fn in self._version_notes:
+            mark = fn(self)
+            if mark:
                 out.append(mark)
         return out
 

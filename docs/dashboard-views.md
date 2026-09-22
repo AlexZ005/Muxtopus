@@ -85,6 +85,7 @@ app.add_menu(kind, entries_fn, title_fn=None, hint_fn=None, esc_to=None)
 app.add_rows(menu_kind, rows_fn, order=50)      a row in someone else's menu
 app.add_badge(fn, order=50)                     fn(app, session) -> Text|None
 app.add_hint(fn)                                fn(app) -> Text|None
+app.add_version_note(fn)                        fn(app) -> markup|None
 app.add_help(title, text, order=50)             one section of `?`
 app.add_state(name, label, style, with_reset=False)
 muxsettings.register({KEY: {label, kind, hint, choices?}}, menu="")
@@ -92,6 +93,12 @@ muxsettings.register({KEY: {label, kind, hint, choices?}}, menu="")
 
 **Menus.** `esc_to` names the parent kind esc goes back to, which is how
 Settings returns to the esc menu without the main loop knowing either name.
+
+**Notes.** `add_hint` writes at the end of the main view's key line;
+`add_version_note` writes beside the version in the deck header's subtitle,
+and returns markup rather than `Text` because that subtitle is markup. Both
+return `None` on the ordinary day and nothing is drawn — a note that is
+always there is furniture, not a note.
 
 **Rows into a menu.** A menu's own rows take the positional orders 10, 20,
 30 … unless a row names its own `order`, so `order=35` lands between the

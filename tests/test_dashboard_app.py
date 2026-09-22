@@ -298,6 +298,16 @@ check([str(t) for t in a.badges("s")] == ["a", "b"],
 a.add_hint(lambda _a: Text("· 3 ?"))
 a.add_hint(lambda _a: None)
 check([str(t) for t in a.hints()] == ["· 3 ?"], "so are footer hints")
+# The header's note beside the version. MARKUP, not Text -- the subtitle it
+# joins is markup -- and "" counts as nothing, because the one caller
+# computes its note and returns falsy on the day there is no release out.
+a.add_version_note(lambda _a: "(vX.Y.Z available)")
+a.add_version_note(lambda _a: None)
+a.add_version_note(lambda _a: "")
+check(a.version_notes() == ["(vX.Y.Z available)"],
+      "a version note draws; None and '' do not")
+check(app().version_notes() == [],
+      "and a dashboard with no update module has none")
 
 print("== help: sections in order, ties by title")
 a = app()
