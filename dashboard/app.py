@@ -59,6 +59,27 @@ TABS_KEY = "DASHBOARD_TABS_HIDDEN"
 MENU_HINT = "↑↓ pick · enter choose · esc close"
 
 
+def row_id(it: dict) -> str:
+    """What a menu row is called, for finding it again in a LATER frame.
+
+    NOT ITS INDEX. These menus are rebuilt every frame and rows come and go:
+    `Restore N windows` is there only while the watchdog holds a snapshot,
+    `Update to X ▸` only while a release is waiting, `Open ... once` only for
+    a hidden tab. The third row is not the same row a minute later, so an
+    index remembered across an open lands on whatever moved into it.
+
+    A row that carries an explicit `key` uses it (the main view's two window
+    toggles do). Everything else is matched on the head of its LABEL: the
+    part before the two spaces that separate a label from an explanation
+    still glued to it, and then the part before the first ": ", because a
+    label states its own value ("Watchdog: ON", "Menu layout: modal") and the
+    value is exactly the half that changes while you are away from the row.
+    """
+    if it.get("key"):
+        return str(it["key"])
+    return str(it.get("label", "")).split("  ")[0].split(": ")[0].strip()
+
+
 class RegistrationError(RuntimeError):
     """Two modules claiming one thing. Raised at start-up, naming both."""
 
@@ -129,6 +150,11 @@ class App:
         # drawn before a key can reach it, so this is only ever the default
         # for a menu nobody has seen.
         self._menu_page = BODY_MIN
+        # WHICH ROW A SUBMENU WAS OPENED FROM: {child kind: row_id}, written
+        # when enter descends into a `sub` and read when esc comes back up,
+        # so `Settings ▸ Tabs ▸` lands on `Tabs ▸` again and not on the first
+        # Settings row. Not an index -- see row_id.
+        self._menu_from: dict[str, str] = {}
         # An inline text entry (rename, the new window's name). Optionally
         # carries a `placeholder`: what enter on an EMPTY line means, drawn
         # in brackets where the typing would go. See prompt_key.
@@ -570,8 +596,19 @@ class App:
             return Group(Align.center(sub, vertical="middle", height=height))
         return Group(*kept, sub)
 
-    def open_menu(self, kind: str) -> None:
+    def open_menu(self, kind: str, at: str = "") -> None:
+        """Open a menu, with the cursor on the row `at` names (row_id) when
+        it is still there and on the first one when it is not.
+
+        A FRESH open -- esc, space, c -- passes nothing and starts at the top,
+        as it always has; `at` is how esc out of a submenu comes back to the
+        row it was opened from."""
         self.menu = {"kind": kind, "i": 0}
+        if at:
+            for j, it in enumerate(self.menu_entries()):
+                if row_id(it) == at and not it.get("sep") and not it.get("disabled"):
+                    self.menu["i"] = j
+                    break
         self.menu_move(0)
 
     def menu_move(self, delta: int) -> None:
@@ -639,6 +676,16 @@ class App:
         if it.get("sep") or it.get("disabled"):
             return
         if it.get("sub"):
+            spec = self._menus.get(self.menu["kind"]) or {}
+            if it["sub"] == spec.get("esc_to"):
+                # A `Back` ROW IS ESC. It walks the same edge esc_to names, so
+                # it has to land on the same row esc lands on -- and it must
+                # not be recorded as a descent, or the next esc out of THIS
+                # menu would try to put the cursor on a "Back" that is in the
+                # child and not in the parent.
+                self.menu_esc()
+                return
+            self._menu_from[it["sub"]] = row_id(it)
             self.open_menu(it["sub"])
             return
         msg = it["act"]()
@@ -659,7 +706,9 @@ class App:
         spec = self._menus.get(kind) or {}
         parent = spec.get("esc_to")
         if parent:
-            self.open_menu(parent)
+            # POPPED, not kept: the next open of this submenu from somewhere
+            # else must not inherit where this one came from.
+            self.open_menu(parent, self._menu_from.pop(kind, ""))
         else:
             self.menu = None
             fn = spec.get("on_esc")

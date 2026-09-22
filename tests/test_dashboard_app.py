@@ -401,6 +401,78 @@ try:
 finally:
     appmod.knob = real_knob
 
+print("== esc out of a submenu comes back to the row it was opened from")
+# BY THE ROW, NOT BY ITS INDEX. The parent below is rebuilt every time it is
+# asked for, and it grows a row while the submenu is open -- which is what
+# really happens: `Restore N windows` appears the moment the watchdog freezes
+# a snapshot, `Update to X ▸` the moment a release lands. An index remembered
+# across the descent lands on whatever moved into it.
+from dashboard.app import row_id                     # noqa: E402
+
+extra = []
+
+
+def parent_rows():
+    rows = [{"label": "Watchdog: ON  restart a limited window", "act": lambda: ""}]
+    rows += list(extra)
+    rows += [{"sep": True},
+             {"label": "Tabs ▸  which tabs the strip shows (%d hidden)" % len(extra),
+              "sub": "tabs"},
+             {"label": "Quit", "act": lambda: ""}]
+    return rows
+
+
+a = app()
+a.add_view(Spy("main"))
+a.add_menu("mux", parent_rows)
+a.add_menu("tabs", lambda: [{"label": "Hide something", "act": lambda: ""},
+                            {"label": "Back", "sub": "mux"}], esc_to="mux")
+a.open_menu("mux")
+check(a.menu["i"] == 0, "a fresh open starts on the first row")
+a.menu["i"] = [i for i, it in enumerate(parent_rows())
+               if it.get("sub") == "tabs"][0]
+a.menu_activate()
+check(a.menu["kind"] == "tabs", "enter descends into the submenu")
+extra.append({"label": "Restore 3 windows from 09-21 14:02", "act": lambda: ""})
+a.route_key("\x1b")
+check(a.menu["kind"] == "mux", "esc comes back up")
+check(row_id(a.menu_entries()[a.menu["i"]]) == "Tabs ▸",
+      "...onto the row it came from, though a row appeared above it and the "
+      "row's own label changed")
+
+# The `Back` row is the same edge, so it lands in the same place.
+a.menu_activate()
+check(a.menu["kind"] == "tabs", "...and enter on it descends again")
+a.menu["i"] = 1
+a.menu_activate()
+check(a.menu["kind"] == "mux" and row_id(a.menu_entries()[a.menu["i"]]) == "Tabs ▸",
+      "a `Back` row lands where esc lands")
+
+# A fresh open from a key is the top, as it always was.
+a.open_menu("mux")
+check(a.menu["i"] == 0, "and a fresh open still starts at the top")
+
+# The row is gone: the cursor falls back to the first row rather than to
+# whatever took its index.
+a.menu["i"] = [i for i, it in enumerate(parent_rows()) if it.get("sub") == "tabs"][0]
+a.menu_activate()
+extra.clear()
+a.route_key("\x1b")
+check(a.menu["kind"] == "mux", "esc comes back up when a row has vanished too")
+a.menu = {"kind": "mux", "i": 3}
+a._menu_from["tabs"] = "A row nobody has"
+a.open_menu("mux", "A row nobody has")
+check(a.menu["i"] == 0, "a remembered row that is gone falls back to the first")
+
+print("== row_id: the half of a label that does not change")
+check(row_id({"key": "wd_win", "label": "Restart x after a limit: YES"}) == "wd_win",
+      "an explicit key wins")
+check(row_id({"label": "Watchdog: ON  restart a limited window"}) == "Watchdog",
+      "a value is not part of the identity")
+check(row_id({"label": "Tabs ▸  which tabs the strip shows (2 hidden)"}) == "Tabs ▸",
+      "nor is an explanation still glued to the label")
+check(row_id({"label": "Settings ▸"}) == "Settings ▸", "a plain label is itself")
+
 print("== a menu explains itself: desc_fn under the title, desc under the cursor")
 # The REGISTRY half of it. What the panel draws is tests/test_menulayout.py's
 # subject; what is proved here is that a menu can say what it is for without
