@@ -4,6 +4,35 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.3.2 — 2026-09-22
+
+The release that stops a new window spending its first turn on its own
+name. A window opened from the dashboard with `c` and no first prompt used to
+receive the seven `[muxtopus]` identity lines as its first message and answer
+them; the form said "opens on a blank claude" and it did not. The identity now
+rides in the session's system prompt, where it costs no turn, and an empty
+first prompt opens a blank claude. The installer's closing block takes the
+shape of Claude Code's own: a tick or a warning, the packages to fix, and the
+one line to run.
+
+A patch: nothing a user's own files name is renamed or moved; the command
+line, the config keys, the entry headers and the folders are what they were.
+
+### Windows
+
+#### the identity lines move into the system prompt; an empty first prompt opens a blank claude
+
+- A window opened from the dashboard with `c` and no first prompt now opens at a blank prompt. Nothing is pasted and nothing is typed. Before, it received the seven `[muxtopus]` identity lines as its first message and spent its first turn answering them.
+- Every scheduled and restored lane window still knows which window it is, its slug and its handover file: those lines now go to `claude --append-system-prompt-file`, where they cost no turn and hold for the whole session. A `work` body is pasted as before, without the header on top.
+- A `claude` too old to take that flag gets the identity pasted at the top of the first prompt, as every window did until now, and the watchdog log says so once.
+- `claude-watchdog.sh --check --body` prints the identity and the paste as two separate blocks, and says when an entry pastes nothing.
+
+### Install
+
+#### the closing block says whether it worked, and what to run
+
+- The report ends with `✅ Done.` when muxtopus can run, or `⚠  Done, but muxtopus cannot run yet:` over the packages to install or update, then a `⚠  Setup notes:` block with the exact `export PATH` line to execute before `muxtopus` works in this shell.
+
 ## v5.3.1 — 2026-09-22
 
 The release that makes the installer's last screenful true. An install on an
