@@ -537,13 +537,23 @@ def test_prices():
     check(muxstats.prices(FIX / "no-such-file.md") is None, "no file is None, not an exception")
 
     seed = muxstats.prices(pathlib.Path(__file__).resolve().parent.parent / "seeds" / "prices.md")
-    check(seed is not None and seed.errors == [] and seed.as_of == "2026-09-17",
-          "seeds/prices.md parses clean, as of 2026-09-17 (%r)" % (seed.errors if seed else None))
-    for m in ("claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-opus-4-8",
+    check(seed is not None and seed.errors == [] and seed.as_of == "2026-09-23",
+          "seeds/prices.md parses clean, as of 2026-09-23 (%r)" % (seed.errors if seed else None))
+    for m in ("claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8",
               "claude-sonnet-5", HAIKU):
         check(seed.price(m) is not None and seed.window(m), "seed prices %s and knows its window" % m)
     check(seed.price("claude-fable-5-1")["cache_read"] == 0.25 and seed.price("claude-fable-5")["cache_read"] == 1,
           "Fable 5.1's cache reads are its own rate, not Fable 5's")
+    # Opus 5.5 is CHEAPER than Opus 5, and its cache reads are 0.05x input
+    # where every other Opus is 0.1x -- so a copy of Opus 5's block, or a
+    # "fix" of 0.20 to the usual 0.40, would both look plausible and be wrong.
+    o55 = seed.price("claude-opus-5-5")
+    check(o55 is not None and (o55["input"], o55["output"], o55["cache_read"],
+                               o55["cache_write_5m"], o55["cache_write_1h"]) == (4, 20, 0.2, 5, 8)
+          and seed.window("claude-opus-5-5") == 1_000_000,
+          "Opus 5.5 has its own prices (4/20, reads 0.20), not Opus 5's (%r)" % o55)
+    check(seed.price("claude-opus-5-6") is None and seed.window("claude-opus-5-6") is None,
+          "a future claude-opus-5-6 borrows neither Opus 5.5's price nor its window")
     check(seed.price("claude-opus-4-20250514")["input"] == 15, "a legacy dated id is priced")
     check(seed.price("claude-fable-5-2") is None and seed.price("claude-opus-5-fast") is None,
           "an unnamed model is never given a neighbour's price")
