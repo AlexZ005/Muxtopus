@@ -356,7 +356,7 @@ def column_window(cols: list, width: int, pinned: set, hidden: set,
             out.append(i)
         return out
 
-    # The clamp, measured rather than derived: walk the offsets from 0 and
+    # The clamp, WALKED rather than derived: try the offsets from 0 and
     # stop at the FIRST one whose window reaches the last unpinned column.
     # It cannot be computed as "len(seq) - visible" the way a vertical
     # window can, because the columns are different widths and how many fit
