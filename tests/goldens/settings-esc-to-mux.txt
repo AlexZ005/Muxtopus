@@ -17,14 +17,15 @@
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ muxtopus ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  ▸ Settings ▸  menu layout, defaults for a new window, where a mode is made permanent                                                                        │
+│  ▸ Settings ▸                                                                                                                                                │
 │    ····················································                                                                                                      │
-│    Watchdog: ON  restart a limited window once its limit resets                                                                                              │
-│    Monitor: ON  ask a working window to wind down near the limit                                                                                             │
+│    Watchdog: ON                                                                                                                                              │
+│    Monitor: ON                                                                                                                                               │
 │    Insights ▸  tokens, cache, cost, context, sessions, budget, lanes, rhythm  (i)                                                                            │
 │    ····················································                                                                                                      │
-│    Disconnect  detach this tmux client; the dashboard and every window keep running                                                                          │
-│    Reload the dashboard  re-exec this script, as R does                                                                                                      │
+│    Disconnect                                                                                                                                                │
+│    Reload the dashboard                                                                                                                                      │
 │    Quit the dashboard                                                                                                                                        │
+│                                                                                                                                                              │
 │    Default working folder: not a directory: <SB>/work/repo-b/nope   ·   ↑↓ pick · enter choose · esc close <pad>│
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

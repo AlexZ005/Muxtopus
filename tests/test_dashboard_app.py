@@ -401,6 +401,184 @@ try:
 finally:
     appmod.knob = real_knob
 
+print("== esc out of a submenu comes back to the row it was opened from")
+# BY THE ROW, NOT BY ITS INDEX. The parent below is rebuilt every time it is
+# asked for, and it grows a row while the submenu is open -- which is what
+# really happens: `Restore N windows` appears the moment the watchdog freezes
+# a snapshot, `Update to X ▸` the moment a release lands. An index remembered
+# across the descent lands on whatever moved into it.
+from dashboard.app import row_id                     # noqa: E402
+
+extra = []
+
+
+def parent_rows():
+    rows = [{"label": "Watchdog: ON  restart a limited window", "act": lambda: ""}]
+    rows += list(extra)
+    rows += [{"sep": True},
+             {"label": "Tabs ▸  which tabs the strip shows (%d hidden)" % len(extra),
+              "sub": "tabs"},
+             {"label": "Quit", "act": lambda: ""}]
+    return rows
+
+
+a = app()
+a.add_view(Spy("main"))
+a.add_menu("mux", parent_rows)
+a.add_menu("tabs", lambda: [{"label": "Hide something", "act": lambda: ""},
+                            {"label": "Back", "sub": "mux"}], esc_to="mux")
+a.open_menu("mux")
+check(a.menu["i"] == 0, "a fresh open starts on the first row")
+a.menu["i"] = [i for i, it in enumerate(parent_rows())
+               if it.get("sub") == "tabs"][0]
+a.menu_activate()
+check(a.menu["kind"] == "tabs", "enter descends into the submenu")
+extra.append({"label": "Restore 3 windows from 09-21 14:02", "act": lambda: ""})
+a.route_key("\x1b")
+check(a.menu["kind"] == "mux", "esc comes back up")
+check(row_id(a.menu_entries()[a.menu["i"]]) == "Tabs ▸",
+      "...onto the row it came from, though a row appeared above it and the "
+      "row's own label changed")
+
+# The `Back` row is the same edge, so it lands in the same place.
+a.menu_activate()
+check(a.menu["kind"] == "tabs", "...and enter on it descends again")
+a.menu["i"] = 1
+a.menu_activate()
+check(a.menu["kind"] == "mux" and row_id(a.menu_entries()[a.menu["i"]]) == "Tabs ▸",
+      "a `Back` row lands where esc lands")
+
+# A fresh open from a key is the top, as it always was.
+a.open_menu("mux")
+check(a.menu["i"] == 0, "and a fresh open still starts at the top")
+
+# The row is gone: the cursor falls back to the first row rather than to
+# whatever took its index.
+a.menu["i"] = [i for i, it in enumerate(parent_rows()) if it.get("sub") == "tabs"][0]
+a.menu_activate()
+extra.clear()
+a.route_key("\x1b")
+check(a.menu["kind"] == "mux", "esc comes back up when a row has vanished too")
+a.menu = {"kind": "mux", "i": 3}
+a._menu_from["tabs"] = "A row nobody has"
+a.open_menu("mux", "A row nobody has")
+check(a.menu["i"] == 0, "a remembered row that is gone falls back to the first")
+
+print("== row_id: the half of a label that does not change")
+check(row_id({"key": "wd_win", "label": "Restart x after a limit: YES"}) == "wd_win",
+      "an explicit key wins")
+check(row_id({"label": "Watchdog: ON  restart a limited window"}) == "Watchdog",
+      "a value is not part of the identity")
+check(row_id({"label": "Tabs ▸  which tabs the strip shows (2 hidden)"}) == "Tabs ▸",
+      "nor is an explanation still glued to the label")
+check(row_id({"label": "Settings ▸"}) == "Settings ▸", "a plain label is itself")
+
+print("== a menu explains itself: desc_fn under the title, desc under the cursor")
+# The REGISTRY half of it. What the panel draws is tests/test_menulayout.py's
+# subject; what is proved here is that a menu can say what it is for without
+# the dashboard knowing which menu, and that the panel does not move a line
+# as the cursor crosses rows that explain themselves and rows that do not.
+DESC_ROWS = [
+    {"label": "Settings", "sub": "settings"},
+    {"sep": True},
+    {"label": "Watchdog: ON", "act": lambda: "",
+     "desc": "restart a limited window once its limit resets"},
+    {"label": "Quit the dashboard", "act": lambda: ""},
+]
+a = app()
+a.add_view(Spy("main"))
+a.add_menu("mux", lambda: DESC_ROWS)
+a.add_menu("settings", lambda: [{"label": "Back", "sub": "mux"}], esc_to="mux",
+           desc_fn=lambda: "menu layout, defaults for a new window")
+a.open_menu("mux")
+check(a.menu_desc() == "", "a menu that registered no desc_fn has no header")
+a.open_menu("settings")
+check(a.menu_desc() == "menu layout, defaults for a new window",
+      "and one that did draws it under its title")
+
+print("== the MENU'S OWN hint line, and what turns it off")
+# `hint_fn` fills the line inside the panel; App.add_hint writes on the main
+# view's footer key line and never reaches a menu. They are different lines
+# and this is the one a setting can turn off.
+a = app()
+a.add_view(Spy("main"))
+a.add_menu("mux", lambda: DESC_ROWS)
+a.add_menu("quiet", lambda: DESC_ROWS, hint_fn=lambda: None)
+a.open_menu("mux")
+check(a.menu_hint() == appmod.MENU_HINT, "a menu with no hint_fn gets the plain one")
+a.open_menu("quiet")
+check(a.menu_hint() is None, "hint_fn returning None turns the panel's hint line off")
+a.say("PROJECT_DIR is not a directory")
+check("not a directory" in (a.menu_hint() or ""),
+      "...and a notice still gets the line back, rather than going nowhere")
+
+print("== the panel height does not move as the cursor crosses a description")
+real_knob = appmod.knob
+try:
+    appmod.knob = lambda key, prof=None: "bottom"
+    a = app()
+    a.add_view(Spy("main"))
+    a.add_menu("mux", lambda: DESC_ROWS)
+    a.open_menu("mux")
+    heights, frames = set(), []
+    for _ in range(4):
+        lines = a.console.render_lines(a.place_menu([], 0), a.console.options)
+        heights.add(len(lines))
+        frames.append("".join(seg.text for line in lines for seg in line))
+        a.menu_move(1)
+    check(len(heights) == 1, "every cursor position draws the same height %s" % heights)
+    check(sum("restart a limited window" in f for f in frames) == 1,
+          "the description is drawn on the row it belongs to, and only there")
+finally:
+    appmod.knob = real_knob
+
+print("== a centred menu is capped; the other two layouts still fill the frame")
+from dashboard.menulayout import MODAL_MAX, modal_width    # noqa: E402
+
+WIDE_ROWS = [{"label": "Schedule a resume of a window with a very long name "
+                       "at the next reset, reading its STATUS file",
+              "act": lambda: ""},
+             {"label": "Copy the handover path of that same window",
+              "act": lambda: ""}]
+
+
+def panel_width(a, layout, sections, at=0):
+    """The drawn width of the menu panel in the frame. Stripped at both ends:
+    a centred panel is padded on the LEFT by Align to put it in the middle."""
+    appmod.knob = lambda key, prof=None, _l=layout: _l
+    lines = a.console.render_lines(a.place_menu(sections, at),
+                                   a.console.options, pad=False)
+    return max(len("".join(seg.text for seg in line).strip()) for line in lines)
+
+
+real_knob = appmod.knob
+try:
+    a = app()                                   # a 120-column console
+    a.add_view(Spy("main"))
+    a.add_menu("mux", lambda: WIDE_ROWS)
+    a.open_menu("mux")
+    sections = [("top", Panel(Text("top")))]
+    check(panel_width(a, "modal", sections) <= modal_width(120),
+          "modal: no wider than the cap (%d)" % modal_width(120))
+    check(panel_width(a, "table", sections) == 120,
+          "table: still the width of the frame")
+    check(panel_width(a, "bottom", sections) == 120,
+          "bottom: still the width of the frame")
+
+    # The answers a capped menu collects are capped too, so a picker is not
+    # wider than the menu that asked the question.
+    appmod.knob = lambda key, prof=None: "modal"
+    sub = Panel(Text("a picker option longer than the cap " * 4))
+    a.place_submode(sections, 0, sub)
+    check(sub.width is not None and sub.width <= modal_width(120),
+          "a centred submode is capped the same way (%s)" % sub.width)
+    narrow = Panel(Text("yes / no"))
+    a.place_submode(sections, 0, narrow)
+    check(narrow.width < modal_width(120),
+          "...and one narrower than the cap keeps its own width (%s)" % narrow.width)
+finally:
+    appmod.knob = real_knob
+
 print()
 print("%d assertions passed" % PASSES if not FAILS
       else "%d passed, %d FAILED" % (PASSES, FAILS))
