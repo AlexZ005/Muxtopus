@@ -24,7 +24,9 @@ The screens that share a tab strip name each tab **with its count** — `▸sche
 
 ## Tabs and small terminals
 
-**Nothing is cut off the bottom.** On a short terminal (an 80×24 client) the lanes and claude tables give up rows and scroll, showing `▲ N more` / `▼ N more` the way a long menu does, with the sessions served first; the schedules and handovers tables do the same. If that is still not enough, the uncommitted panel, then the deck header, then the system line step aside, and the claude title says which. On a narrow one (down to 40 columns) the least important columns go first — RESUMED, WOUND, DIRTY … — and the window names stay; no row wraps onto two lines.
+**Nothing is cut off the bottom.** On a short terminal (an 80×24 client) the lanes and claude tables give up rows and scroll, showing `▲ N more` / `▼ N more` the way a long menu does, with the sessions served first; the schedules and handovers tables do the same. If that is still not enough, the uncommitted panel, then the deck header, then the system line step aside, and the claude title says which — a panel you hid yourself, under Settings ▸ Panels, has already left before this rule runs, so the note here never names one of your own choosing.
+
+**A narrow lanes or claude table loses whole columns, never fidelity.** Both go through a horizontal window: a column is drawn at its full width or not at all, nothing is ever squeezed to an ellipsis. The pinned columns — unset, that is the one that names each row, LANE and WINDOW — never scroll off; the rest are a strip that `shift-←` `shift-→` scroll through, and the panel's own bottom border counts what is off each side, reading like `◀ 2 more · 3 more ▶ · shift-←→`. When the pinned columns alone do not fit the width, the border says so instead of offering a key that has nowhere to go. Settings ▸ Columns picks which columns are shown, pinned or hidden; Settings ▸ Panels leaves a whole section out. The schedules table is different — it kept the old rule, and on a narrow one still gives up its least important columns first, `AT`, then `SLUG`, `TYPE` and `FOR`, keeping the title. Either way, no row wraps onto two lines.
 
 **The tab strip shrinks before it scrolls.** Labels go full, then short, then an initial (the tab you are on keeps its name longest); only then do tabs past the first six scroll, with `«2` / `3»` counting what is off each side and the subtitle saying `←→ tab 7/9`. `←` `→` reach every tab, drawn or not.
 
@@ -40,6 +42,7 @@ The screens that share a tab strip name each tab **with its count** — `▸sche
 | `esc` | the muxtopus menu: Settings, Insights, the watchdog and monitor switches, disconnect, reload, quit |
 | `c` | a new claude session: a form of every parameter, `Create` on the first row — so `c` `enter` is a window |
 | `←` `→` | fold / unfold the subtree under the cursor; `←` on a leaf steps out to its parent |
+| `shift-←` `shift-→` | scroll the column window of the table the cursor is in — a lane row scrolls lanes, a session or the extras row scrolls claude |
 | `t` | tree ordering on / off |
 | `f` | lanes: this account only / every account |
 | `s` | scheduled windows — and, on `←`/`→`, the handovers beside them |
@@ -137,7 +140,7 @@ The first switch **excludes one session from the watchdog** (the green checkmark
 
 What is not about one row: **Settings**, **Insights**, the watchdog and monitor switches by their full names (`w` and `m` stay the fast path), **Restore K windows from …** (only while the watchdog holds a [frozen snapshot](restore.md) of windows a dead server took), **Disconnect** (`tmux detach-client`; the dashboard and every window keep running, `muxtopus` attaches again), **Reload** (what `R` does) and **Quit** (the window drops to a shell prompt; typing `muxtopus` there, or anywhere, brings the dashboard back).
 
-Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.dashboard.conf` for a named account), a file the dashboard owns — see [Configuration](configuration.md) — and every one is read back from disk before it is reported as saved: the menu layout, the permission mode, model and effort preselected for a new window, whether such a window is watched and monitored, the working folder offered first, which `settings.json` "make it the default" writes to, the two handovers-tab filters, under **Notifications ▸** what the phone is told, and under **Tabs ▸** which tabs the strip shows (see [Tabs and small terminals](#tabs-and-small-terminals)).
+Settings are written to `~/.config/muxtopus/dashboard.conf` (`profiles/<name>.dashboard.conf` for a named account), a file the dashboard owns — see [Configuration](configuration.md) — and every one is read back from disk before it is reported as saved: the menu layout, the permission mode, model and effort preselected for a new window, whether such a window is watched and monitored, the working folder offered first, which `settings.json` "make it the default" writes to, the two handovers-tab filters, under **Notifications ▸** what the phone is told, under **Tabs ▸** which tabs the strip shows, under **Columns ▸** which columns of the lanes and claude tables are shown, pinned or hidden, and under **Panels ▸** which of deck, lanes, uncommitted and system are drawn at all — the claude table itself cannot be hidden (see [Tabs and small terminals](#tabs-and-small-terminals), which covers columns as well as tabs, and [Configuration](configuration.md) for every key this menu writes).
 
 ## A new claude session (`c`)
 
