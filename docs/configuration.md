@@ -69,6 +69,9 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `DASHBOARD_HANDOVERS_DONE` | `off` | the handovers tab's `f`: show finished rows |
 | `DASHBOARD_HANDOVERS_QUESTIONS` | `on` | the handovers tab's `a`: show the question rows |
 | `DASHBOARD_TABS_HIDDEN` | | tabs hidden from the strip and from `←` `→`, by view name, comma-separated (`handovers`); written by Settings ▸ Tabs |
+| `DASHBOARD_COLUMNS_HIDDEN` | | columns left out of the main view's tables, as `<table>:<COLUMN>`, comma-separated (`claude:RESUMED,lanes:RAM`); tables are `lanes` and `claude`; written by Settings ▸ Columns |
+| `DASHBOARD_COLUMNS_PINNED` | `lanes:LANE,claude:WINDOW` | columns that never scroll off and are never squeezed, same shape. Unset is the default shown here — the column that names each row; `none` (or an empty value) pins nothing |
+| `DASHBOARD_PANELS_HIDDEN` | | panels left out of the main view, of `deck,lanes,uncommitted,system`, comma-separated; written by Settings ▸ Panels. The claude table is the view itself and cannot be hidden |
 
 ```sh
 # ~/.config/muxtopus/config

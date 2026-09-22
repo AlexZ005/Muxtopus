@@ -10,7 +10,7 @@ or a file the watchdog published; nothing here runs a command per row. A
 badge registered by another module is held to the same rule, and App's
 add_badge docstring says so.
 
-WHAT OTHER MODULES MAY ASK THIS VIEW is the five accessors at the foot of
+WHAT OTHER MODULES MAY ASK THIS VIEW is the six accessors at the foot of
 MainView and nothing else; docs/dashboard-views.md carries the same list.
 """
 from __future__ import annotations
@@ -27,9 +27,11 @@ from rich.table import Table
 from rich.text import Text
 
 from dashboard.app import View
-from dashboard.menulayout import (PAGE_KEYS, TABLE_MIN, fit_columns,
-                                  make_table, page_jump, rendered_height,
-                                  share_rows)
+from dashboard.menulayout import (PAGE_KEYS, TABLE_MIN, column_note,
+                                  column_window, make_table, page_jump,
+                                  rendered_height, share_rows)
+from dashboard import columns as columnsmod
+from dashboard.columns import TABLES
 from dashboard.core import (CONTEXT_WINDOW, DIM, EXTRAS_SENTINEL, EXTRA_HINTS,
                             FRAME_INTERVAL, USAGE_MAX_AGE, WATCHDOG_TREE,
                             WD_INTERVAL, knob,
@@ -49,6 +51,13 @@ from dashboard.data import (Cpu, claude_sessions, dirty_for, dirty_repos,
                             processes, read_tree, session_mode,
                             toggle_watchdog, uptime_seconds, usage_failure,
                             usage_limits)
+
+# THE FLEXIBLE COLUMN'S TARGET WIDTH, passed to column_window explicitly
+# rather than left to its default, so this file's own pinned-fit arithmetic
+# (_column_note) and the window's cannot drift apart. It is column_window's
+# default today; the point is that changing one changes both.
+COL_WANT = 20
+
 
 def run_deck_ram(action: str) -> str:
     script = SCRIPTS / "deck-ram.sh"
@@ -144,6 +153,21 @@ class MainView(View):
         # (lanes, then sessions, then the extras row) but it lives in the
         # sessions table, so that table's viewport is what a page means here.
         self._page = TABLE_MIN
+        # WHERE EACH TABLE'S HORIZONTAL WINDOW SITS, per table because they
+        # are different tables: scrolling the sessions must not move the
+        # lanes under the user's eye. The CLAMPED offset column_window
+        # returned is what is stored back after every build, so a terminal
+        # that grew snaps to 0 and the next shift-← starts from what is
+        # actually on screen rather than from a number nothing shows.
+        self.col_offset = {"lanes": 0, "claude": 0}
+        # What the last build's window worked out, for Settings ▸ Columns:
+        # {table: (keep_names, left_names, right_names, pinned)}. Stashed
+        # rather than recomputed, so the menu says what is TRUE THIS FRAME
+        # instead of re-deriving it against a width it has to guess at.
+        self._plans: dict[str, tuple] = {}
+        # The cols spec and the width the last build used, so shift-←→ can
+        # ask column_window for the NEXT offset without waiting a frame.
+        self._colspec: dict[str, tuple] = {}
 
     # -------------------------------------------------------- the protocol
     def build(self, app) -> list:
@@ -643,23 +667,28 @@ class MainView(View):
         hidden = len(groups) - len(shown)
 
         # COLUMNS AS DATA, then the table is made at the end, once the frame
-        # knows how wide and how tall it may be (fit_columns, make_table).
-        # The number is the order a narrow terminal gives a column up in,
-        # lowest first; None never goes. LANE is where "▼ N more" is drawn.
+        # knows how wide and how tall it may be (column_window, make_table).
+        # THE THIRD ELEMENT IS None ON EVERY ROW HERE: it was fit_columns's
+        # rank -- the order a narrow terminal gave a column up in -- and the
+        # horizontal window replaced it with list order plus what the user
+        # pinned and hid. It stays in the tuple because fit_columns still
+        # serves the schedules table and both read the same spec shape.
+        # LANE is where "▼ N more" is drawn, which is why it is pinned by
+        # default (dashboard/columns.py DEFAULT_PINNED).
         lane_cols = [
             ("", {"width": 2}, None),
             ("PORT", {"width": 6}, None),
-            ("RAM", {"justify": "right", "width": 10}, 3),
-            ("AGE", {"justify": "right", "width": 6}, 2),
+            ("RAM", {"justify": "right", "width": 10}, None),
+            ("AGE", {"justify": "right", "width": 6}, None),
             ("LANE", {"ratio": 1, "min_width": 12}, None),
         ]
         # Only the unfiltered view needs to say whose a row is; in the
         # filtered one the answer is the panel title.
         if self.lanes_all:
-            lane_cols.append(("ACCOUNT", {"width": 10}, 4))
+            lane_cols.append(("ACCOUNT", {"width": 10}, None))
         lane_cols += [
-            ("DIRTY", {"justify": "right", "width": 6}, 1),
-            ("STATE", {"width": 16}, 5),
+            ("DIRTY", {"justify": "right", "width": 6}, None),
+            ("STATE", {"width": 16}, None),
         ]
         lane_rows: list[list] = []
 
@@ -748,9 +777,20 @@ class MainView(View):
         # row. Arrow up from the first session and a lane lights up; enter or
         # space there switches the lanes table between this account and all.
         first_session = self.sids[0] if self.sids else ""
-        self.sids = self.lane_keys + self.sids + [EXTRAS_SENTINEL]
+        # A PANEL THE USER HID LEAVES THE WALK, not just the screen. The
+        # lane rows are only reachable by arrowing up off the first session,
+        # and the extras row RIDES THE SYSTEM LINE -- there is no row to
+        # light up once either panel is gone, so a cursor that could still
+        # land there would be a selection nothing draws. Settings ▸ Panels
+        # gives the extras action a row of its own for exactly this reason;
+        # `f` is a key, not a row, so it goes on working with the lanes
+        # table hidden.
+        panels_off = columnsmod.hidden_panels(PROFILE)
+        self.sids = ([] if "lanes" in panels_off else self.lane_keys) \
+            + self.sids \
+            + ([] if "system" in panels_off else [EXTRAS_SENTINEL])
         if self.cursor not in self.sids:
-            self.cursor = first_session or self.sids[0]
+            self.cursor = first_session or (self.sids[0] if self.sids else "")
 
         mon_all = monitor_on()
         # EVERY COLUMN IS no_wrap (make_table adds it): a row that wraps is
@@ -763,16 +803,16 @@ class MainView(View):
         wide = self.app.console.size.width >= 100
         ct_cols = [
             ("", {"width": 3}, None),
-            ("MON", {"width": 4}, 3),
+            ("MON", {"width": 4}, None),
             ("WINDOW", {"ratio": 1, "min_width": 12}, None),
-            ("MODEL", {"width": 11}, 7),
-            # Last to go, and only on a phone-width terminal: the window's
-            # name and its state are what the row is for.
-            ("CONTEXT", {"width": 29 if wide else 21}, 8),
-            ("SPENT", {"justify": "right", "width": 8}, 4),
-            ("IDLE", {"justify": "right", "width": 6}, 5),
+            ("MODEL", {"width": 11}, None),
+            # The rank each of these carried is None now -- the window's
+            # order and the user's choice decide, not a number in a spec.
+            ("CONTEXT", {"width": 29 if wide else 21}, None),
+            ("SPENT", {"justify": "right", "width": 8}, None),
+            ("IDLE", {"justify": "right", "width": 6}, None),
             ("STATE", {"width": 15}, None),
-            ("DIRTY", {"justify": "right", "width": 6}, 6),
+            ("DIRTY", {"justify": "right", "width": 6}, None),
         # 12, NOT 11, AND no_wrap. when() renders a stamp older than today as
         # "%b %-d %H:%M" -- "Sep 5 21:13" is 11 and fitted, "Sep 12 12:21" is 12
         # and did not, so every row wound or resumed on a two-digit day wrapped
@@ -780,8 +820,8 @@ class MainView(View):
         # the day of the month is a width that is wrong two thirds of the time;
         # no_wrap is the belt to that braces, because a cell that cannot wrap
         # can never take a row with it.
-            ("WOUND", {"width": 12}, 2),
-            ("RESUMED", {"width": 12}, 1),
+            ("WOUND", {"width": 12}, None),
+            ("RESUMED", {"width": 12}, None),
         ]
         ct_rows: list[list] = []
         ct_cur = -1
@@ -911,7 +951,8 @@ class MainView(View):
             ("s", DIM), " schedules  ",
             ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("pgup/dn home/end", DIM), " jump  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",
             ("esc", DIM), " muxtopus  ", ("c", DIM), " new session  ",
-            ("←→", DIM), " fold  ", ("t", DIM), " tree  ",
+            ("←→", DIM), " fold  ", ("shift-←→", DIM), " columns  ",
+            ("t", DIM), " tree  ",
             ("f", DIM), " all lanes  ", ("p", DIM), " btop  ", ("?", DIM), " help",
         )
         # ...and what other modules want on the key line: `· 3 ?`, and its
@@ -973,10 +1014,15 @@ class MainView(View):
         # muxtopus and settings menus follow the cursor too -- there is no
         # better anchor. Worked out here, where the sections exist, and read
         # back by MainView.menu_anchor.
+        # names.index() USED TO BE UNCONDITIONAL, and a hidden panel makes
+        # it a ValueError -- the dashboard dying on a frame instead of
+        # drawing one. The claude table is always in `sections`, so it is
+        # the fallback: a menu opened with the cursor on a lane key that no
+        # longer has a row hangs under the sessions instead of nowhere.
         names = [n for n, _p in sections]
-        if self.cursor.startswith(LANE_PREFIX):
+        if self.cursor.startswith(LANE_PREFIX) and "lanes" in names:
             self._anchor = names.index("lanes")
-        elif self.cursor == EXTRAS_SENTINEL:
+        elif self.cursor == EXTRAS_SENTINEL and "system" in names:
             self._anchor = len(sections) - 1
         else:
             self._anchor = names.index("claude")
@@ -1003,32 +1049,78 @@ class MainView(View):
         console = self.app.console
         height = console.size.height
         width = console.size.width
+        # WHICH COLUMNS, BEFORE HOW MANY ROWS. The horizontal window is a
+        # question about the width and the user's choice alone, so it is
+        # settled once here; the height loop below redraws the same columns
+        # however many times it has to try.
         specs = []
-        for cols, rows, cur, marker, title in (lanes, claude):
-            keep = fit_columns(cols, width)
-            specs.append((cols, keep, rows, cur, marker, title))
+        for name, (cols, rows, cur, marker, title) in zip(TABLES, (lanes, claude)):
+            pinned, hidden = columnsmod.for_table(name, PROFILE)
+            keep, left, right, offset = column_window(
+                cols, width, pinned, hidden, self.col_offset.get(name, 0),
+                want=COL_WANT)
+            # THE CLAMPED OFFSET IS WHAT IS STORED, never the one we asked
+            # for. A terminal that grew hands back 0, and the next shift-←
+            # then starts from what is on screen instead of from a number
+            # nothing shows -- which is how a column goes missing with the
+            # table looking complete.
+            self.col_offset[name] = offset
+            self._plans[name] = self._plan_of(cols, keep, pinned, hidden, offset)
+            self._colspec[name] = (cols, width)
+            specs.append((cols, keep, rows, cur, marker, title,
+                          self._column_note(cols, width, pinned, hidden,
+                                            keep, left, right)))
 
         def tables(lines, note=""):
             out = []
-            for k, (cols, keep, rows, cur, marker, title) in enumerate(specs):
+            for k, (cols, keep, rows, cur, marker, title, cnote) in enumerate(specs):
+                # The degrade rule's note -- what a SHORT terminal took --
+                # stays on the claude title, where it has always been.
                 if note and k == 1:
                     title = title.copy() if isinstance(title, Text) else Text.from_markup(title)
                     title.append(note, style=DIM)
                 # lines == "chrome": the table drawn EMPTY, which is what
                 # its borders, header and rule cost with no rows at all.
                 empty = lines == "chrome"
-                out.append(Panel(make_table(cols, keep, [] if empty else rows, cur, marker,
-                                            None if lines in (None, "chrome") else lines[k]),
-                                 title=title, title_align="left",
-                                 border_style=FRAME, box=box.ROUNDED))
+                panel = Panel(make_table(cols, keep, [] if empty else rows, cur, marker,
+                                         None if lines in (None, "chrome") else lines[k]),
+                              title=title, title_align="left",
+                              border_style=FRAME, box=box.ROUNDED)
+                # WHAT IS OFF EACH SIDE GOES ON THE BOTTOM BORDER, not on the
+                # end of the title. MEASURED at width 80: the claude title
+                # already overflows there without this note -- "monitor off"
+                # is cut at the border -- so a note appended to it is the
+                # part Rich drops, at exactly the width where six of eleven
+                # columns have gone and the screen most needs to say so.
+                # The subtitle is empty, right-aligned and always drawn.
+                # THE TAB STRIP ALREADY ANSWERS THIS QUESTION THIS WAY
+                # (dashboard/app.py): counts in the title, "←→ tab 7/9" in
+                # the subtitle. Same problem, same answer, and "" sets no
+                # subtitle at all, so a width that fits every column looks
+                # exactly as it did.
+                if cnote:
+                    panel.subtitle = "[%s]%s" % (DIM, cnote.lstrip(" ·").strip())
+                    panel.subtitle_align = "right"
+                out.append(panel)
             return out
+
+        # WHAT THE USER ASKED NOT TO SEE, decided BEFORE the degrade rule
+        # runs. The two are different things said in the same word: one is a
+        # choice, the other is a terminal too short to keep a promise, and
+        # the note below must never confuse them -- "hidden: short terminal"
+        # against a panel the user hid is the dashboard blaming the window
+        # size for something the user did. The claude table is not in
+        # PANELS, so it cannot be hidden here or anywhere.
+        off = columnsmod.hidden_panels(PROFILE)
 
         def assemble(lines, drop, note=""):
             lane_p, ct_p = tables(lines, note)
-            return ([] if "deck" in drop else [("deck", deck_panel)]) + [
-                ("lanes", lane_p), ("claude", ct_p),
-                *([] if "uncommitted" in drop else [("uncommitted", p) for p in dirty_panels]),
-                *([] if "system" in drop else [("system", system_panel)])]
+            gone = set(drop) | off
+            return ([] if "deck" in gone else [("deck", deck_panel)]) + [
+                *([] if "lanes" in gone else [("lanes", lane_p)]),
+                ("claude", ct_p),
+                *([] if "uncommitted" in gone else [("uncommitted", p) for p in dirty_panels]),
+                *([] if "system" in gone else [("system", system_panel)])]
 
         foot = self.app._submode_foot() or self._foot
         full = assemble(None, ())
@@ -1040,12 +1132,17 @@ class MainView(View):
             return full
         chrome = sum(rendered_height(console, p) for p in tables("chrome"))
         drop: list[str] = []
-        steps = [[], ["uncommitted"], ["uncommitted", "deck"]]
-        if self.cursor != EXTRAS_SENTINEL:
-            steps.append(["uncommitted", "deck", "system"])
+        # THE DEGRADE ORDER, LESS WHAT IS ALREADY GONE. A panel the user hid
+        # cannot be given up again: leaving it in the list made the first
+        # step buy nothing, so the frame went a step further than it had to
+        # and dropped the deck header off a terminal that would have held it.
+        order = [n for n in ("uncommitted", "deck") if n not in off]
+        if self.cursor != EXTRAS_SENTINEL and "system" not in off:
+            order.append("system")
+        steps = [order[:i] for i in range(len(order) + 1)]
         for step in steps:
             drop = step
-            if step == ["uncommitted"] and not dirty_panels:
+            if step and step[-1] == "uncommitted" and not dirty_panels:
                 continue
             others = [p for n, p in assemble("chrome", drop) if n not in ("lanes", "claude")]
             room = height - chrome - rendered_height(console, Group(*others, foot))
@@ -1058,6 +1155,82 @@ class MainView(View):
         note = (" · %s hidden: short terminal" % ", ".join(reversed(drop))) \
             if drop else ""
         return assemble(lines, drop, note)
+
+    # menulayout's width arithmetic, repeated for the ONE question
+    # column_window does not answer: do the pinned columns fit by
+    # themselves? When they do not it draws them anyway -- the caller asked
+    # for them, Rich ellipsises what is left -- and reports every unpinned
+    # column as off to the right, which column_note renders as
+    # "9 more ▶ · shift-←→". That is a key that cannot do anything: there is
+    # no offset at which a tenth column appears, so the count is true and
+    # the instruction is a lie. Degrade honestly and name the thing that is
+    # wrong. COL_WANT is passed to column_window rather than left to its
+    # default, so the two arithmetics cannot drift apart.
+    def _column_note(self, cols, width, pinned, hidden, keep, left, right) -> str:
+        avail = width - 4
+        fixed = 0
+        for header, kw, _rank in cols:
+            if header and header in hidden:
+                continue
+            if header == "" or header in pinned:
+                fixed += (max(kw.get("min_width", 0), COL_WANT) if kw.get("ratio")
+                          else kw.get("width", 0)) + 2
+        if fixed > avail:
+            return " · too narrow for the pinned columns"
+        drawn_unpinned = [i for i in keep
+                          if cols[i][0] and cols[i][0] not in pinned]
+        if right and not drawn_unpinned:
+            # The pinned ones fit and not one scrolling column does. The
+            # count is true; shift-←→ still has nowhere to go.
+            return " · %d more ▶ · too narrow to scroll to them" % right
+        return column_note(left, right)
+
+    @staticmethod
+    def _plan_of(cols, keep, pinned, hidden, offset) -> tuple:
+        """What one table's window decided, BY NAME -- names are what the
+        settings file holds and what the menu keys its rows by, and an
+        index means a different column the moment `f` adds ACCOUNT."""
+        seq = [h for h, _kw, _r in cols
+               if h and h not in hidden and h not in pinned]
+        keep_names = [cols[i][0] for i in keep]
+        drawn = set(keep_names)
+        return (keep_names, seq[:offset],
+                [n for n in seq[offset:] if n not in drawn], sorted(pinned))
+
+    def scroll_columns(self, delta: int) -> str:
+        """shift-← / shift-→: move the window of the table THE CURSOR IS IN.
+
+        A lane row scrolls the lanes table; a session and the extras row
+        both scroll the claude table, because the extras row rides the
+        system line under it and the sessions are what it came from.
+
+        The new offset is worked out by asking column_window again rather
+        than by waiting for the next build: it is pure, the answer is the
+        same one the frame will reach, and the notice has to say what
+        happened NOW. Saying "2 off-screen left" a frame before it is true
+        is the same class of bug as the offset that was stored unclamped.
+        """
+        table = "lanes" if self.cursor.startswith(LANE_PREFIX) else "claude"
+        got = self._colspec.get(table)
+        if got is None:
+            return ""
+        cols, width = got
+        pinned, hidden = columnsmod.for_table(table, PROFILE)
+        before = self.col_offset.get(table, 0)
+        keep, left, right, offset = column_window(
+            cols, width, pinned, hidden, before + delta, want=COL_WANT)
+        self.col_offset[table] = offset
+        if not left and not right:
+            return "every column fits: nothing to scroll"
+        if offset == before:
+            return "%s columns: already as far %s as it goes: nothing to scroll" % (
+                table, "left" if delta < 0 else "right")
+        said = []
+        if left:
+            said.append("%d off-screen left" % left)
+        if right:
+            said.append("%d off-screen right" % right)
+        return "%s columns: %s" % (table, " · ".join(said))
 
     # ====================================================== the views' keys
     # Lifted out of main()'s one long chain, each branch under the view it
@@ -1091,6 +1264,11 @@ class MainView(View):
             self.app.say(self.tree_collapse())
         elif key == "RIGHT":
             self.app.say(self.tree_expand())
+        elif key in ("S-LEFT", "S-RIGHT"):
+            # The plain arrows are spoken for -- they fold the tree -- so
+            # the sideways scroll took the shifted pair rather than one of
+            # them (deck_status.decode_key names those two and nothing else).
+            self.app.say(self.scroll_columns(-1 if key == "S-LEFT" else 1))
         elif key == "t":
             self.app.say(self.toggle_tree())
         else:
@@ -1100,7 +1278,7 @@ class MainView(View):
 
     # ------------------------------ WHAT OTHER MODULES MAY ASK THIS VIEW
     # The complete list, and it is short on purpose. docs/dashboard-views.md
-    # carries the same five, so the coupling is a named call anybody can grep
+    # carries the same six, so the coupling is a named call anybody can grep
     # for rather than `self.cursor` reached from the far side of the
     # dashboard. Nothing else in this file is anyone else's business.
     def cursor_sid(self) -> str:
@@ -1135,6 +1313,17 @@ class MainView(View):
         "is this slug taken" is a question about all of them, not about the
         ones that happen to be on screen."""
         return [w for w in self.windows.values() if w]
+
+    def column_plans(self) -> dict[str, tuple]:
+        """What the LAST BUILD's horizontal window decided, per table:
+        {table: (keep_names, left_names, right_names, pinned_names)}.
+
+        Settings ▸ Columns draws its rows from this, so each row says what
+        is true of the frame behind the menu -- shown, pinned, hidden, off
+        to the left, off to the right -- instead of re-deriving it against
+        a width it would have to guess at. Empty until the first build.
+        """
+        return dict(self._plans)
 
 
 
@@ -1188,8 +1377,12 @@ HELP_SMALL = f"""
     "▲ N more" / "▼ N more" the way a long menu does, with the sessions served
     first. If that is still not enough, the uncommitted panel and then the deck
     header go, and the claude title says which. On a narrow terminal the
-    less important columns go first (RESUMED, WOUND, DIRTY...) and the window
-    names stay. The tab strip shortens its labels before it scrolls tabs.
+    PINNED columns stay whatever the width and are never squeezed; the rest
+    are a strip that shift-← and shift-→ scroll through, and the panel title
+    counts what is off each side ("◀ 2 more · 3 more ▶"). Settings ▸ Columns
+    chooses which columns are shown, pinned or hidden, and Settings ▸ Panels
+    leaves a whole section out. The tab strip shortens its labels before it
+    scrolls tabs.
 """
 
 HELP_MONITORING = f"""

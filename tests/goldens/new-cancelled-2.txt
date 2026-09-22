@@ -29,4 +29,4 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  cancelled
  q quit  r refresh  R reload  s schedules  w watchdog  m monitor  u/U usage  ↑↓ pick  pgup/dn home/end jump  enter open  space menu  esc muxtopus  c new session
-←→ fold  t tree  f all lanes  p btop  ? help  · 2 ?
+←→ fold  shift-←→ columns  t tree  f all lanes  p btop  ? help  · 2 ?

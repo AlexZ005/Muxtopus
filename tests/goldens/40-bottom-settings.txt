@@ -6,7 +6,6 @@
 
 
 
-
                                          ╭─ settings · <SB>/co…ashboard.conf (modal: no room below) ─╮
                                          │    menu layout, defaults for a new window, where a mode is made permanent  │
                                          │  ▸ Menu layout: bottom                                                     │
@@ -23,6 +22,8 @@
                                          │    Notifications ▸  what the phone is told, and what it may answer         │
                                          │    Tabs ▸  which tabs the strip shows (0 hidden)                           │
                                          │    Updates ▸  new releases: whether to look, what to take, and what to ke… │
+                                         │    Columns ▸  which columns the two tables show (0 hidden, 2 pinned)       │
+                                         │    Panels ▸  which panels the main view shows (0 hidden)                   │
                                          │    ····················································                    │
                                          │    Back                                                                    │
                                          │    table: under the panel · modal: centred · bottom: the footer            │

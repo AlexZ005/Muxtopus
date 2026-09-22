@@ -241,7 +241,7 @@ modal still owns the keys while it is up. The options table is the one today.
 
 ## What crosses a view boundary
 
-Five accessors on the main view, and nothing else:
+Six accessors on the main view, and nothing else:
 
 ```python
 app.view_of("main").cursor_sid()         "" on a lane row and on extras
@@ -249,10 +249,14 @@ app.view_of("main").cursor_window()      the tmux name, as tmux reports it
 app.view_of("main").cursor_cwd()
 app.view_of("main").listed_sessions()    (sid, window, pane, cwd) as drawn
 app.view_of("main").known_windows()      collapsed subtrees included
+app.view_of("main").column_plans()       {table: (keep, left, right, pinned)}
 ```
 
 `dashboard/views/schedules.py` uses the first three ("schedule a resume of
-THIS window"), `dashboard/views/newsession.py` the last three. Anything
+THIS window"), `dashboard/views/newsession.py` the last three, and
+`dashboard/menus/columns.py` the sixth -- it draws one row per column and
+each row says what the LAST BUILD did with it, so the menu cannot disagree
+with the table behind it. Anything
 further is a gap in the seam: **stop and write it in QUESTIONS rather than
 reach in.** A gap here is this design's bug and gets fixed once, for
 everyone.
