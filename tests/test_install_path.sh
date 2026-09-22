@@ -59,8 +59,8 @@ check "the line uses \$HOME, not the literal path" bash -c "! grep -qF '$SB' '$H
 # ...AND PRINTED LAST, under "Done", not in the middle of step 4: the closing
 # screenful is the one that gets read (the box that prompted this had the
 # line forty rows up and a user who never saw it).
-check "the line is printed for the current shell" grep -qF "For this shell, paste:" <<<"$out"
-check "  after Done, not before" bash -c 'sed -n "/^Done/,\$p" <<<"$1" | grep -qF "$2"' _ "$out" "$LINE"
+check "the line is printed for the current shell" grep -qF "execute this line first:" <<<"$out"
+check "  after Done, not before" bash -c 'sed -n "/Done[.,]/,\$p" <<<"$1" | grep -qF "$2"' _ "$out" "$LINE"
 
 echo "== a second install adds no second line"
 inst >/dev/null 2>&1
@@ -91,7 +91,7 @@ out="$(PATH="$BIN:$PATH" inst 2>&1)"
 check "~/.profile got it" test "$(count "$HOME/.profile")" = 1
 check "~/.bashrc got it"  test "$(count "$HOME/.bashrc")" = 1
 check "and it does not tell this shell to export what it already has" \
-  bash -c '! grep -qF "For this shell" <<<"$out"'
+  bash -c '! grep -qF "execute this line first" <<<"$out"'
 
 echo "== on PATH because a file says so: still nothing written twice"
 out="$(PATH="$BIN:$PATH" inst 2>&1)"

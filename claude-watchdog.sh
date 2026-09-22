@@ -1541,29 +1541,77 @@ sched_placeholder_warn() {
     "$unknown" "$(printf '{{%s}} ' $SCHED_PLACEHOLDERS | sed 's/ $//')"
 }
 
+# THE WINDOW'S IDENTITY, on stdout: which window it is, its slug, its handover
+# file, and the one tmux fact a lane keeps getting wrong. This is what a
+# window needs to know about itself from its first turn, and it goes into the
+# SESSION'S SYSTEM PROMPT (`claude --append-system-prompt-file`), not into the
+# paste.
+#
+# WHY NOT THE PASTE ANY MORE. It used to be the first seven lines of the body,
+# pressed Enter after -- so a window opened from the dashboard with an EMPTY
+# first prompt still received a paste, and spent its first turn answering a
+# header: measured on this machine, the model read "its handover file is X",
+# went to read X, and reported that it did not exist. The form's own row said
+# "the window opens on a blank claude" and it did not. In the system prompt
+# the identity costs no turn, is there for the whole session, and a brief
+# that names another slug is contradicting the system prompt rather than an
+# earlier user message, which is the right footing for "this one wins".
+#
+# NOT SUBSTITUTED: built from the resolved values out here, so a {{SLUG}} in
+# it would be a placeholder resolving to the thing it was printed from.
+sched_identity() {
+  local slug="$1" wname="$2"
+  echo "[muxtopus] This tmux window is $wname. Its lane slug is: $slug"
+  echo "[muxtopus] Its handover file is: $HANDOVERS/STATUS-$slug.md"
+  echo "[muxtopus] Use that slug verbatim with handover.sh (path/write/done). If a brief"
+  echo "[muxtopus] names a different one, THIS one wins -- a second handover file is not"
+  echo "[muxtopus] watched by anything."
+  echo "[muxtopus] Inside this window \$TMUX overrides TMUX_TMPDIR: a sandboxed tmux needs -S/-L or"
+  echo "[muxtopus] env -u TMUX, and a bare 'tmux kill-server' kills THIS server."
+}
+
+# WHERE THE IDENTITY FILE LIVES: one per slug, under this account's state,
+# rewritten at every launch and restore. claude reads it once at startup, so
+# it is not scratch -- a restore months later still finds the same path in
+# the saved command line and the same words in it.
+sched_identity_file() {   # sched_identity_file SLUG WNAME -> prints the path
+  local slug="$1" wname="$2" d="$STATE_DIR/identity"
+  mkdir -p "$d"
+  sched_identity "$slug" "$wname" > "$d/$slug.md"
+  printf '%s' "$d/$slug.md"
+}
+
+# DOES THE INSTALLED claude TAKE --append-system-prompt-file? Read from
+# `claude --help` once per daemon process, like the effort and permission
+# lists, and never guessed: a flag an older CLI rejects would have the window
+# exit before its prompt, and the entry marked error for a feature it never
+# asked for. Without the flag the identity is PASTED at the top of the body
+# as it always was -- the old shape, with the old cost, said once in the log.
+# The 10 s cap is for a claude that is not claude (a stub in a sandbox that
+# reads stdin forever), so a launch can never hang on the probe.
+CLAUDE_IDENTITY_FLAG=""   # "file" once probed and present, "paste" otherwise
+claude_identity_flag() {
+  if [ -z "$CLAUDE_IDENTITY_FLAG" ]; then
+    if timeout 10 "$HOME/.local/bin/claude" --help 2>/dev/null | grep -q -- '--append-system-prompt-file'; then
+      CLAUDE_IDENTITY_FLAG=file
+    else
+      CLAUDE_IDENTITY_FLAG=paste
+      log "claude --help does not list --append-system-prompt-file: the identity lines go at the top of the paste instead"
+    fi
+  fi
+  printf '%s' "$CLAUDE_IDENTITY_FLAG"
+}
+
 # EXACTLY WHAT GETS PASTED, on stdout. One function, so --check reports the
 # real thing rather than a description of it that can drift from it.
 #
 # A plan leads with its template (the contracts live there); a work item is
 # followed by the checkpoint footer so every scheduled window is resumable by
-# construction. Both lead with the window's own identity -- see sched_slug.
-#
-# THE IDENTITY LINES ARE NOT SUBSTITUTED. They are built from the resolved
-# values out here, so a {{SLUG}} in them would be a placeholder resolving to
-# the thing it was already printed from; and a body that contains the literal
-# text "{{SLUG}}" -- a brief explaining this feature, say -- must not have the
-# header rewritten under it.
+# construction. The identity is NOT here any more (sched_identity); an empty
+# plan therefore composes to nothing, and nothing is what gets pasted.
 sched_compose() {
   local f="$1" slug="$2" wname="$3" parent="${4-}" rest
   [ $# -ge 4 ] || parent="$(sched_parent "$f")"
-  echo "[muxtopus] This window is $wname. Its lane slug is: $slug"
-  echo "[muxtopus] Its handover file is: $HANDOVERS/STATUS-$slug.md"
-  echo "[muxtopus] Use that slug verbatim with handover.sh (path/write/done). If anything"
-  echo "[muxtopus] below names a different one, THIS one wins -- a second handover file is"
-  echo "[muxtopus] not watched by anything."
-  echo "[muxtopus] Inside this window \$TMUX overrides TMUX_TMPDIR: a sandboxed tmux needs -S/-L or"
-  echo "[muxtopus] env -u TMUX, and a bare 'tmux kill-server' kills THIS server."
-  echo
   # The X sentinel keeps the trailing newlines a command substitution would
   # otherwise eat, so the paste is byte-identical to what the files hold.
   rest="$( sched_raw "$f"; printf X )"
@@ -1687,7 +1735,7 @@ sched_pane_sid() {
 launch_schedule() {
   local f="$1" why="${2:-}"
   local type at title win cwd tmpl slug wname idx pane bodyf warn model effort
-  local parent depth wid wd_off mon_off sid rc_on
+  local parent depth wid wd_off mon_off sid rc_on idfile
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
   # (an enabled user unit) long before anyone has run muxtopus, and an item that
@@ -1755,6 +1803,15 @@ launch_schedule() {
   # a brief that named its own lane silently won and wrote a second handover.
   bodyf="$STATE_DIR/sched-body.$$"
   sched_compose "$f" "$slug" "$wname" "$parent" > "$bodyf"
+  # THE IDENTITY GOES WITH THE COMMAND LINE when the CLI can take it there,
+  # and at the top of the paste when it cannot (claude_identity_flag).
+  local -a idargs=()
+  idfile="$(sched_identity_file "$slug" "$wname")"
+  if [ "$(claude_identity_flag)" = file ]; then
+    idargs=(--append-system-prompt-file "$idfile")
+  else
+    { cat "$idfile"; echo; cat "$bodyf"; } > "$bodyf.id" && mv "$bodyf.id" "$bodyf"
+  fi
 
   # WHERE IT LANDS. A child goes after the LAST window of its parent's subtree,
   # which keeps a family contiguous in tmux's flat list as siblings accumulate;
@@ -1784,7 +1841,7 @@ launch_schedule() {
           "${targs[@]}" -n "$wname" -c "$cwd" \
           "${MUX_TMUX_ENV[@]}" \
           "$HOME/.local/bin/claude" ${model:+--model "$model"} ${effort:+--effort "$effort"} \
-            ${pmode:+--permission-mode "$pmode"} 2>/dev/null)
+            ${pmode:+--permission-mode "$pmode"} "${idargs[@]}" 2>/dev/null)
   if [ -z "$pane" ]; then
     sched_mark "$f" error
     log "schedule $(basename "$f"): could not open a tmux window"
@@ -1822,7 +1879,14 @@ launch_schedule() {
   # starting has nowhere to type it) and before the paste (see sched_send_rc).
   [ -n "$rc_on" ] && sched_send_rc "$pane" "$f"
 
-  pane_paste "$pane" "$bodyf"
+  # NOTHING TO SAY, NOTHING TYPED. An empty plan -- the dashboard's `c` with
+  # no first prompt -- opens on a blank claude, which is what its row promises;
+  # a paste of nothing plus Enter would be a turn spent on an empty message.
+  if grep -q '[^[:space:]]' "$bodyf"; then
+    pane_paste "$pane" "$bodyf"
+  else
+    log "schedule $(basename "$f"): empty body, nothing pasted -- $wname opens at a blank prompt"
+  fi
   rm -f "$bodyf"
 
   tree_record "$slug" "$parent" "$wid" "$pane" "$f"
@@ -1867,7 +1931,7 @@ restore_windows() {
   local f="$1" tag a b seen lost ts live idxs
   local wid idx name cwd pane sid parent model effort pmode src pid
   local -a R_NAME=() R_PANE=() R_WID=() R_SID=() R_PARENT=() R_KIND=()
-  local n=0 i k=0 plain=0 skipped=0 cmd newpane newwid newidx notef slug rc=0
+  local n=0 i k=0 plain=0 skipped=0 cmd newpane newwid newidx notef slug rc=0 idargs
   [ -f "$f" ] || { echo "restore: no snapshot at $f" >&2; return 1; }
   if ! mux_tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
     echo "restore: no tmux session '$MUX_TMUX' -- run muxtopus first (muxtopus --restore does both)" >&2
@@ -1917,7 +1981,17 @@ restore_windows() {
     fi
     cmd=""
     if [ -n "$sid" ] && transcript_of "$sid" >/dev/null; then
-      cmd="$HOME/.local/bin/claude --resume $sid${model:+ --model $model}${effort:+ --effort $effort}${pmode:+ --permission-mode $pmode}; exec bash"
+      # A LANE KEEPS ITS IDENTITY across the restore: the same file the
+      # launcher gave it, rewritten now, on the same flag -- when the CLI
+      # has it. Without the flag nothing is pasted here: the resumed
+      # transcript already holds the identity its launch pasted.
+      idargs=""
+      slug="$(lane_slug_of "$name")"
+      if [ -n "$slug" ] && { [ -n "$parent" ] || tree_is_lane "$slug" "$wid" "$pane"; } \
+         && [ "$(claude_identity_flag)" = file ]; then
+        idargs=" --append-system-prompt-file $(sched_identity_file "$slug" "$name")"
+      fi
+      cmd="$HOME/.local/bin/claude --resume $sid${model:+ --model $model}${effort:+ --effort $effort}${pmode:+ --permission-mode $pmode}$idargs; exec bash"
     elif [ -n "$sid" ]; then
       log "restore: $name: no transcript for session $sid; a plain window in $cwd"
     fi
@@ -2113,11 +2187,16 @@ sched_check_one() {
 
   nlines="$(sched_body "$f" | grep -c '' 2>/dev/null)"
   nbytes="$(sched_compose "$f" "$slug" "$wname" "$parent" | wc -c)"
-  local parts="identity header"
-  [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ] && parts="$parts + template"
-  parts="$parts + body"
+  local parts=""
+  [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ] && parts="template + "
+  parts="${parts}body"
   [ "$type" = work ] && parts="$parts + handover footer"
-  kv body "${nlines:-0} lines; ${nbytes} bytes pasted in all ($parts)"
+  if sched_compose "$f" "$slug" "$wname" "$parent" | grep -q '[^[:space:]]'; then
+    kv body "${nlines:-0} lines; ${nbytes} bytes pasted in all ($parts)"
+  else
+    kv body "empty -- nothing is pasted; the window opens at a blank prompt"
+  fi
+  kv identity "$STATE_DIR/identity/$slug.md, on claude's --append-system-prompt-file (pasted first instead if the CLI lacks it)"
   if [ "$type" = work ] && [ -z "$(sched_body "$f")" ]; then
     kv "" "-- EMPTY BODY: a work item with nothing to paste is skipped"; rcout=1
   fi
@@ -2146,6 +2225,8 @@ sched_check_one() {
   fi
   if [ -n "$body" ]; then
     echo
+    echo "--- the identity, in the system prompt -----------------------------"
+    sched_identity "$slug" "$wname"
     echo "--- what would be pasted -------------------------------------------"
     sched_compose "$f" "$slug" "$wname" "$parent"
     echo "--------------------------------------------------------------------"

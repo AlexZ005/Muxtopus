@@ -3,6 +3,9 @@
 # one does, and then sits there being a process the dashboard can see.
 . "$(dirname "$(dirname "$(readlink -f "$0")")")/env.sh"
 printf '%s\n' "$*" >> "${SB:?}/argv.log"
+# --help, like the real one: the launcher reads it once for the flags this CLI
+# takes, and a stub that sat on stdin instead would cost every launch its probe.
+if [ "${1:-}" = --help ]; then echo "  --append-system-prompt-file <file>"; exit 0; fi
 mkdir -p "${HOME:?}/.claude/sessions"
 cat > "${HOME:?}/.claude/sessions/$$.json" <<JSON
 {"sessionId": "sandbox-$$", "pid": $$, "cwd": "$PWD"}

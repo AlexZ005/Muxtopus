@@ -621,23 +621,32 @@ if [ "$DRY" = 1 ]; then
   echo "dry run only -- nothing was written."
   exit 0
 fi
+# THE SHAPE IS CLAUDE CODE'S OWN INSTALLER'S, which the same user has just
+# read for `claude`: a tick or a warning sign on the Done line itself, the
+# packages to install or update right under it, then a "Setup notes" block
+# with one sentence on what is not in place and the exact line to run.
 if [ "${#BLOCKERS[@]}" -gt 0 ]; then
-  echo "Done, but muxtopus cannot run yet:"
-  for b in "${BLOCKERS[@]}"; do warn "$b"; done
-  echo "    then run $SRC/install.sh again for a clean report"
-  echo
+  echo "⚠  Done, but muxtopus cannot run yet:"
+  for b in "${BLOCKERS[@]}"; do
+    echo "  ● $b"
+  done
+  echo "    Fix that, then run $SRC/install.sh again for a clean report."
 else
-  echo "Done."
-  echo
+  echo "✅ Done."
 fi
 if [ "$ON_PATH_NOW" = 0 ]; then
-  if [ "$RC" = 1 ]; then
-    echo "$PATH_TILDE is on PATH from your next shell. For this shell, paste:"
-  else
-    echo "$PATH_TILDE is NOT on PATH (--no-rc). For this shell, paste:"
-  fi
-  echo "    $PATH_LINE"
   echo
+  echo "⚠  Setup notes:"
+  if [ "$RC" = 1 ]; then
+    echo "  ● $PATH_TILDE is not on PATH in this shell (new shells will have it). To run"
+    echo "    muxtopus now, execute this line first:"
+  else
+    echo "  ● $PATH_TILDE is not on PATH (--no-rc left your shell rc alone). To run"
+    echo "    muxtopus, execute this line first:"
+  fi
+  echo
+  echo "    $PATH_LINE"
 fi
+echo
 echo "Start with:   muxtopus"
 echo "More:         muxtopus -h   (a second account, named sessions, what is running)"

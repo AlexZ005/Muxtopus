@@ -102,8 +102,11 @@ check "..in their saved cwds" test "$(awk -F'\t' '$1=="lane-a"{print $2}' <<<"$l
 check "..a gone cwd falls back to HOME, and the log says so" \
   test "$(awk -F'\t' '$1=="lane-b"{print $2}' <<<"$lw")" = "$HOME" -a "$(grep -c 'restore: lane-b: .*proj-b is gone' "$ST/log")" = 1
 argv="$(cat "$HOME/fake-claude.argv")"
-check "lane-a resumed with its model, effort and permission mode" \
-  grep -qx -- "--resume $sid_a --model fable --effort high --permission-mode bypassPermissions" <<<"$argv"
+# A LANE GETS ITS IDENTITY BACK on the same flag the launcher used; a window
+# that is not a lane (plain) gets nothing but its resume.
+check "lane-a resumed with its model, effort, permission mode and identity" \
+  grep -qx -- "--resume $sid_a --model fable --effort high --permission-mode bypassPermissions --append-system-prompt-file $ST/identity/lane-a.md" <<<"$argv"
+check "..and the identity file names it" grep -q 'Its lane slug is: lane-a' "$ST/identity/lane-a.md"
 check "plain resumed with no flags" grep -qx -- "--resume $sid_p" <<<"$argv"
 check "lane-b (no transcript) was not resumed" bash -c '! grep -q -- "$1" <<<"$2"' _ "$sid_b" "$argv"
 check "..the log says which" grep -q "restore: lane-b: no transcript for session $sid_b; a plain window" "$ST/log"

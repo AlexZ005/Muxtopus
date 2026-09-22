@@ -633,8 +633,9 @@ class NewSession:
         and the watchdog's next pass launches it; `slug:` is pinned so the
         window is named what was typed. An empty prompt makes it a `plan`
         entry with no template -- the executor refuses an empty work body,
-        and a plan may be empty: the session receives its identity line and
-        nothing invented (QUESTIONS 2a)."""
+        and a plan may be empty: nothing is pasted, the window opens at a
+        blank prompt, and its identity rides in the system prompt
+        (QUESTIONS 2a)."""
         ns, self.app.ns = self.app.ns, None
         slug = ns["slug"]
         now = time.strftime("%Y-%m-%d %H:%M")
