@@ -163,10 +163,13 @@ resolve_tag() {
     printf '%s' "$tag"; return 0
   fi
   if [ "$CHANNEL" = prerelease ]; then
-    command -v jq >/dev/null 2>&1 || return 1
     body="$(mktemp)" || return 1
     fetch "$API/releases?per_page=10" "$body" || { rm -f "$body"; return 1; }
-    tag="$(jq -r 'map(select(.draft | not)) | .[0].tag_name // empty' < "$body" 2>/dev/null)"
+    # mux_json, so the prerelease channel works on a box with no jq -- the
+    # `command -v jq || return 1` that stood here made it silently never find
+    # a release at all, which reads on the dashboard as "checks are fine and
+    # there is nothing new".
+    tag="$(mux_json -r 'map(select(.draft | not)) | .[0].tag_name // empty' < "$body" 2>/dev/null)"
     rm -f "$body"
     [ -n "$tag" ] || return 1
     printf '%s' "$tag"; return 0
@@ -238,18 +241,27 @@ do_notes() {
   if [ ! -s "$f" ]; then
     mkdir -p "$DIR"
     body="$(mktemp)" || die "no temp file"
-    if fetch "$API/releases/tags/v$v" "$body" && command -v jq >/dev/null 2>&1; then
-      jq -r '.body // empty' < "$body" > "$f.tmp" 2>/dev/null
+    # mux_json, NEVER a bare jq. This line was `command -v jq || skip`, and on
+    # a box without jq -- the ordinary fresh machine -- every release's notes
+    # came out as the "could not be fetched" line below, for a release whose
+    # notes were sitting right there in the reply.
+    if fetch "$API/releases/tags/v$v" "$body"; then
+      mux_json -r '.body // empty' < "$body" > "$f.tmp" 2>/dev/null
     fi
     rm -f "$body"
     if [ -s "$f.tmp" ]; then
       mv "$f.tmp" "$f"
     else
       rm -f "$f.tmp"
-      # No API, no jq, or a release with an empty body: say where to read it
-      # rather than print nothing and look broken.
+      # No network, or a release with an empty body: say where to read it
+      # rather than print nothing and look broken. NOT CACHED -- writing this
+      # to $f made one failed fetch permanent, so a laptop that was offline
+      # for the first --notes never showed that release's notes again however
+      # long it was online afterwards. The file is the cache of an ANSWER;
+      # this is the absence of one.
       printf 'Release notes for muxtopus %s could not be fetched.\n\n%s/tag/v%s\n' \
-             "$v" "$BASE" "$v" > "$f"
+             "$v" "$BASE" "$v"
+      return 0
     fi
   fi
   cat "$f"

@@ -138,6 +138,42 @@ print("== a half-written line is skipped, not fatal")
 half = USAGE_LINE + "\n" + '{"type":"assis'
 same("a torn record does not fail the scan",
      ["-r", ".type // empty"], half + "\n")
+# ...and it must still be skipped now that a first line which does not parse
+# switches the reader to whole-document mode. This one is in the MIDDLE, so
+# it does not switch, and the lines after it are still read. NOT a
+# differential case: real jq STOPS at a torn record, and skipping it is the
+# deliberate difference the module docstring argues for, so this asserts
+# muxtopus's own behaviour rather than jq's.
+_rc, _out, _err = run([sys.executable, MUXJSON, "-r", ".type // empty"],
+                      USAGE_LINE + "\n" + '{"type":"assis' + "\n" + USAGE_LINE + "\n")
+ok(_out.count("assistant") == 2,
+   "a torn record in the MIDDLE does not eat the lines after it")
+
+print("== a pretty-printed reply (mux-update.sh --notes: api.github.com)")
+# The bug this reader was changed for: api.github.com indents, so NOT ONE
+# LINE of the reply is a whole JSON value and --notes printed "could not be
+# fetched" for a release whose notes were right there.
+PRETTY = ('{\n'
+          '  "tag_name": "v1.2.3",\n'
+          '  "draft": false,\n'
+          '  "body": "## What is in it\\n\\n- a fix\\n"\n'
+          '}\n')
+same("the release body off a pretty-printed object", ["-r", ".body // empty"], PRETTY)
+same("a field off a pretty-printed object", ["-r", ".tag_name // empty"], PRETTY)
+PRETTY_LIST = ('[\n'
+               '  {\n    "draft": true,\n    "tag_name": "v9.9.9"\n  },\n'
+               '  {\n    "draft": false,\n    "tag_name": "v1.2.3"\n  }\n'
+               ']\n')
+same("the newest non-draft tag, the way resolve_tag asks for it",
+     ["-r", 'map(select(.draft | not)) | .[0].tag_name // empty'], PRETTY_LIST)
+
+print("== .[n] -- one element, and never a slice")
+same(".[0] of an array", ["-r", ".forks | .[0].id // empty"],
+     json.dumps({"forks": [{"id": "f1"}, {"id": "f2"}]}) + "\n")
+same(".[0] past the end is null, not an error", ["-c", ".a | .[0]"],
+     json.dumps({"a": []}) + "\n")
+same(".[0] of a missing key is null, as jq has it", ["-c", ".nope | .[0]"],
+     json.dumps({"a": []}) + "\n")
 
 print("== the fork rows (claude-watchdog.sh:2589)")
 FORKS = json.dumps({"path": "/a/b", "slug": "lane-q",
@@ -164,6 +200,12 @@ refuses("if/then/else", ["-r", "if .a then .b else .c end"], "{}\n")
 refuses("split()", ["-r", '.a | split("||")'], "{}\n")
 refuses("assignment", ["-r", ".a = true"], "{}\n")
 refuses("string slicing", ["-r", ".a | .[0:10]"], "{}\n")
+# .[0] exists now; a SLICE still does not, and indexing an object is jq's
+# own error rather than something to guess a null for.
+refuses("slicing, now that .[0] parses", ["-r", ".a | .[1:2]"],
+        '{"a":[1,2,3]}\n')
+refuses("indexing an object with a number", ["-r", ".a | .[0]"],
+        '{"a":{"b":1}}\n')
 refuses("an unknown flag", ["-X", "."], "{}\n")
 refuses("an unknown @format", ["-r", ". | @csv"], "[]\n")
 refuses("$var that was never passed", ["-r", "$nope"], "{}\n")
