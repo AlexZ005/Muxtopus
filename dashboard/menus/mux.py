@@ -38,15 +38,18 @@ class MuxMenu:
         a hand looks for them; w and m stay as the fast path."""
         wd = WATCHDOG_ENABLED.exists()
         mon = monitor_on()
+        # THE EXPLANATIONS ARE `desc`, not glued to the label. A row says what
+        # it is; the sentence under the cursor says what it does. The one the
+        # `Settings ▸` row used to carry is now the settings menu's own
+        # header, where it is read when it is about to be true.
         items: list[dict] = [
-            {"label": "Settings ▸  menu layout, defaults for a new window, where a mode is made permanent",
-             "sub": "settings"},
+            {"label": "Settings ▸", "sub": "settings"},
             {"sep": True},
-            {"label": "Watchdog: %s  restart a limited window once its limit resets"
-                      % ("ON" if wd else "off"),
+            {"label": "Watchdog: %s" % ("ON" if wd else "off"),
+             "desc": "restart a limited window once its limit resets",
              "on": wd, "act": toggle_watchdog, "stay": True},
-            {"label": "Monitor: %s  ask a working window to wind down near the limit"
-                      % ("ON" if mon else "off"),
+            {"label": "Monitor: %s" % ("ON" if mon else "off"),
+             "desc": "ask a working window to wind down near the limit",
              "on": mon, "act": toggle_monitor, "stay": True},
         ]
         # THE WINDOWS A LOST SERVER TOOK (docs/restore.md): a row only while
@@ -56,14 +59,17 @@ class MuxMenu:
         if snap is not None:
             _, k, seen = snap
             when = time.strftime("%m-%d %H:%M", time.localtime(seen)) if seen else "?"
-            items.append({"label": "Restore %d windows from %s  rebuild what the lost tmux server took, each resuming its session"
-                                   % (k, when),
+            items.append({"label": "Restore %d windows from %s" % (k, when),
+                          "desc": "rebuild what the lost tmux server took, "
+                                  "each resuming its session",
                           "act": lambda k=k, when=when: self.act_restore(k, when)})
         items += [
             {"sep": True},
-            {"label": "Disconnect  detach this tmux client; the dashboard and every window keep running",
+            {"label": "Disconnect",
+             "desc": "detach this tmux client; the dashboard and every window "
+                     "keep running",
              "act": self.act_disconnect},
-            {"label": "Reload the dashboard  re-exec this script, as R does",
+            {"label": "Reload the dashboard", "desc": "re-exec this script, as R does",
              "act": self.act_reload},
             {"label": "Quit the dashboard", "act": self.act_quit, "danger": True},
         ]
@@ -121,8 +127,8 @@ class MuxMenu:
         for key, meta in muxsettings.DASHBOARD_KEYS.items():
             val = muxsettings.get(key, PROFILE)
             if meta["kind"] == "onoff":
-                items.append({"label": "%s: %s  %s" % (meta["label"], "ON" if val == "on" else "off",
-                                                        meta["hint"]),
+                items.append({"label": "%s: %s" % (meta["label"], "ON" if val == "on" else "off"),
+                              "desc": meta["hint"],
                               "on": val == "on", "act": lambda k=key: self._setting_edit(k),
                               "stay": True})
                 continue
@@ -130,7 +136,8 @@ class MuxMenu:
                 shown = val or "(the selected session's cwd)"
             else:
                 shown = val or "(account default)"
-            items.append({"label": "%s: %s  %s" % (meta["label"], shown, meta["hint"]),
+            items.append({"label": "%s: %s" % (meta["label"], shown),
+                          "desc": meta["hint"],
                           "act": lambda k=key: self._setting_edit(k), "stay": True})
         items.append({"sep": True})
         items.append({"label": "Back", "sub": "mux"})
@@ -161,6 +168,12 @@ class MuxMenu:
             return "%s: %s" % (label, err)
         return "%s = %s  · %s" % (label, value or "(account default)",
                                   muxsettings.dashboard_conf_path(PROFILE).name)
+
+    def _settings_menu_desc(self) -> str:
+        """What the `Settings ▸` row used to carry glued onto its label. Here
+        it is read once the menu it describes is open, and the row above is
+        short enough for the panel to be worth capping."""
+        return "menu layout, defaults for a new window, where a mode is made permanent"
 
     def _settings_menu_title(self) -> str:
         return "settings[/] [%s]· %s" % (
@@ -208,6 +221,7 @@ def register(app) -> None:
     app.add_menu("mux", menu.mux_menu_entries, title_fn=lambda: "muxtopus")
     app.add_menu("settings", menu.settings_menu_entries,
                  title_fn=menu._settings_menu_title,
+                 desc_fn=menu._settings_menu_desc,
                  hint_fn=lambda: "↑↓ pick · enter change · esc back",
                  esc_to="mux")
     app.add_help("THE MUXTOPUS MENU (esc) AND SETTINGS", HELP_MUX, order=30)

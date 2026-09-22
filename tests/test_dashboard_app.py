@@ -401,6 +401,65 @@ try:
 finally:
     appmod.knob = real_knob
 
+print("== a menu explains itself: desc_fn under the title, desc under the cursor")
+# The REGISTRY half of it. What the panel draws is tests/test_menulayout.py's
+# subject; what is proved here is that a menu can say what it is for without
+# the dashboard knowing which menu, and that the panel does not move a line
+# as the cursor crosses rows that explain themselves and rows that do not.
+DESC_ROWS = [
+    {"label": "Settings", "sub": "settings"},
+    {"sep": True},
+    {"label": "Watchdog: ON", "act": lambda: "",
+     "desc": "restart a limited window once its limit resets"},
+    {"label": "Quit the dashboard", "act": lambda: ""},
+]
+a = app()
+a.add_view(Spy("main"))
+a.add_menu("mux", lambda: DESC_ROWS)
+a.add_menu("settings", lambda: [{"label": "Back", "sub": "mux"}], esc_to="mux",
+           desc_fn=lambda: "menu layout, defaults for a new window")
+a.open_menu("mux")
+check(a.menu_desc() == "", "a menu that registered no desc_fn has no header")
+a.open_menu("settings")
+check(a.menu_desc() == "menu layout, defaults for a new window",
+      "and one that did draws it under its title")
+
+print("== the MENU'S OWN hint line, and what turns it off")
+# `hint_fn` fills the line inside the panel; App.add_hint writes on the main
+# view's footer key line and never reaches a menu. They are different lines
+# and this is the one a setting can turn off.
+a = app()
+a.add_view(Spy("main"))
+a.add_menu("mux", lambda: DESC_ROWS)
+a.add_menu("quiet", lambda: DESC_ROWS, hint_fn=lambda: None)
+a.open_menu("mux")
+check(a.menu_hint() == appmod.MENU_HINT, "a menu with no hint_fn gets the plain one")
+a.open_menu("quiet")
+check(a.menu_hint() is None, "hint_fn returning None turns the panel's hint line off")
+a.say("PROJECT_DIR is not a directory")
+check("not a directory" in (a.menu_hint() or ""),
+      "...and a notice still gets the line back, rather than going nowhere")
+
+print("== the panel height does not move as the cursor crosses a description")
+real_knob = appmod.knob
+try:
+    appmod.knob = lambda key, prof=None: "bottom"
+    a = app()
+    a.add_view(Spy("main"))
+    a.add_menu("mux", lambda: DESC_ROWS)
+    a.open_menu("mux")
+    heights, frames = set(), []
+    for _ in range(4):
+        lines = a.console.render_lines(a.place_menu([], 0), a.console.options)
+        heights.add(len(lines))
+        frames.append("".join(seg.text for line in lines for seg in line))
+        a.menu_move(1)
+    check(len(heights) == 1, "every cursor position draws the same height %s" % heights)
+    check(sum("restart a limited window" in f for f in frames) == 1,
+          "the description is drawn on the row it belongs to, and only there")
+finally:
+    appmod.knob = real_knob
+
 print()
 print("%d assertions passed" % PASSES if not FAILS
       else "%d passed, %d FAILED" % (PASSES, FAILS))

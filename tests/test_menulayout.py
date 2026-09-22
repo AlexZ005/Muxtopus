@@ -16,8 +16,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from rich.console import Console  # noqa: E402
 
 from dashboard import menulayout  # noqa: E402
-from dashboard.menulayout import (MENU_MIN, menu_needed, menu_panel,  # noqa: E402
-                        menu_viewport, rendered_height)
+from dashboard.menulayout import (CHROME, MENU_MIN, menu_chrome,  # noqa: E402
+                        menu_desc_lines, menu_head_lines, menu_needed,
+                        menu_panel, menu_viewport, rendered_height)
 
 # The session menu with both global switches off, shaped as
 # Dashboard.menu_entries() builds it. The plan (§0.3) counts it as 11 entries,
@@ -60,6 +61,29 @@ SCHEDULE = [
 ]
 assert len(SESSION) == 15 and len(SCHEDULE) == 9
 
+# ------------------------------------------------------------ descriptions
+# A menu with MIXED rows: one with a short description, one with a long one,
+# a separator, a disabled row that carries one anyway (it is not drawn), and
+# two rows with none. The height must not move as the cursor crosses them.
+SHORT = "restart a limited window once its limit resets"
+LONG = ("this window is waiting on a lane that has not finished, so the "
+        "watchdog leaves it alone until the handover says otherwise and the "
+        "next pass picks it up")
+HEADER = "menu layout, defaults for a new window, where a mode is made permanent"
+DESC = [
+    {"label": "Settings"},
+    {"sep": True},
+    {"label": "Watchdog: ON", "desc": SHORT, "on": True},
+    {"label": "Monitor: off", "desc": "ask a working window to wind down near the limit"},
+    {"label": "greyed", "disabled": "no window", "desc": "never drawn"},
+    {"label": "Quit the dashboard", "danger": True},
+]
+WIDE = [{"label": "Waiting", "desc": LONG}, {"label": "Plain"}]
+NODESC = [{"label": "one"}, {"label": "two"}, {"label": "three"}]
+# More rows than a short panel can hold, so the line the hint gave back is
+# visibly one more ITEM and not one more blank.
+MANY = [{"label": "row %d" % i} for i in range(7)]
+
 fails = []
 count = 0
 mark = 0
@@ -90,6 +114,21 @@ def cursors(items):
     """First, middle and last item the cursor can actually land on."""
     sel = selectable(items)
     return sorted({sel[0], min(sel, key=lambda i: abs(i - len(items) // 2)), sel[-1]})
+
+
+def bare(line):
+    """A rendered line without the panel's own borders and padding."""
+    return line.strip(" │")
+
+
+def panel_lines(items, cur, rows, width, **kw):
+    """The panel's lines, rendered at `width`, with the description
+    arguments this file needs to pass (width=, header=, hint=)."""
+    con = Console(width=width, height=rows, force_terminal=True,
+                  color_system="truecolor")
+    panel = menu_panel(items, cur, "menu", rows, width=width, **kw)
+    return ["".join(seg.text for seg in line)
+            for line in con.render_lines(panel, con.options)]
 
 
 def render(items, cur, rows, width):
@@ -204,6 +243,82 @@ def main():
     check(rendered_height(con, menu_panel(SESSION, 0, "menu", 18)) == 18,
           "rendered_height measures past the console height (18 on a 5-row console)")
     check(menulayout.ACCENT == "#c9a0dc", "border is the dashboard's #c9a0dc")
+
+    # ------------------------------------------- a row's own description
+    # The height contract with the description line in it: the reservation is
+    # the WHOLE open of the menu, so the panel is the same height on every
+    # row, and a description longer than the reservation is ellipsised rather
+    # than allowed to add a line.
+    check(menu_desc_lines(DESC, 120) == 1, "one-line descriptions reserve one line")
+    check(menu_desc_lines(DESC, 44) == 2, "...and two when the same text wraps")
+    check(menu_desc_lines(WIDE, 120) == 2, "the reservation is the WIDEST row's, not the cursor's")
+    check(menu_desc_lines(NODESC, 40) == 0, "a menu whose rows have none reserves none")
+    check(menu_desc_lines([{"label": "x", "desc": SHORT, "disabled": "why"},
+                           {"sep": True, "desc": SHORT}], 120) == 0,
+          "a disabled row and a separator reserve nothing")
+    try:
+        menu_panel(DESC, 0, "menu", 12)
+        check(False, "a desc with no width= is a ValueError")
+    except ValueError:
+        check(True, "a desc with no width= is a ValueError, not a guess")
+
+    for name, items in (("desc", DESC), ("wide", WIDE)):
+        for width in (120, 78, 44):
+            need = menu_needed(items, menu_chrome(True, menu_desc_lines(items, width)))
+            for rows in range(menu_chrome(True, menu_desc_lines(items, width)) + 3,
+                              need + 3):
+                for cur in range(len(items)):
+                    if items[cur].get("sep") or items[cur].get("disabled"):
+                        continue
+                    out = panel_lines(items, cur, rows, width)
+                    t = "%s w=%d rows=%d cur=%d" % (name, width, rows, cur)
+                    check(len(out) == rows, t + ": exactly rows lines", quiet=True)
+                    check("↑↓ pick" in out[-2], t + ": the hint is still second-to-last",
+                          quiet=True)
+                    check("╰" in out[-1], t + ": and the border under it", quiet=True)
+                    check(sum("▸" in l for l in out) == 1, t + ": one cursor row", quiet=True)
+    section("the panel height never moves across every cursor position, at three widths")
+
+    # What is actually ON the reserved line, row by row.
+    lines = panel_lines(DESC, 0, menu_needed(DESC, 4), 120)
+    check(bare(lines[-3]) == "", "a row with no desc leaves the line BLANK")
+    i = [j for j, it in enumerate(DESC) if it.get("desc") == SHORT][0]
+    lines = panel_lines(DESC, i, menu_needed(DESC, 4), 120)
+    check(SHORT in lines[-3], "the row under the cursor explains itself: %r" % lines[-3].strip()[:50])
+    check(lines[-3].index(SHORT[0]) == lines[-2].index("↑"),
+          "...indented to where the labels start, like the hint")
+    j = [k for k, it in enumerate(DESC) if it.get("disabled")][0]
+    lines = panel_lines(DESC, j, menu_needed(DESC, 4), 120)
+    check(bare(lines[-3]) == "" and "never drawn" not in "".join(lines),
+          "a disabled row's desc is not drawn even when it has one")
+
+    # Two lines, and the ellipsis on the second.
+    lines = panel_lines(WIDE, 0, max(menu_needed(WIDE, 5), 8), 78)
+    check(bare(lines[-3]) and bare(lines[-4]), "a two-line desc uses both reserved lines")
+    check("…" in lines[-3], "and is ellipsised on the last one rather than adding a third")
+
+    # ------------------------------------------------- the menu's own header
+    head = panel_lines(DESC, 0, menu_needed(DESC, 5), 120, header=HEADER)
+    check(HEADER in head[1], "a menu's header is drawn under the title border")
+    check(len(head) == menu_needed(DESC, 5), "...out of the same rows budget")
+    check(menu_head_lines(HEADER, 120) == 1 and menu_head_lines("", 120) == 0,
+          "menu_head_lines counts it, and a menu without one costs nothing")
+    check(sum(HEADER in l for l in head) == 1, "and it is drawn ONCE, not per row")
+
+    # ------------------------------------------------- the menu's hint line
+    # hint=None is THE PANEL'S OWN HINT LINE off -- not App.add_hint's footer
+    # key line -- and the row it held goes back to the list.
+    check(menu_chrome(True) == CHROME and menu_chrome(False) == CHROME - 1,
+          "no hint line is one line less chrome")
+    with_hint = panel_lines(MANY, 0, 8, 120)
+    without = panel_lines(MANY, 0, 8, 120, hint=None)
+    check("↑↓ pick" in with_hint[-2] and not any("↑↓ pick" in l for l in without),
+          "hint=None draws no hint line")
+    check(len(without) == len(with_hint) == 8, "both are exactly the rows asked for")
+    shown = lambda out: sum(any(it["label"] in l for it in MANY) for l in out)
+    check(shown(without) == shown(with_hint) + 1,
+          "and the line it reserved holds one more ITEM now (%d -> %d)"
+          % (shown(with_hint), shown(without)))
 
     # ------------------------------------------------ tables on a short screen
     from rich.panel import Panel

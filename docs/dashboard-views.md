@@ -81,7 +81,8 @@ constructor at all.
 
 ```python
 app.add_view(view)                              a screen, or a tab of one
-app.add_menu(kind, entries_fn, title_fn=None, hint_fn=None, esc_to=None)
+app.add_menu(kind, entries_fn, title_fn=None, hint_fn=None, esc_to=None,
+             on_esc=None, desc_fn=None)
 app.add_rows(menu_kind, rows_fn, order=50)      a row in someone else's menu
 app.add_badge(fn, order=50)                     fn(app, session) -> Text|None
 app.add_hint(fn)                                fn(app) -> Text|None
@@ -92,7 +93,25 @@ muxsettings.register({KEY: {label, kind, hint, choices?}}, menu="")
 ```
 
 **Menus.** `esc_to` names the parent kind esc goes back to, which is how
-Settings returns to the esc menu without the main loop knowing either name.
+Settings returns to the esc menu without the main loop knowing either name,
+and esc back from a submenu lands on the ROW it was opened from rather than
+on the first one. `on_esc` is what closing a menu that is holding something
+means. `desc_fn() -> str` is the menu's own explanation, drawn once under its
+title border -- where a submenu says what it is for, instead of saying it on
+the parent's row every time you pass it.
+
+**A row explains itself.** A menu item is a dict: `label`, and optionally
+`desc`, `sub`, `act`, `sep`, `disabled` (the reason, in brackets), `danger`,
+`on`, `key`, `stay`, `edit`, `order`. `desc` is one sentence, drawn dim on a
+reserved line at the BOTTOM of the panel while the cursor is on that row --
+above the list it would shift every row down the moment it appeared, and the
+list is what the eye is tracking. The line is reserved for the whole open of
+the menu, so the panel's height never moves as the cursor travels; a
+description too long for the reserved lines is ellipsised, never wrapped onto
+a third. Separators and disabled rows draw none. `hint_fn` returning `None`
+turns off THE MENU'S OWN HINT LINE -- the `↑↓ pick · enter choose · esc close`
+line inside the panel, not `add_hint`'s footer key line -- and the row it
+reserved goes back to the list.
 
 **Notes.** `add_hint` writes at the end of the main view's key line;
 `add_version_note` writes beside the version in the deck header's subtitle,

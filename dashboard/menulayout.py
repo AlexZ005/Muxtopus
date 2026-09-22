@@ -9,9 +9,12 @@ scrolling its items inside them. This module is that half, and it is pure:
 no dashboard state, no I/O, only Rich.
 
     MENU_MIN                               6: border, ▲, one item, ▼, hint, border
-    menu_needed(items)            -> int   rows to draw every item (len + 3)
-    menu_viewport(n, cur, rows)   -> (top, show_up, show_down)
-    menu_panel(items, cur, title, rows)    -> Panel, exactly `rows` lines tall
+    menu_chrome(hint, desc, header)-> int  the panel lines that are not items
+    menu_desc_lines(items, width) -> int   lines reserved for a row's `desc`
+    menu_head_lines(header, width)-> int   lines the menu's own header takes
+    menu_needed(items, chrome)    -> int   rows to draw every item
+    menu_viewport(n, cur, rows, chrome)    -> (top, show_up, show_down)
+    menu_panel(items, cur, title, rows, ...) -> Panel, exactly `rows` tall
     rendered_height(console, renderable)   -> int, what Rich will really draw
 
 AND THE SAME ARITHMETIC FOR A TABLE on a short terminal, so there is one
@@ -30,13 +33,40 @@ scrolling rule on the screen and not one per table:
     make_table(cols, keep, rows, cur, marker, lines) -> Table, windowed
 
 Items are the dicts Dashboard.menu_entries() builds: label, and optionally
-sep, disabled (the reason, shown in brackets), danger, on, key. The styling is
-the one build() used for the footer menu, unchanged.
+desc (the sentence that explains the row), sep, disabled (the reason, shown
+in brackets), danger, on, key. The styling is the one build() used for the
+footer menu, unchanged.
 
-THE ROWS BUDGET is the whole panel: two border lines, the hint line, and the
-item lines. A "▲ N more" / "▼ N more" marker takes an item line out of that
-budget rather than being drawn on top of one, so the height never moves when
-the cursor scrolls. Once the window has to scroll, the cursor stays on the
+A ROW'S `desc` IS DRAWN AT THE BOTTOM, on the reserved line(s) directly above
+the hint, and only while the cursor is on that row. Not above the list, where
+it would shift every row down by a line the moment it appeared -- and the
+list is the thing the eye is tracking. Below it, nothing the eye is on moves;
+it is also where the TUIs a hand already knows put it (htop's F-key line,
+dialog and whiptail, lazygit's bottom help, vim's cmdline).
+
+The line is RESERVED FOR THE WHOLE OPEN of a menu in which any row has one,
+and left blank on a row that has none, because the panel's height must not
+depend on where the cursor is: a panel that grew a line under one row would
+move every panel above it in the `table` layout, and jump the whole frame in
+`modal`. The reservation is the MAXIMUM number of lines any one row of THIS
+menu needs at THIS width (menu_desc_lines), capped at DESC_MAX; a description
+that needs more is ellipsised on its last reserved line rather than allowed
+to add one. `header` is the same thing for the MENU: drawn once under the
+title border, before the rows, for a submenu that explains itself once it is
+open instead of on the row that led to it.
+
+The hint argument is THE MENU'S OWN HINT LINE -- the "↑↓ pick · enter choose
+· esc close" line inside the panel, which add_menu's `hint_fn` fills -- and
+not the main view's footer key line (App.add_hint), which this module never
+draws. hint=None draws no such line AND reserves none, so the row it held
+goes back to the list.
+
+THE ROWS BUDGET is the whole panel: two border lines, the hint line, the
+description line(s) and the header line(s) reserved above, and the item lines
+that are left (menu_chrome counts everything that is not an item). A
+"▲ N more" / "▼ N more" marker takes an item line out of that budget rather
+than being drawn on top of one, so the height never moves when the cursor
+scrolls. Once the window has to scroll, the cursor stays on the
 window's centre line and the items move under it, so moving it by one moves
 the view by one instead of paging.
 
@@ -59,22 +89,98 @@ ACCENT = "#c9a0dc"
 
 MENU_MIN = 6      # border, ▲ marker, one item, ▼ marker, hint line, border
 CHROME = 3        # two borders and the hint line
+BODY_MIN = MENU_MIN - CHROME   # 3: the ▲ marker, one item, the ▼ marker
 HINT = "↑↓ pick · enter choose · esc close"
 
+# A description is reserved, never drawn on demand, so two lines is the cap:
+# a third would cost the list an item line on every row of the menu to serve
+# the one row that wanted it. Past it the last line is ellipsised.
+DESC_MAX = 2
+# The same three spaces a row's label is drawn behind, so a description lines
+# up under the row it explains rather than under the cursor arrow.
+DESC_INDENT = "   "
 
-def menu_needed(items: list[dict]) -> int:
+# Wrapping is MEASURED, not counted in characters: these labels carry "▸",
+# "·" and box glyphs, and len() is wrong about every one of them. A console
+# of a fixed width, so the measurement does not depend on the terminal the
+# dashboard happens to be running in -- the width is passed to wrap().
+_MEASURE = Console(width=200, force_terminal=False, no_color=True)
+
+
+def menu_chrome(hint: bool = True, desc: int = 0, header: int = 0) -> int:
+    """The panel lines that are not item lines.
+
+    Two borders, the menu's own hint line when it has one, the description
+    line(s) reserved above it and the header line(s) under the title."""
+    return 2 + (1 if hint else 0) + desc + header
+
+
+def _block(text: str, width: int, cap: int = DESC_MAX) -> list[Text]:
+    """`text` as at most `cap` dim, indented lines inside a panel `width` wide.
+
+    The last line is ELLIPSISED when the text needs more, because the caller
+    reserved a fixed number of lines and a block that returned more of them
+    would push the hint and the border off the panel -- the very thing this
+    module exists to stop."""
+    room = width - 4 - len(DESC_INDENT)      # two borders, their padding, the indent
+    if room < 8 or not text:
+        return []
+    lines = Text(text, style=DIM, no_wrap=False).wrap(_MEASURE, room,
+                                                      overflow="fold")
+    kept = [line for line in lines[:cap]]
+    if len(lines) > cap and kept:
+        # truncate(width, overflow="ellipsis") does nothing to a line that
+        # already fits, so the room for the "…" is made by hand first.
+        kept[-1].truncate(max(0, room - 1), overflow="crop")
+        kept[-1].append("…", style=DIM)
+    out = []
+    for line in kept:
+        line.rstrip()
+        t = Text(DESC_INDENT, style=DIM, no_wrap=True, overflow="crop")
+        t.append_text(line)
+        t.no_wrap, t.overflow = True, "crop"
+        out.append(t)
+    return out
+
+
+def _has_desc(it: dict) -> bool:
+    """A row whose description is drawn: a separator has no cursor to sit on
+    it and a disabled row already says its reason in brackets."""
+    return bool(it.get("desc")) and not it.get("sep") and not it.get("disabled")
+
+
+def menu_desc_lines(items: list[dict], width: int) -> int:
+    """The lines this menu reserves for the row descriptions, at `width`.
+
+    THE MAXIMUM ANY ONE ROW NEEDS, not the current row's: a reservation that
+    followed the cursor would move every row of the list the moment the
+    cursor crossed a two-line description. 0 when no row that can hold a
+    cursor has one, which is every menu until a lane gives it some."""
+    return max([len(_block(it["desc"], width)) for it in items
+                if _has_desc(it)] or [0])
+
+
+def menu_head_lines(header: str, width: int) -> int:
+    """The lines a menu's own header takes under its title border."""
+    return len(_block(header, width)) if header else 0
+
+
+def menu_needed(items: list[dict], chrome: int = CHROME) -> int:
     """Rows to draw every item with no scrolling."""
-    return len(items) + CHROME
+    return len(items) + chrome
 
 
-def menu_viewport(n_items: int, cur: int, rows: int) -> tuple[int, bool, bool]:
+def menu_viewport(n_items: int, cur: int, rows: int,
+                  chrome: int = CHROME) -> tuple[int, bool, bool]:
     """The first item drawn, and whether the ▲ and ▼ marker lines are drawn.
 
-    `rows` is the total panel height. The window holds `rows - 3` lines,
-    minus one per marker shown; `cur` is always inside it."""
-    if rows < MENU_MIN:
-        raise ValueError("a menu needs at least %d rows, got %d" % (MENU_MIN, rows))
-    budget = rows - CHROME
+    `rows` is the total panel height and `chrome` what of it is not items
+    (menu_chrome). The window holds `rows - chrome` lines, minus one per
+    marker shown; `cur` is always inside it."""
+    if rows - chrome < BODY_MIN:
+        raise ValueError("a menu needs at least %d rows, got %d"
+                         % (chrome + BODY_MIN, rows))
+    budget = rows - chrome
     if n_items <= budget:
         return 0, False, False
     cur = max(0, min(cur, n_items - 1))
@@ -116,29 +222,68 @@ def _item_line(it: dict, is_cur: bool) -> Text:
 
 
 def menu_panel(items: list[dict], cur: int, title: str, rows: int,
-               hint: str = HINT) -> Panel:
+               hint: str | None = HINT, width: int | None = None,
+               header: str = "", desc_rows: int | None = None) -> Panel:
     """The menu as a Panel exactly `rows` lines tall at any width >= 40.
 
     `title` is markup, drawn as `[bold]<title>`, so a caller may add a dim
-    note to it; escape a raw file or window name before passing it."""
-    top, show_up, show_down = menu_viewport(len(items), cur, rows)
-    span = rows - CHROME - show_up - show_down
+    note to it; escape a raw file or window name before passing it.
+
+    `hint` IS THE MENU'S OWN HINT LINE -- the one inside the panel that
+    add_menu's `hint_fn` fills -- and hint=None draws none and reserves none,
+    which is one more item line rather than a blank one.
+
+    `header` explains the MENU, once, under the title border. A row's own
+    `desc` is drawn on the reserved line(s) just above the hint while the
+    cursor is on it, and left blank on a row without one. Both are measured
+    at `width`, THE WIDTH THE PANEL WILL BE DRAWN AT, so either of them
+    without it is a ValueError and not a guess -- a description measured at
+    the wrong width is a panel one line too tall, which is the bug this
+    module exists to prevent.
+
+    `desc_rows` overrides the reservation this would measure for itself, for
+    a caller that has already measured it (place_menu, which needs the number
+    to work out how many rows to ask for) or one that cannot afford it at all
+    (0, on a terminal too short to hold a list AND an explanation)."""
+    has_text = bool(header) or any(_has_desc(it) for it in items)
+    if has_text and width is None:
+        raise ValueError("menu_panel needs width= to measure a description")
+    head = _block(header, width) if (header and width) else []
+    if desc_rows is None:
+        desc_rows = menu_desc_lines(items, width) if width else 0
+    chrome = menu_chrome(hint is not None, desc_rows, len(head))
+    top, show_up, show_down = menu_viewport(len(items), cur, rows, chrome)
+    span = rows - chrome - show_up - show_down
     shown = items[top:top + span]
     below = len(items) - top - len(shown)
 
-    lines: list[Text] = []
+    lines: list[Text] = list(head)
+    body: list[Text] = []
     if show_up:
-        lines.append(Text("   ▲ %d more" % top, style=DIM, no_wrap=True,
-                          overflow="ellipsis"))
+        body.append(Text("   ▲ %d more" % top, style=DIM, no_wrap=True,
+                         overflow="ellipsis"))
     for i, it in enumerate(shown, start=top):
-        lines.append(_item_line(it, i == cur))
+        body.append(_item_line(it, i == cur))
     if show_down:
-        lines.append(Text("   ▼ %d more" % below, style=DIM, no_wrap=True,
-                          overflow="ellipsis"))
+        body.append(Text("   ▼ %d more" % below, style=DIM, no_wrap=True,
+                         overflow="ellipsis"))
     # More rows than items (a caller that did not cap at menu_needed): the
-    # slack goes above the hint, so the hint always sits on the border.
-    lines += [Text("") for _ in range(rows - CHROME - len(lines))]
-    lines.append(Text("   " + hint, style=DIM, no_wrap=True, overflow="ellipsis"))
+    # slack goes above the description and the hint, so both always sit on
+    # the border.
+    body += [Text("") for _ in range(rows - chrome - len(body))]
+    lines += body
+    if desc_rows:
+        # PADDED TO THE RESERVATION, always: the blank lines under a row with
+        # no description are what stops the list moving as the cursor passes
+        # over it. Sliced to it too, in case a caller passed a number smaller
+        # than this row needs.
+        shown_desc = _block(items[cur]["desc"], width) \
+            if (0 <= cur < len(items) and _has_desc(items[cur])) else []
+        lines += shown_desc[:desc_rows]
+        lines += [Text("") for _ in range(desc_rows - len(shown_desc))]
+    if hint is not None:
+        lines.append(Text("   " + hint, style=DIM, no_wrap=True,
+                          overflow="ellipsis"))
     # One Text per line in a Group, not one joined Text: overflow belongs to a
     # whole Text, and a separator is cropped where a label is ellipsised.
     return Panel(Group(*lines), title="[bold]" + title, title_align="left",

@@ -46,8 +46,10 @@ from rich.text import Text
 
 from dashboard.core import (DIM, PROFILE, RED, SCRIPTS, STATES, knob)
 from dashboard.tabstrip import fit
-from dashboard.menulayout import (CHROME, MENU_MIN, PAGE_KEYS, menu_needed,
-                                  menu_panel, page_jump, page_land,
+from dashboard.menulayout import (BODY_MIN, PAGE_KEYS,
+                                  menu_chrome, menu_desc_lines,
+                                  menu_head_lines, menu_needed, menu_panel,
+                                  page_jump, page_land,
                                   rendered_height)
 
 # The setting that hides tabs (dashboard/menus/tabs.py draws its menu).
@@ -126,7 +128,7 @@ class App:
         # place_menu actually gave it this frame, not a constant. A menu is
         # drawn before a key can reach it, so this is only ever the default
         # for a menu nobody has seen.
-        self._menu_page = MENU_MIN - CHROME
+        self._menu_page = BODY_MIN
         # An inline text entry (rename, the new window's name). Optionally
         # carries a `placeholder`: what enter on an EMPTY line means, drawn
         # in brackets where the typing would go. See prompt_key.
@@ -217,7 +219,7 @@ class App:
         self._views[view.name] = view
 
     def add_menu(self, kind: str, entries_fn, title_fn=None, hint_fn=None,
-                 esc_to: str | None = None, on_esc=None) -> None:
+                 esc_to: str | None = None, on_esc=None, desc_fn=None) -> None:
         """A menu of your own. `esc_to` names the parent kind esc goes back
         to, which generalises the one hard-coded "settings goes back to mux".
 
@@ -225,11 +227,21 @@ class App:
         something: the new-session form is half-filled answers, and esc there
         has to throw them away and say so, not just stop drawing. A menu that
         names neither closes silently, which is what a list of actions
-        should do."""
+        should do.
+
+        `desc_fn() -> str` is the menu's OWN explanation, drawn once under
+        its title border. It is where a submenu says what it is for: on the
+        parent's row that sentence is read once and then re-read on every
+        visit to a menu it is not about, and it makes the parent's row too
+        wide for the panel to be worth capping.
+
+        `hint_fn() -> str | None` fills THE MENU'S HINT LINE, the one inside
+        the panel; None draws no such line and gives the row to the list."""
         if kind in self._menus:
             raise RegistrationError("two menus are called %r" % kind)
         self._menus[kind] = {"entries": entries_fn, "title": title_fn,
-                             "hint": hint_fn, "esc_to": esc_to, "on_esc": on_esc}
+                             "hint": hint_fn, "esc_to": esc_to,
+                             "on_esc": on_esc, "desc": desc_fn}
 
     def add_rows(self, menu_kind: str, rows_fn, order: int = 50) -> None:
         """Rows INTO someone else's menu -- how `ESC ▸ Insights` arrives
@@ -418,7 +430,12 @@ class App:
         fn = spec.get("title")
         return fn() if fn else "menu"
 
-    def menu_hint(self) -> str:
+    def menu_hint(self) -> str | None:
+        """THE MENU'S OWN HINT LINE, or None for a menu that draws none.
+
+        Not App.add_hint, which writes on the main view's footer key line and
+        never reaches a panel. A `hint_fn` returning None is how that line is
+        turned off; menu_panel then reserves nothing for it."""
         kind = self.menu["kind"] if self.menu else "session"
         spec = self._menus.get(kind) or {}
         fn = spec.get("hint")
@@ -429,8 +446,19 @@ class App:
         # hole the options table had. It shares the hint line, so the panel's
         # height is the same with or without it.
         if self.showing_notice():
-            return "%s   ·   %s" % (self.notice, hint)
+            # ...and a menu with NO hint line still has to say it: the line
+            # comes back for the eight seconds the notice lasts rather than
+            # the notice going nowhere. A menu grown by one line for a
+            # message is the honest failure; a message nobody sees is not.
+            return "%s   ·   %s" % (self.notice, hint or "")
         return hint
+
+    def menu_desc(self) -> str:
+        """The open menu's own explanation, drawn once under its title."""
+        kind = self.menu["kind"] if self.menu else "session"
+        spec = self._menus.get(kind) or {}
+        fn = spec.get("desc")
+        return (fn() if fn else "") or ""
 
     def place_menu(self, sections: list, at: int) -> Group:
         """The frame with the open menu in it, NEVER clipped.
@@ -448,13 +476,16 @@ class App:
           modal   the menu alone, centred; the frame comes back on esc
           bottom  the old position, capped and scrolling
 
-        With less than MENU_MIN lines left -- a 24-row terminal and a tall
-        sessions table -- the frame degrades to modal for this one open,
-        and the title says so; a menu is scrolled, never cut."""
+        With less room left than the menu's own minimum -- a 24-row
+        terminal and a tall sessions table -- the frame degrades to modal for
+        this one open, and the title says so; a menu is scrolled, never cut.
+        That minimum is three item lines plus whatever the menu's header,
+        its descriptions and its hint line reserve (_menu_budget)."""
         layout = knob("DASHBOARD_MENU_LAYOUT", PROFILE) or "table"
         items = self.menu_entries()
         cur = self.menu["i"]
         height = self.console.size.height
+        width = self.console.size.width
         if layout == "bottom":
             kept = [p for _n, p in sections]
         elif layout == "modal":
@@ -464,16 +495,43 @@ class App:
             kept = [p for _n, p in sections[:at + 1]]
         room = height - rendered_height(self.console, Group(*kept)) if kept else height
         title = self.menu_title()
-        if room < MENU_MIN:
+        hint, header = self.menu_hint(), self.menu_desc()
+        # The reservation for the menu's header and for its rows' descriptions
+        # is measured HERE as well as in menu_panel, from the same two pure
+        # functions and the same width, because the row budget below is what
+        # decides whether this menu fits at all.
+        desc_rows: int | None = None
+        chrome, least = self._menu_budget(items, header, hint, width)
+        if height < least:
+            # THE EXPLANATIONS GO BEFORE THE LIST DOES. A terminal too short
+            # to hold a header, a description and three item lines keeps the
+            # rows -- a menu is a list you pick from, and an explanation of a
+            # row you cannot see is worth nothing.
+            header, desc_rows = "", 0
+            chrome = menu_chrome(hint is not None)
+            least = chrome + BODY_MIN
+        if room < least:
             layout, kept, room = "modal", [], height
             title += "[/] [%s](modal: no room below)" % DIM
-        rows = max(MENU_MIN, min(room, menu_needed(items)))
-        self._menu_page = max(1, rows - CHROME)
-        panel = menu_panel(items, cur, title, rows, self.menu_hint())
+        rows = max(least, min(room, menu_needed(items, chrome)))
+        self._menu_page = max(1, rows - chrome)
+        panel = menu_panel(items, cur, title, rows, hint, width=width,
+                           header=header, desc_rows=desc_rows)
         if layout == "modal":
             panel.expand = False
             return Group(Align.center(panel, vertical="middle", height=height))
         return Group(*kept, panel)
+
+    def _menu_budget(self, items: list, header: str, hint: str | None,
+                     width: int) -> tuple[int, int]:
+        """(the lines that are not items, the fewest rows the menu can hold).
+
+        One place, so place_menu's budget and menu_panel's drawing cannot
+        disagree about how many lines the header and the descriptions took."""
+        chrome = menu_chrome(hint is not None,
+                             menu_desc_lines(items, width),
+                             menu_head_lines(header, width))
+        return chrome, chrome + BODY_MIN
 
     def place_submode(self, sections: list, at: int, sub) -> Group:
         """The frame with the open PROMPT, CONFIRM, PICKER or modal in it,
