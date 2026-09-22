@@ -523,8 +523,9 @@ class InsightsView(View):
 
     # ---------------------------- the row this view puts in the esc menu
     def mux_rows(self, app) -> list[dict]:
-        return [{"label": "Insights ▸  tokens, cache, cost, context, sessions, "
-                          "budget, lanes, rhythm  (i)",
+        return [{"label": "Insights ▸",
+                 "desc": "tokens, cache, cost, context, sessions, "
+                         "budget, lanes, rhythm (i)",
                  "act": self.act_open}]
 
     def act_open(self) -> str:

@@ -705,6 +705,12 @@ class HandoversView(View):
                      "rec": True}]
         rows += [{"label": "type an answer…", "typed": True},
                  {"label": "skip this fork", "skip": True},
+                 # STILL GLUED, and it has to be: these rows are drawn by
+                 # flow_panel below, which reads r["label"] and r["rec"] and
+                 # nothing else. A `desc` here is not dim, it is ABSENT, and
+                 # "(e)" is the only place this modal names the key on the
+                 # row it belongs to. Same reason as option_rows() in
+                 # views/schedules.py -- a list that is not a menu.
                  {"label": "open the file in the editor  (e)", "edit": True}]
         return rows
 
@@ -1035,7 +1041,9 @@ class HandoversView(View):
             return [{"label": "nothing selected", "disabled": "no rows"}]
         wid = self.live_window(row["slug"])
         if row["kind"] == "questions":
-            rows = [{"label": "Answer…", "act": self._act_answer},
+            rows = [{"label": "Answer…",
+                     "desc": "walk through each fork's options, one at a time",
+                     "act": self._act_answer},
                     {"label": "Edit the file", "act": self._act_edit}]
             if row["state"] == "unanswered":
                 rows.append({"label": "Mark answered", "act": self.mark_answered})
@@ -1044,20 +1052,28 @@ class HandoversView(View):
             rows.append({"label": "Tell %s its answers are in" % row["slug"],
                          "act": self.ask_tell} if wid else
                         {"label": "Tell its window", "disabled": "no live window"})
-            rows.append({"label": "Show its handover", "act": self.goto_handover})
+            rows.append({"label": "Show its handover",
+                         "desc": "move the cursor to that lane's status row, "
+                                 "rather than opening anything",
+                         "act": self.goto_handover})
             return rows
         rows = [{"label": "View (read-only)", "act": self._act_view},
-                {"label": "Edit anyway…", "act": self.force_edit, "danger": True}]
+                {"label": "Edit anyway…",
+                 "desc": "a confirm first only if a live window might still write it",
+                 "act": self.force_edit, "danger": True}]
         if wid:
             rows.append({"label": "Open its window %s" % row["slug"],
                          "act": self.goto_window})
         if row["state"] == "open":
-            rows.append({"label": "Mark done…", "act": self.ask_mark_done})
+            rows.append({"label": "Mark done…",
+                         "desc": "releases any entry waiting on this one",
+                         "act": self.ask_mark_done})
         elif not row["stamp"]:
             # handover.sh reopen takes the unstamped name only, so a row it
             # could not act on is shown as unavailable rather than offered
             # and then refused.
             rows.append({"label": "Reopen",
+                         "desc": "move it back out of done/, as open again",
                          "act": lambda: self.handover_sh("reopen", row["slug"])})
         else:
             rows.append({"label": "Reopen",

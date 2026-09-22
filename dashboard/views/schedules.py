@@ -641,13 +641,17 @@ class ScheduleView(View):
         only = "" if pending else "only a pending entry; this one is %s" % (r["status"] or "?")
         items += [
             {"label": "Edit %s" % name, "act": self.request_edit_selected},
-            {"label": "Options  the checkbox table, pre-ticked from the header",
+            {"label": "Options",
+             "desc": "the checkbox table, pre-ticked from the header",
              "act": self.reopen_options, "disabled": only},
-            {"label": "Launch now  make it due; the watchdog opens it within ~30s",
+            {"label": "Launch now",
+             "desc": "make it due; the watchdog opens it within ~30s",
              "act": self.launch_selected_now, "disabled": only},
-            {"label": "Duplicate as a new pending entry  and open it in the editor",
+            {"label": "Duplicate as a new pending entry",
+             "desc": "and open it in the editor",
              "act": self.duplicate_selected},
-            {"label": "Check  resolve it without launching: slug, window, paste, verdict",
+            {"label": "Check",
+             "desc": "resolve it without launching: slug, window, paste, verdict",
              "act": self.check_selected},
         ]
         if r["status"] == "launched":
@@ -1012,8 +1016,8 @@ class ScheduleView(View):
         if not sid:
             return []
         label = main.cursor_window() or sid[:8]
-        return [{"label": "Schedule a resume of %s at the next reset  "
-                          "reads its STATUS file" % label,
+        return [{"label": "Schedule a resume of %s at the next reset" % label,
+                 "desc": "reads its STATUS file",
                  "act": self.act_schedule_resume}]
 
 

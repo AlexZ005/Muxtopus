@@ -51,6 +51,28 @@ layout() {   # write a menu layout into the fake machine's settings file
   sed -i "s|^DASHBOARD_MENU_LAYOUT=.*|DASHBOARD_MENU_LAYOUT=\"$l\"|" -- "$f"
 }
 
+pick() {   # pick <text the cursor row must say> -- Down until it does
+  # NAVIGATE BY LOOKING, the rule actions.sh's down_to states: the Settings
+  # list grows a row every time a module registers a setting, so "eleven
+  # Downs" is a number a lane in another worktree is allowed to change.
+  local want="$1" i
+  for i in $(seq 1 30); do
+    "$C" | grep -q "▸ .*$want" && return 0
+    PAUSE=0.12 $K Down
+  done
+  echo "ROUTE LOST: never reached the row '$want'" >&2
+  "$C" | grep -o "▸ .\{0,60\}" | tail -1 >&2
+  fails=$((fails + 1))
+}
+
+hints() {   # turn the four Settings ▸ Hints keys on or off in the fixture
+  local v="$1" f="${SB:?}/config/muxtopus/profiles/mxsplit.dashboard.conf" k
+  for k in ROW_DESC MENU_LINE FOOTER_KEYS TABLE_NOTES; do
+    sed -i "/^DASHBOARD_HINTS_$k=/d" -- "$f"
+    printf 'DASHBOARD_HINTS_%s="%s"\n' "$k" "$v" >> "$f"
+  done
+}
+
 # ============================================================ the menus
 # Every layout at every height. The reported bug was a menu clipped by the
 # terminal, so the menus are the part measured at three heights.
@@ -213,7 +235,11 @@ $K Space;  shot "sched-menu-launched" "Open its window"
 $K Escape
 $K Down;   shot "sched-why-pinned" "no verdict yet"
 $K Down;   shot "sched-why-options" "3 option(s)"
-$K Space;  shot "sched-menu-options" "Options  the checkbox table"
+# "Options" alone, now that the row's explanation is a description drawn on
+# its own line: the label is all that is left on the row, and the screen this
+# menu opens over holds no "Options" of its own (checked), so the assertion
+# still fails if the menu did not open.
+$K Space;  shot "sched-menu-options" "Options"
 $K Escape
 # The keys the schedule view deliberately swallows.
 $K Left; $K Right; $K t
@@ -263,6 +289,48 @@ $K n;      shot "sched-delete-cancelled" "cancelled"
 # enter/e: the editor hand-off (EDITOR is /usr/bin/true, so it returns at once)
 $K Enter;  shot "sched-after-edit" "schedules 6"
 "$HERE/stop.sh"
+
+# ====================================== Settings ▸ Hints, and everything off
+# TWO SHAPES OF THE SAME MENUS: the defaults, and the four hints turned off.
+# The second half is the only place in the route where a panel has no hint
+# line, which is why it is also the only place a capture must NOT be handed
+# to assert_menu.py -- that script identifies a menu BY its "esc close" line,
+# so a menu that legitimately has none reads to it as a clipped one. Nothing
+# feeds it these: assert_menu.py has exactly one caller (notify.sh, on
+# notify-menu.txt) and that capture is taken with the defaults.
+"$HERE/start.sh" 58 >/dev/null
+$K Escape
+$K Enter;  shot "settings-for-hints" "Menu layout"
+pick "Hints ▸"
+$K Enter;  shot "hints"              "Row descriptions:"
+$K Down; $K Down; $K Down; $K Down
+shot "hints-expert"                  "Expert mode"
+"$HERE/stop.sh"
+
+hints off
+"$HERE/start.sh" 58 >/dev/null
+# The main view with no key line and no (navigate by arrows)/(f: …) notes.
+shot "off-main"                      "root-lane"
+$K Down; $K Down; $K Down; $K Down; $K Down; $K Down
+shot "off-main-cursor-extras"        "desktop extras"
+# ...and a menu with neither a description line nor a hint line: two lines
+# shorter than the same menu above, and nothing blank where they were.
+$K Escape
+shot "off-mux"                       "Disconnect"
+$K Enter; shot "off-settings"        "Menu layout"
+"$HERE/stop.sh"
+
+# A NOTICE STILL GETS THE LINE BACK. With the hint line off there is nothing
+# to share it with, so the panel grows by one for the eight seconds the
+# notice lasts. Toggling the watchdog from the esc menu is the cheapest
+# notice in the tree that writes nothing outside the fake machine.
+"$HERE/start.sh" 58 >/dev/null
+$K Escape
+pick "Watchdog:"
+$K Enter; sleep 0.5
+shot "off-mux-notice"                "watchdog"
+"$HERE/stop.sh"
+hints on
 
 python3 "$HERE/normalise.py" "${CAPS:?}"/*.txt
 echo "captures: $(ls -1 "${CAPS:?}" | wc -l), lost: $fails"

@@ -160,27 +160,33 @@ class UpdateMenu:
         new = self.available()
         back = self.rollback_to()
         items: list[dict] = [
-            {"label": "Updates: %s" % self.status_line(), "act": self.act_status,
-             "stay": True},
-            {"label": "Check now  ask GitHub for the newest release, ignoring the clock",
+            {"label": "Updates: %s" % self.status_line(),
+             "desc": "the full report, full screen",
+             "act": self.act_status, "stay": True},
+            {"label": "Check now",
+             "desc": "ask GitHub for the newest release, ignoring the clock",
              "act": self.act_check, "stay": True},
         ]
         if new:
             items += [
-                {"label": "What is in %s…  its release notes, full screen" % new,
+                {"label": "What is in %s…" % new,
+                 "desc": "its release notes, full screen",
                  "act": lambda v=new: self.act_notes(v)},
-                {"label": "Update to %s and reload  swaps the install, reloads the watchdogs" % new,
+                {"label": "Update to %s and reload" % new,
+                 "desc": "swaps the install, reloads the watchdogs",
                  "act": lambda v=new: self.act_apply(v)},
             ]
         if back:
             items.append({
-                "label": "Roll back to %s  put the kept tree back in place" % back,
+                "label": "Roll back to %s" % back,
+                "desc": "put the kept tree back in place",
                 "act": lambda v=back: self.act_rollback(v), "danger": True})
         items.append({"sep": True})
         for key, meta in muxsettings.keys_of("update").items():
             val = muxsettings.get(key, PROFILE)
             items.append({
-                "label": "%s: %s  %s" % (meta["label"], self._shown(key, val), meta["hint"]),
+                "label": "%s: %s" % (meta["label"], self._shown(key, val)),
+                "desc": meta["hint"],
                 "stay": True, "act": lambda k=key: self._choose(k)})
         items += [{"sep": True}, {"label": "Back", "sub": "settings"}]
         if not UPDATE_SH.exists():
@@ -317,25 +323,28 @@ class UpdateMenu:
     def title(self) -> str:
         return "updates[/] [%s]· %s" % (DIM, escape(str(UPDATE_SH.name)))
 
+    def desc(self) -> str:
+        return "new releases: whether to look, what to take, and what to keep"
+
 
 def register(app) -> None:
     muxsettings.register(UPDATE_KEYS, menu="update")
     menu = UpdateMenu(app)
     app.add_menu("update", menu.entries, title_fn=menu.title,
                  hint_fn=lambda: "↑↓ pick · enter change · esc back",
-                 esc_to="settings")
+                 desc_fn=menu.desc, esc_to="settings")
     # The row in Settings, under the last setting, the way Notifications does
     # it: an order counted when the menu is drawn, never a fixed number that
     # goes stale the day somebody registers a tenth key.
     app.add_rows("settings", lambda a: [{
-        "label": "Updates ▸  new releases: whether to look, what to take, and what to keep",
+        "label": "Updates ▸",
         "sub": "update",
         "order": len(muxsettings.DASHBOARD_KEYS) * 10 + 6}])
     # AND A ROW IN THE esc MENU, but only while there is something to say --
     # exactly like Restore. An update is the rare thing esc should offer
     # without being looked for, and on every other day this row is not there.
     app.add_rows("mux", lambda a, m=menu: (
-        [{"label": "Update to %s ▸  what is in it, and take it" % m.available(),
+        [{"label": "Update to %s ▸" % m.available(),
           "sub": "update", "order": 15}] if m.available() else []))
     app.add_hint(lambda a, m=menu: Text("  · %s out" % m.available(), style=YELLOW)
                  if m.available() else None)

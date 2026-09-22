@@ -44,7 +44,13 @@ down_to() {
 echo "== the session menu: Schedule resume of the cursor's window"
 "$HERE/start.sh" 58 >/dev/null
 $K Space                      # the session menu over root-lane
-down_to "Schedule resume of root-lane"
+# "Schedule A resume of <win> at the next reset" is the row's wording, and
+# this asked for "Schedule resume of" -- which has matched nothing since the
+# two were last touched in one commit. down_to then pressed Down 25 times and
+# the enter below fired on whatever row it landed on, so the six checks under
+# it were passing for a reason nobody had looked at. Matched on the head of
+# the label, which is the half the label sweep does not move.
+down_to "Schedule a resume of root-lane"
 $K Enter
 sleep 0.6
 check "it wrote the entry"            test -f "${S:?}/resume-root-lane.md"

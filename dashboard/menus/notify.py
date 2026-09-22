@@ -187,10 +187,11 @@ class NotifyMenu:
     def entries(self) -> list[dict]:
         items: list[dict] = [
             {"label": "Notifications: %s" % self.status(),
+             "desc": "check again now, rather than waiting for the cache",
              "act": self.act_status, "stay": True},
-            {"label": "Set up…  the guide: pick a backend, paste the token, press START",
+            {"label": "Set up…", "desc": "the guide: pick a backend, paste the token, press START",
              "act": self.act_setup},
-            {"label": "Send a test  one message, to prove the phone hears this account",
+            {"label": "Send a test", "desc": "one message, to prove the phone hears this account",
              "act": self.act_test, "stay": True},
             {"sep": True},
         ]
@@ -200,14 +201,15 @@ class NotifyMenu:
             val = muxsettings.get(key, PROFILE)
             if meta["kind"] == "onoff":
                 items.append({
-                    "label": "%s: %s  %s" % (meta["label"], "ON" if val == "on" else "off",
-                                             meta["hint"]),
+                    "label": "%s: %s" % (meta["label"], "ON" if val == "on" else "off"),
+                    "desc": meta["hint"],
                     "on": val == "on", "stay": True,
                     "act": lambda k=key: self._put(k, "off" if
                                                    muxsettings.get(k, PROFILE) == "on" else "on")})
             else:
                 items.append({
-                    "label": "%s: %s  %s" % (meta["label"], self._shown(key, val), meta["hint"]),
+                    "label": "%s: %s" % (meta["label"], self._shown(key, val)),
+                    "desc": meta["hint"],
                     "stay": True, "act": lambda k=key: self._choose(k)})
         items.append({"sep": True})
         items.append({"label": "Back", "sub": "settings"})
@@ -273,6 +275,9 @@ class NotifyMenu:
     def title(self) -> str:
         return "notifications[/] [%s]· %s" % (DIM, escape(str(NOTIFY_SH.name)))
 
+    def desc(self) -> str:
+        return "what the phone is told, and what it may answer"
+
 
 def _ago(stamp: str) -> str:
     """"2026-09-18 09:12:01" as "2m ago". The stamp is local time, written by
@@ -297,7 +302,7 @@ def register(app) -> None:
     menu = NotifyMenu(app)
     app.add_menu("notify", menu.entries, title_fn=menu.title,
                  hint_fn=lambda: "↑↓ pick · enter change · esc back",
-                 esc_to="settings")
+                 desc_fn=menu.desc, esc_to="settings")
     # The row that opens it, INTO somebody else's menu, under the last
     # setting and above the separator. Settings' own rows take the positional
     # orders 10, 20, 30 ... so where "last" is depends on how many settings
@@ -306,7 +311,7 @@ def register(app) -> None:
     # menu is drawn. (First row, above Menu layout, was the alternative and
     # put a submenu where the reader looks for the layout switch.)
     app.add_rows("settings", lambda a: [{
-        "label": "Notifications ▸  what the phone is told, and what it may answer",
+        "label": "Notifications ▸",
         "sub": "notify",
         "order": len(muxsettings.DASHBOARD_KEYS) * 10 + 5}])
     # `waiting` is published by the watchdog in status.tsv in place of idle.
