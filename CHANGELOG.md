@@ -4,6 +4,222 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.3.0 — 2026-09-22
+
+The release that makes the dashboard fit a narrow terminal and explain itself.
+Every table column can now be chosen, pinned or scrolled out of the way instead
+of being squeezed to an ellipsis; every menu row says what it does on a line of
+its own, and a new `Settings ▸ Hints ▸` turns all of that back off. Lane windows
+lose the `➥` markers from their names — an automatic, logged, one-time rename on
+first start. And two things that had been failing quietly on a machine without
+`jq` — release notes and wind-down directives — work there now.
+
+A minor: new keys (`Shift-←/→`), new menus and new settings, nothing renamed or
+moved that a user's own files name.
+
+### The main view fits
+
+#### choose, pin and scroll the main view's columns; hide its panels
+
+- **A narrow terminal no longer squeezes every column to an ellipsis.** A
+  column is drawn at its full width or it is not drawn at all. At 80 columns
+  the claude table used to cut SPENT, IDLE and DIRTY to `…` and lose MON and
+  WINDOW outright; it now draws five whole columns and says on the panel's
+  bottom border that six more are to the right.
+- **`Shift-←` and `Shift-→` scroll a table sideways**, through the columns
+  that are not pinned. They move the table the cursor is in — a lane row
+  scrolls the lanes table, a session or the desktop-extras row scrolls the
+  claude table. Plain `←` `→` still fold the window tree, and the footer
+  names the new pair beside them.
+- **Pinned columns never scroll off and are never squeezed.** Until you
+  change it that is the column that names each row — LANE and WINDOW —
+  because a table scrolled sideways with its name column gone is a grid of
+  numbers about nothing.
+- **The panel's bottom border counts what is off each side**: `◀ 2 more ·
+  3 more ▶ · shift-←→`, the same place and the same voice the tab strip
+  already uses for `←→ tab 7/9`. Nothing is written there when every column
+  fits. If the columns you pinned do not fit by themselves, it says that in
+  words rather than offering a key that cannot move.
+- **`esc ▸ Settings ▸ Columns`** lists every column of both tables and
+  `enter` cycles it shown → pinned → hidden. Each row says what is true of
+  the screen behind the menu, including which side an off-screen column is
+  on — which is where "where did RESUMED go" is answered, since a panel
+  title cannot hold nine column names. ACCOUNT is always listed, even though
+  the lanes table only shows it under `f`.
+- **`esc ▸ Settings ▸ Panels`** leaves a whole section out: the deck header,
+  the lanes table, the uncommitted trees or the system line. That is your
+  choice and not the short-terminal rule, so the `hidden: short terminal`
+  note never names a panel you hid. Hiding the system line moves the desktop
+  extras action into that menu, so it stays one `enter` away instead of
+  disappearing with the line it sat on. The claude table is the screen
+  itself and cannot be hidden.
+- **Nothing you hide can lose you anything.** A hidden column keeps its data
+  — the row, the session menu and `enter` never read one — a hidden lanes
+  table leaves `f` and the uncommitted panel, and every hidden column is
+  named in the menu that hid it.
+
+#### the engine underneath, and Shift-←/→ as real keys
+
+- **Shift-← and Shift-→ are now keys the dashboard can tell apart** from a
+  plain ← and →, which it could not before: both used to arrive as the plain
+  arrow, so a key that scrolls a table sideways had nowhere to live. Every
+  other modified arrow is unchanged on purpose — ctrl-←, alt-→, ctrl-shift-←
+  and Shift-↑/↓ all still just move the cursor.
+
+### The menus explain themselves
+
+#### every row says what it does, on a line of its own
+
+- **Around 120 rows across every menu were split this way.** Where a row read
+  `Duplicate as a new pending entry  and open it in the editor`, the row is
+  now `Duplicate as a new pending entry` and the rest appears dim at the
+  bottom of the panel while the cursor is on it. Rows that never explained
+  themselves — and could not, with the explanation glued to a label that had
+  to stay short — have an explanation now.
+- **A submenu says what it is for once you are in it.** The submenu rows
+  (`Settings ▸`, `Tabs ▸`, `Updates ▸`, `Notifications ▸`) are just their
+  names, and what each one is for is written under the title of the menu it
+  opens, where it is read when it is about to be true rather than every time
+  you pass the row.
+- The line is there for the whole time the menu is open and blank on a row
+  with nothing to say, so nothing moves under your eyes as you arrow down the
+  list. A sentence too long for it wraps once and is then cut with `…` rather
+  than pushing the menu taller.
+- **esc comes back to the row you came from.** `Settings ▸ Tabs ▸`, then esc,
+  used to land on the first Settings row; it now lands on `Tabs ▸`, and it
+  still finds it on a day when a row has appeared or disappeared above it.
+  The `Back` row at the foot of a submenu does the same thing. Opening a menu
+  fresh with esc, space or `c` still starts at the top.
+- **A centred menu is no wider than 78 columns.** The `modal` layout drew a
+  panel as wide as its widest row, which was a band right across a wide
+  terminal. It is capped now — and a menu of short rows is narrower still —
+  so a menu is a box you read rather than a line you track across the screen.
+  The pickers and prompts a menu opens are capped the same way. The `table`
+  and `bottom` layouts are unchanged.
+
+#### and a new `Settings ▸ Hints ▸` turns any of it off
+
+- Four switches: **Row descriptions** (the dim line just described, and a
+  submenu's own header), **Menu hint line** (`↑↓ pick · enter choose · esc
+  close` inside a panel), **Footer key line** (`q quit  r refresh  R reload …`
+  under the main view, and the same line under the schedules, handovers and
+  insights views), and **Inline table notes** (`(navigate by arrows)`,
+  `(enter reclaims)`, `(f: all)`). All four start on, so nothing changes
+  until you ask.
+- **Expert mode is one row for all four.** With everything on it turns
+  everything off; from anywhere else, including half-and-half, it turns
+  everything back on. Its label says which state you are in and its
+  description says where the next `enter` goes.
+- **Turning one off makes the panel smaller**, not blank — the line stops
+  being reserved, so a menu with its descriptions and hint line off is two
+  lines shorter than the same menu with them on.
+- **A message still reaches you whatever is off.** With the menu hint line
+  off, that line comes back for the eight seconds a notice lasts and carries
+  the notice alone. With the footer key line off, the notice, the counts
+  other views add to that line and the limit-reset flourish all still draw.
+  Facts stay beside the notes that go: `(f: all)` is guidance and can be
+  hidden, the `· 3 hidden` next to it is the table telling you it is not
+  showing you everything, and that never can.
+
+### Lanes are named for their slug
+
+#### the ➥ markers are gone
+
+- A lane's tmux window is now called `checkout-refactor`, not
+  `➥checkout-refactor`, and a sub-window is `cart-api`, not `➥➥cart-api`. The
+  markers said two things, and both already had better homes: *this is a lane*
+  is recorded in `tree.tsv` and in the schedules and handovers on disk, and
+  the *depth* is `tree.tsv`'s parent column — which is what `t` on the
+  dashboard has always drawn its indented tree from. The arrows were a second
+  copy, visible in tmux and read by nothing.
+- **Windows opened by an older release are renamed once**, on the first start
+  after upgrading, and every rename is logged. Only lanes are touched, never
+  onto a name another window already has, and `claude-watchdog.sh
+  --migrate-names --dry-run` shows what it would do first.
+- **A window you open by hand is still not a lane.** It is not listed, not
+  watched, and not adopted into the tree until a claude session is running in
+  it — and even then only if a schedule entry or a handover names it. That
+  behaviour was previously a side effect of the arrow being absent; it is now
+  a test of its own (`tests/test_lane_names.sh`), because removing the arrow
+  is exactly the change that could have broken it.
+- The dashboard, the manual and the screenshot all say the plain name now.
+
+### Without jq, quietly, for months
+
+#### release notes arrive on a machine without jq
+
+- `What is in <new>…` printed *"Release notes for muxtopus X.Y.Z could not be
+  fetched"* on every machine that has no `jq` — which is the ordinary fresh
+  box — for a release whose notes were sitting in the reply it had just
+  downloaded. It called `jq` directly instead of `mux_json`, so the bundled
+  JSON reader never got a look in.
+- **That message is no longer cached.** It was written into
+  `notes-X.Y.Z.md`, the file that exists so the notes are fetched once, so a
+  laptop that happened to be offline for the first `What is in…` never saw
+  that release's notes again however long it was online afterwards. A failed
+  fetch is now the absence of an answer rather than a stored one, and the
+  next try is a real one.
+- **The `prerelease` channel works there too.** Its check also required `jq`
+  and silently found no release at all without it, which reads on the
+  dashboard as "checked just now, nothing new".
+
+#### notifications and the wind-down hook no longer need jq without saying so
+
+- The last scripts that called `jq` directly — `claude-notify.sh` and
+  `claude-winddown-hook.sh` — go through `mux_json` like everything else.
+- **The wind-down hook now works with no jq at all.** It reads a session id
+  out of the hook payload and JSON-escapes the directive; without jq it used
+  to exit quietly, so wind-down directives were never delivered on a machine
+  that had none. Its fast path is unchanged: nothing is sourced and nothing
+  is forked until a directive is actually being delivered.
+- **Telegram says what it needs, instead of failing silently.** Its API
+  replies use filters muxtopus's own JSON reader deliberately does not
+  implement, so that backend genuinely needs the real `jq` or the `jq` python
+  wheel. It now names that, once, with the two commands that fix it — where
+  before it simply did nothing, on a machine where nothing said why.
+
+### Smaller things
+
+#### the header says when you are running a checkout, not a release
+
+- On a machine that develops muxtopus, `~/.local/bin/muxtopus` is a symlink
+  into the checkout, so the dashboard runs `main` — and between a merge and a
+  tag `VERSION` still names the last release while the code is something
+  else. The header now adds `(unreleased · <sha> · N changes)` beside the
+  version: the commit it is actually running, and how many `changes/*.md`
+  fragments are waiting for a number.
+- Dim, not yellow: *a newer release is out* is something to act on, this is
+  something to know. Silent whenever the question does not arise — an
+  installed release has no `.git`, and on the day of a release HEAD is the
+  tag.
+
+#### the repo's design plans leave, and its conventions arrive
+
+- `docs/plan-*.md` are **gone**. They were the notes each feature was designed
+  from, kept beside the manual and hidden from the site. They went stale
+  faster than the code they described — which is the argument against shipping
+  them at all. What was worth keeping is already in the manual and in the long
+  *why* comments at the top of every file, both of which stay true because
+  they travel with the code. Every reference to a plan now points at the
+  manual page that covers the same ground.
+- **`CLAUDE.md`** and **`SKILLS.md`** are new, for anyone contributing with an
+  agent. `CLAUDE.md` is the short list of things that are easy to get wrong
+  here and expensive when you do — the release number lives in one file, the
+  tests need the venv's Python, `jq` is never called directly, a bare `tmux`
+  command reaches the real server. `.claude/skills/` carries the two
+  procedures worth repeating exactly: starting a lane, and cutting a release.
+
+#### and one test that had stopped testing anything
+
+- `tests/test_stats_watchdog.sh` stubs the interpreter the watchdog runs the
+  python half on, to prove the five-minute collect cadence and that a
+  collector which throws does not fail the pass. It stubbed `python3` on
+  `PATH`; the watchdog stopped naming `python3` at the call site when the
+  python half moved to `$MUX_PYTHON`, so the stub was never reached and ten of
+  its thirty-one checks had been failing ever since. CI runs only the python
+  half, so nothing caught it. The guard was working the whole time; nothing
+  was proving it.
+
 ## v5.2.3 — 2026-09-22
 
 A patch, and an apology for the last one. v5.2.2 taught the dashboard to wake
