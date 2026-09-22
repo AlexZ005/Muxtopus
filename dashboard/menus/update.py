@@ -327,6 +327,82 @@ class UpdateMenu:
         return "new releases: whether to look, what to take, and what to keep"
 
 
+# ---------------------------------------------------------------------------
+# THE OTHER WAY THE NUMBER IN THE HEADER CAN BE LESS THAN THE WHOLE TRUTH.
+#
+# Everything above answers "is there a NEWER release than mine?". This answers
+# the question that only has an answer on a machine that DEVELOPS muxtopus:
+# "is what I am running the release this number names, or is it that release
+# plus whatever has landed on main since?" On this box `~/.local/bin/muxtopus`
+# is a symlink into the checkout, so the dashboard runs main -- and between a
+# merge and a tag, VERSION still names the LAST release while the code is
+# something else. A header that says that number either way is not wrong so
+# much as incomplete, and it is incomplete at exactly the moment someone is
+# deciding whether to cut a release.
+#
+# IT IS SILENT ON AN INSTALLED RELEASE, which is the common case and the one
+# this must not clutter: a tarball install has no .git, so `checkout_state`
+# returns nothing and no note is added. It is also silent when HEAD IS the
+# tag, which is every checkout on the day of a release.
+#
+# WHAT IT COUNTS. `changes/*.md` is one fragment per merged pull request, and
+# `changes/README.md` is the folder's own documentation rather than a
+# fragment -- the release consumes the first and leaves the second, so the
+# count of the rest is "how many merged changes are waiting for a number".
+# It is the same list the CHANGELOG entry is assembled from, so the header
+# and the release ritual cannot disagree about how much is pending.
+#
+# NO FORK PER FRAME. Two `git` calls, cached for a minute: a commit does not
+# arrive sixty times a second, and the header is redrawn that often.
+_CO: dict[str, object] = {"at": 0.0, "note": ""}
+_CO_EVERY = 60.0
+
+
+def checkout_state(now: float | None = None) -> str:
+    """`unreleased · <sha>[ · N changes]` for a checkout ahead of its tag; "".
+
+    Empty whenever the question does not arise: no `.git` beside the code (an
+    installed release), no readable VERSION, no tag by that name yet, or HEAD
+    already sitting on it. Any git failure is empty too -- this is a note in a
+    header, and a header that raises is worse than a header that is quiet.
+    """
+    now = time.time() if now is None else now
+    if now - float(_CO["at"]) < _CO_EVERY:
+        return str(_CO["note"])
+    _CO["at"] = now
+    _CO["note"] = ""
+    try:
+        if not (SCRIPTS / ".git").exists():
+            return ""
+        version = (SCRIPTS / "VERSION").read_text(encoding="utf-8").strip()
+        if not version:
+            return ""
+
+        def git(*args: str) -> str:
+            out = subprocess.run(("git", "-C", str(SCRIPTS)) + args,
+                                 capture_output=True, text=True, timeout=5)
+            return out.stdout.strip() if out.returncode == 0 else ""
+
+        head = git("rev-parse", "HEAD")
+        # ^{commit} so an ANNOTATED tag resolves to what it points at rather
+        # than to the tag object, which never equals a HEAD sha.
+        tag = git("rev-list", "-n", "1", "v%s^{commit}" % version)
+        if not head or not tag or head == tag:
+            return ""
+        note = "unreleased · %s" % head[:7]
+        try:
+            pending = sum(1 for f in (SCRIPTS / "changes").glob("*.md")
+                          if f.name != "README.md")
+        except OSError:
+            pending = 0
+        if pending:
+            note += " · %d change%s" % (pending, "" if pending == 1 else "s")
+        _CO["note"] = note
+    except (OSError, ValueError, subprocess.SubprocessError):
+        _CO["note"] = ""
+    return str(_CO["note"])
+
+
 def register(app) -> None:
     muxsettings.register(UPDATE_KEYS, menu="update")
     menu = UpdateMenu(app)
@@ -360,4 +436,11 @@ def register(app) -> None:
         "[%s](v%s %s)[/]" % (YELLOW, escape(m.available()),
                              "downloaded" if m.state().get("STATE") == "staged"
                              else "available")) if m.available() else None)
+    # AND THE DEVELOPER'S HALF OF THE SAME QUESTION, in the same place and
+    # the same brackets, but DIM rather than yellow: "there is a newer
+    # release" is something to act on, "you are ahead of your tag" is
+    # something to know. On an installed release this returns nothing and
+    # the header is exactly as it was.
+    app.add_version_note(lambda a: ("[%s](%s)[/]" % (DIM, escape(checkout_state()))
+                                    if checkout_state() else None))
     app.add_help("UPDATES", HELP_UPDATE, order=37)

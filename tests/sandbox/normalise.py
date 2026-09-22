@@ -30,6 +30,8 @@ rather than one regex at a time wherever a diff turned up:
        a written timestamp         2026-09-17 23:41 -> <stamp>
        the sandbox root            /tmp/muxsplit-sandbox -> <SB>
        another account's servers   · 2 hidden  (f: all) -> (gone)
+       the checkout's own commit   unreleased · b18b017 · 8 changes
+                                                 -> unreleased · <head>
      An IDLE column age is NOT masked: it comes from the fixture's own
      integer, so it is fixed, and masking it would hide a real change.
   4. THE FILL BEFORE A BORDER, on a line a mask touched, and only there. A
@@ -68,6 +70,18 @@ SB = os.environ.get("SB", "")
 # `(f: all)` is itself conditional, hence optional here.
 HIDDEN = re.compile(r" · \d+ hidden(?:  \(f: all\))?")
 
+# THE CHECKOUT'S OWN COMMIT, beside the version on the deck panel's border.
+# The sandbox drives the real checkout, so this note says whatever HEAD is: a
+# new sha on every commit, and a count that moves with every merged fragment.
+# Both are the host's answer.
+#
+# IT IS MASKED BEFORE THE DIGITS ARE, and that order is the whole point. A sha
+# is hex, so the digit mask alone turns b18b017 into `b<n>b<n>` and abcdef1
+# into `abcdef<n>` -- a DIFFERENT shape per commit, which is a golden that
+# fails on the next merge while looking like it was masked. Masking the whole
+# note first leaves one token whatever the sha spells.
+HEAD_NOTE = re.compile(r"unreleased · [0-9a-f]{7,}(?: · \d+ changes?)?")
+
 NUM = re.compile(r"\d+(?:\.\d+)?")
 # The unit that follows a number this file just masked, in a machine panel's
 # title. Only there: an MB elsewhere on the screen is the fixture's.
@@ -87,7 +101,7 @@ SUBS = (
 
 # Every token a mask can leave behind, and the two shapes of fill that a
 # panel puts between its content and its closing border.
-MASKED = re.compile(r"<age>|<time>|<stamp>|<newname>|<n>|<unit>|<SB>")
+MASKED = re.compile(r"<age>|<time>|<stamp>|<newname>|<head>|<n>|<unit>|<SB>")
 PAD_SPACE = re.compile(r" {2,}(│\s*)$")
 PAD_FILL = re.compile(r"─{2,}([╮╯]\s*)$")
 
@@ -103,6 +117,7 @@ def repad(line: str) -> str:
 
 def mask_machine(line: str) -> str:
     """A machine panel's border line: its numbers, and the unit after one."""
+    line = HEAD_NOTE.sub("unreleased · <head>", line)
     line = HIDDEN.sub("", line)
     return UNIT.sub(r"\1 <unit>", NUM.sub("<n>", line))
 

@@ -105,7 +105,21 @@ And one more, in `esc ▸ Settings ▸ Notifications`:
 
 That one is told **once per version, ever** — the fingerprint is the version number, so the ledger that stops a waiting prompt being announced twice a minute is the same one that stops "<new> is out" arriving every day until it is installed. It never sends a "cleared" message either: installing a release is not an event a phone wants to hear about twice. It is off by default because it is news, not trouble, which is the same reason the budget bands are.
 
+## The other direction: a checkout ahead of its tag
+
+Everything above is about a release **newer** than the one installed. On a machine that *develops* muxtopus the opposite happens: `~/.local/bin/muxtopus` is a symlink into the checkout, so the dashboard runs `main`, and between a merge and a tag `VERSION` still names the last release while the code is something else.
+
+So the header adds a second note, dim rather than yellow, because it is something to know rather than something to act on:
+
+```
+… · vX.Y.Z (unreleased · b18b017 · 8 changes)
+```
+
+The sha is `HEAD`; the count is `changes/*.md`, one fragment per merged pull request, which is the same list [the CHANGELOG entry is assembled from](releasing.md) — so the header and the release ritual cannot disagree about how much is pending. `changes/README.md` is the folder's own documentation and is not counted.
+
+It is **silent** whenever the question does not arise: on an installed release, which has no `.git` beside the code; when `HEAD` is already the tag, which is every checkout on the day of a release; and when there is no tag by that name yet. A note that will not go away is worse than no note at all.
+
 ## Proving it
 
-`tests/test_update.sh` builds two releases from this checkout — the one under test and a fabricated newer one — serves them out of a directory with `file://` URLs, installs the first, updates to the second, rolls back, rolls forward again, and checks every refusal. A self-updater that has never updated anything is the one part of this repository that cannot be proved by reading it.
+`tests/test_unreleased.py` builds real repositories in temporary directories — tagged, ahead of the tag, and with no `.git` at all — because the whole note is a question about git and a fake answer would prove nothing about the command lines it runs. `tests/test_update.sh` builds two releases from this checkout — the one under test and a fabricated newer one — serves them out of a directory with `file://` URLs, installs the first, updates to the second, rolls back, rolls forward again, and checks every refusal. A self-updater that has never updated anything is the one part of this repository that cannot be proved by reading it.
 {% endraw %}
