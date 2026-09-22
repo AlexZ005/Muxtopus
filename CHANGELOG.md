@@ -4,6 +4,29 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.3.1 — 2026-09-22
+
+The release that makes the installer's last screenful true. An install on an
+Ubuntu 20.04 box ended `Done. Start with: muxtopus` under a tmux too old to
+run it and a `claude` the shell could not see, with both facts forty lines up
+in step 1 of 7. The report now ends with what actually stops muxtopus from
+running, and with the one line to paste into the shell you ran it from.
+
+A patch: nothing a user's own files name is renamed or moved; the command
+line, the config keys and the folders are what they were.
+
+### Install
+
+#### the last thing printed is the thing to act on
+
+- The report now ends with what actually stops muxtopus from running, if anything: a `tmux` older than 3.2 or no `claude` is repeated under `Done, but muxtopus cannot run yet`, with what to do and the path of `install.sh` to run again. Before, those warnings sat in step 1 of 7 and the report still ended `Done. Start with: muxtopus`.
+- The `export PATH=...` line for the shell you ran the installer from is printed at the end, right above `Start with: muxtopus`, instead of in the middle of step 4.
+- A `claude` that is installed but not on your shell's `PATH` (its own installer puts it in `~/.local/bin`) is named as such, not reported missing.
+- On a distro whose repository only has an old `tmux`, the advice no longer amounts to "reinstall the version you have"; it says the newer one has to come from elsewhere.
+- The data folders are seeded after the Python step, with the Python it settled on, and a failure to seed them is reported. On a machine with only Python 3.8 they were silently not seeded.
+- `muxtopus` refuses to open a session when `claude` is not installed, with one line saying so, rather than opening a window that says "command not found".
+- "Start with" lists one command; the second account, named sessions and `-l` are under `muxtopus -h`.
+
 ## v5.3.0 — 2026-09-22
 
 The release that makes the dashboard fit a narrow terminal and explain itself.
