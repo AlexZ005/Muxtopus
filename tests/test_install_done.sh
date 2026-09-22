@@ -45,13 +45,14 @@ export PATH="$SB/fake:/usr/local/bin:/usr/bin:/bin"
 BIN="$HOME/.local/bin"
 inst() { "$REPO/install.sh" --no-watchdog --no-venv --no-embedded-python \
            --home "$HOME/muxhome" --bin "$BIN" "$@" 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; }
-after_done() { sed -n '/^Done/,$p' <<<"$1"; }
+after_done() { sed -n '/Done/,$p' <<<"$1"; }
 reset() { rm -rf "$HOME/.config" "$HOME/muxhome" "$HOME/.local" "$HOME/.profile" "$HOME/.bashrc"; }
 
 echo "== no claude anywhere: a blocker, repeated at the end"
 out="$(inst)"
 check "step 1 says claude is missing"  grep -q '! claude missing' <<<"$out"
-check "the end has setup notes"        grep -q '^⚠  Setup notes:' <<<"$out"
+check "the end says it cannot run yet" grep -q '^⚠  Done, but muxtopus cannot run yet:' <<<"$out"
+check "and the PATH note is a setup note" grep -q '^⚠  Setup notes:' <<<"$out"
 check "and names claude there"         grep -q '● claude is not installed' <<<"$(after_done "$out")"
 check "and names install.sh to re-run" grep -qF "Fix that, then run $REPO/install.sh again" <<<"$(after_done "$out")"
 check "the PATH line is under Done too" grep -qF 'export PATH="$HOME/.local/bin:$PATH"' <<<"$(after_done "$out")"
@@ -63,7 +64,7 @@ mkdir -p "$BIN"; printf '#!/bin/sh\n' > "$BIN/claude"; chmod +x "$BIN/claude"
 out="$(inst)"
 check "step 1 names where it is"        grep -qF "claude is at $BIN/claude, not on PATH in this shell" <<<"$out"
 check "step 1 does not call it missing" bash -c '! grep -q "claude missing" <<<"$1"' _ "$out"
-check "the end is a plain Done"         grep -q '^Done\.$' <<<"$out"
+check "the end is a ticked Done"        grep -q '^✅ Done\.$' <<<"$out"
 check "no blocker in the notes"         bash -c '! grep -q "● claude\|● tmux" <<<"$1"' _ "$out"
 check "nothing said to fix anything"   bash -c '! grep -q "Fix that" <<<"$1"' _ "$out"
 
@@ -84,7 +85,7 @@ echo "== a dry run ends as before"
 reset; fake_tmux 3.5a
 out="$(inst --dry-run)"
 check "dry run says so and stops"       grep -q '^dry run only' <<<"$out"
-check "no Done block"                   bash -c '! grep -q "^Done" <<<"$1"' _ "$out"
+check "no Done block"                   bash -c '! grep -q "Done\." <<<"$1"' _ "$out"
 
 echo "== muxtopus refuses to open a session without claude"
 reset

@@ -60,7 +60,7 @@ check "the line uses \$HOME, not the literal path" bash -c "! grep -qF '$SB' '$H
 # screenful is the one that gets read (the box that prompted this had the
 # line forty rows up and a user who never saw it).
 check "the line is printed for the current shell" grep -qF "execute this line first:" <<<"$out"
-check "  after Done, not before" bash -c 'sed -n "/^Done/,\$p" <<<"$1" | grep -qF "$2"' _ "$out" "$LINE"
+check "  after Done, not before" bash -c 'sed -n "/Done\./,\$p" <<<"$1" | grep -qF "$2"' _ "$out" "$LINE"
 
 echo "== a second install adds no second line"
 inst >/dev/null 2>&1
