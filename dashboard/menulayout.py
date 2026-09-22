@@ -23,6 +23,10 @@ scrolling rule on the screen and not one per table:
     page_jump(key, i, n, page)    -> the index PageUp/PageDown/Home/End means
     page_land(key, i, n, page, skip) -> the same, off unselectable rows
     fit_columns(cols, width)      -> the columns a narrow terminal keeps
+    column_window(cols, width, pinned, hidden, offset)
+                                  -> (keep, left, right, offset): the same
+                                     table through a horizontal window
+    column_note(left, right)      -> str, what the title says is off screen
     make_table(cols, keep, rows, cur, marker, lines) -> Table, windowed
 
 Items are the dicts Dashboard.menu_entries() builds: label, and optionally
@@ -264,13 +268,141 @@ def fit_columns(cols: list, width: int, want: int = 20) -> list[int]:
     return keep
 
 
+def column_window(cols: list, width: int, pinned: set, hidden: set,
+                  offset: int, want: int = 20) -> tuple[list, int, int, int]:
+    """The columns a table draws through a HORIZONTAL window, and what is
+    off each side: (keep, left, right, offset).
+
+    fit_columns above answers "what does a narrow terminal give up?" by
+    RANK, and it still answers it for the schedules table. This answers a
+    different question -- "what did the user ask to see, and where is the
+    window on it?" -- so the `rank` of a spec IS IGNORED HERE: order is the
+    rule now, because a column the user scrolled to must not jump to the
+    other end of the table because somebody once typed a 3 in its spec.
+
+    `pinned` and `hidden` are sets of header NAMES.
+      * hidden: out of the table entirely, and counted nowhere -- not in
+        `keep`, not in `left`, not in `right`.
+      * pinned: always drawn, at natural width, wherever the window is.
+      * a column whose header is "" -- the cursor marker both main tables
+        start with -- is STRUCTURAL: always drawn, never hidden, never
+        unpinned. A "" in either set is ignored rather than obeyed, so a
+        settings file that grew one cannot take the cursor off the screen.
+      * hidden wins over pinned, so a column named in both goes; a column
+        that is pinned AND invisible is a row of questions with no answer.
+
+    THE COLUMNS KEEP THEIR LIST ORDER on screen -- a table whose columns
+    reorder as you scroll is unreadable. The unpinned, unhidden columns are
+    the horizontal sequence: the first `offset` of them are off-screen left,
+    and then the walk runs in list order (pinned and unpinned interleaved as
+    listed) drawing every pinned one and the unpinned ones while they fit.
+    It is a CONTIGUOUS PREFIX: the walk stops at the first unpinned column
+    that does not fit and never skips ahead to a narrower one behind it.
+    Skipping would put a column on screen that scrolling right could never
+    reach, and it is how a "▶ 3 more" that never arrives gets written.
+
+    NOTHING IS EVER SQUEEZED. A column is drawn at its natural width or not
+    drawn: fixed costs kwargs["width"] + 2 (fit_columns's own cell padding),
+    the one flexible column (ratio=1) costs max(min_width, want) + 2 and,
+    once drawn, still takes whatever is left. `avail = width - 4`, the
+    panel's two borders and their padding, exactly as fit_columns. Rich's
+    own answer to running out is to shrink everything to nothing, which is
+    the bug fit_columns exists to avoid; this one keeps it avoided while the
+    window moves.
+
+    `offset` COMES BACK CLAMPED, and the clamp is the whole reason it is
+    returned: never below 0, never past the first offset at which the last
+    unpinned column is drawn -- scrolling further would take a column off
+    the left and put nothing new on the right -- and exactly 0 whenever
+    everything fits. An offset whose effect the user cannot see is how a
+    column goes missing: the table looks complete, the title says nothing,
+    and the answer to "where is DIRTY" is a number nothing on screen shows.
+
+    MEASURED, on the claude table's eleven columns (which want 144 characters
+    of terminal, with the flexible WINDOW at its 20): at width 80, WINDOW
+    pinned and nothing hidden, five columns are drawn and the note reads
+    "6 more ▶"; the offset runs 0..6 and clamps at 6, the first window that
+    reaches RESUMED. At 160 everything is drawn, offset 0, note "".
+    """
+    avail = width - 4
+    seq: list[int] = []          # the unpinned, unhidden ones, in list order
+    pin: set[int] = set()
+    cost: dict[int, int] = {}
+    for i, (header, kw, _rank) in enumerate(cols):
+        if header and header in hidden:
+            continue
+        cost[i] = (max(kw.get("min_width", 0), want) if kw.get("ratio")
+                   else kw.get("width", 0)) + 2
+        if header == "" or header in pinned:
+            pin.add(i)
+        else:
+            seq.append(i)
+    fixed = sum(cost[i] for i in pin)
+
+    def drawn(off: int) -> list[int]:
+        """The unpinned columns drawn at this offset -- a prefix of seq[off:].
+
+        The pinned columns are paid for first and in full, even when they
+        alone are wider than `avail`: the caller asked for them, Rich
+        ellipsises what does not fit, and the title says how many columns
+        are away. Dropping one would be this module deciding, silently,
+        that the user did not mean it."""
+        room = avail - fixed
+        out = []
+        for i in seq[off:]:
+            room -= cost[i]
+            if room < 0:
+                break
+            out.append(i)
+        return out
+
+    # The clamp, measured rather than derived: walk the offsets from 0 and
+    # stop at the FIRST one whose window reaches the last unpinned column.
+    # It cannot be computed as "len(seq) - visible" the way a vertical
+    # window can, because the columns are different widths and how many fit
+    # depends on where the window starts. Eleven columns is the widest table
+    # here (claude), so this loop is at most eleven short walks.
+    last = 0
+    for off in range(len(seq) + 1):
+        got = drawn(off)
+        if got and got[-1] == seq[-1]:
+            last = off
+            break
+    offset = max(0, min(offset, last))
+    got = drawn(offset)
+    return sorted(pin | set(got)), offset, len(seq) - offset - len(got), offset
+
+
+def column_note(left: int, right: int) -> str:
+    """What a panel title appends when a column is off the side.
+
+    The same voice as make_table's "▲ N more" / "▼ N more" markers, and the
+    KEY IS NAMED IN IT: a screen that says something is missing without
+    saying what to press has told the user they have a problem and left them
+    with it (CLAUDE.md, degrade honestly). "" when nothing is off screen --
+    a title that always carries a note stops being read."""
+    parts = []
+    if left:
+        parts.append("◀ %d more" % left)
+    if right:
+        parts.append("%d more ▶" % right)
+    if not parts:
+        return ""
+    return " · " + " · ".join(parts + ["shift-←→"])
+
+
 def make_table(cols: list, keep: list, rows: list, cur: int, marker: int,
                lines: int | None) -> Table:
     """A SIMPLE_HEAD table of the kept columns, holding `lines` row lines --
     every row when None -- scrolled with menulayout's rule, and the
     "▲ N more" / "▼ N more" markers drawn in column `marker` (a wide one
     that is never dropped: a marker that wraps is a frame one line too tall,
-    which is how the handovers tab once lost its footer)."""
+    which is how the handovers tab once lost its footer).
+
+    WHICH COLUMN A CALLER PASSES AS `marker`: one that is ALWAYS DRAWN, and
+    wide enough to hold "▲ 12 more". Under fit_columns that means a rank of
+    None (the three callers all pass their flexible column); under
+    column_window it means a pinned column, or the structural "" one."""
     t = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
               header_style=DIM, border_style=FRAME)
     for i in keep:
@@ -279,9 +411,29 @@ def make_table(cols: list, keep: list, rows: list, cur: int, marker: int,
     n = len(rows)
     top, span, up, down = table_window(n, cur, n if lines is None else lines)
 
+    # ...AND WHAT HAPPENS WHEN IT IS NOT DRAWN AFTER ALL. It cannot be the ""
+    # column, which column_window refuses to drop, but every other candidate
+    # is pinned by a settings file, and a settings file is a thing a user
+    # edits. keep.index() raised ValueError there, which is the dashboard
+    # dying on a frame rather than drawing one. The fallback is the widest
+    # column still drawn, preferring the flexible one: the marker lands a
+    # column to the side instead of nowhere, and every column is no_wrap +
+    # ellipsis, so the worst case is a marker cut short and never a wrapped
+    # row -- the failure this whole argument exists to prevent.
+    if marker in keep:
+        at = keep.index(marker)
+    elif keep:
+        at = max(range(len(keep)),
+                 key=lambda j: (bool(cols[keep[j]][1].get("ratio")),
+                                cols[keep[j]][1].get("width", 0)))
+    else:
+        at = 0
+
     def mark(text: str) -> None:
+        if not keep:
+            return
         cells = [""] * len(keep)
-        cells[keep.index(marker)] = Text(text, style=DIM)
+        cells[at] = Text(text, style=DIM)
         t.add_row(*cells)
 
     if up:
