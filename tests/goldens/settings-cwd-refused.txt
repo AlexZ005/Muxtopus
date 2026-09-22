@@ -17,21 +17,23 @@
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ settings · <SB>/config/muxtopus/profiles/mxsplit.dashboard.conf ─<pad>╮
-│    Menu layout: table  table: under the panel · modal: centred · bottom: the footer                                                                          │
-│    Default permission mode for a new window: ask  ask: c stops on the mode picker with nothing preselected                                                   │
-│    Where "make it permanent" writes: project  project: <cwd>/.claude/settings.json · account: ~/.claude/settings.json                                        │
-│    Watch a new window: ON  restart it after a limit; off writes watchdog: off in the entry                                                                   │
-│    Monitor a new window: off  wind it down near the limit; off writes monitor: off in the entry                                                              │
-│    Default model for a new window: fable  a CLI alias (opus, fable…), or the account default                                                                 │
-│    Default effort for a new window: high  passed as claude --effort                                                                                          │
-│  ▸ Default working folder: <SB>/work/repo-b  offered first by c and used by the schedule create flow <pad>│
-│    Send /rc to a new window: off  every scheduled window, unless its entry says rc: off                                                                      │
-│    Handovers: show finished rows: off  done handovers and answered question files (f on the tab)                                                             │
-│    Handovers: show question rows: ON  QUESTIONS files, answered and not (a on the tab)                                                                       │
+│    menu layout, defaults for a new window, where a mode is made permanent                                                                                    │
+│    Menu layout: table                                                                                                                                        │
+│    Default permission mode for a new window: ask                                                                                                             │
+│    Where "make it permanent" writes: project                                                                                                                 │
+│    Watch a new window: ON                                                                                                                                    │
+│    Monitor a new window: off                                                                                                                                 │
+│    Default model for a new window: fable                                                                                                                     │
+│    Default effort for a new window: high                                                                                                                     │
+│  ▸ Default working folder: <SB>/work/repo-b <pad>│
+│    Send /rc to a new window: off                                                                                                                             │
+│    Handovers: show finished rows: off                                                                                                                        │
+│    Handovers: show question rows: ON                                                                                                                         │
 │    Notifications ▸  what the phone is told, and what it may answer                                                                                           │
 │    Tabs ▸  which tabs the strip shows (0 hidden)                                                                                                             │
 │    Updates ▸  new releases: whether to look, what to take, and what to keep                                                                                  │
 │    ····················································                                                                                                      │
 │    Back                                                                                                                                                      │
+│    offered first by c and used by the schedule create flow                                                                                                   │
 │    Default working folder: not a directory: <SB>/work/repo-b/nope   ·   ↑↓ pick · enter change · esc back <pad>│
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

@@ -11,16 +11,16 @@
 
 
 
-
-                                   ╭─ muxtopus ────────────────────────────────────────────────────────────────────────────╮
-                                   │  ▸ Settings ▸  menu layout, defaults for a new window, where a mode is made permanent │
-                                   │    ····················································                               │
-                                   │    Watchdog: ON  restart a limited window once its limit resets                       │
-                                   │    Monitor: ON  ask a working window to wind down near the limit                      │
-                                   │    Insights ▸  tokens, cache, cost, context, sessions, budget, lanes, rhythm  (i)     │
-                                   │    ····················································                               │
-                                   │    Disconnect  detach this tmux client; the dashboard and every window keep running   │
-                                   │    Reload the dashboard  re-exec this script, as R does                               │
-                                   │    Quit the dashboard                                                                 │
-                                   │    ↑↓ pick · enter choose · esc close                                                 │
-                                   ╰───────────────────────────────────────────────────────────────────────────────────────╯
+                                         ╭─ muxtopus ─────────────────────────────────────────────────────────────────╮
+                                         │  ▸ Settings ▸                                                              │
+                                         │    ····················································                    │
+                                         │    Watchdog: ON                                                            │
+                                         │    Monitor: ON                                                             │
+                                         │    Insights ▸  tokens, cache, cost, context, sessions, budget, lanes, rhy… │
+                                         │    ····················································                    │
+                                         │    Disconnect                                                              │
+                                         │    Reload the dashboard                                                    │
+                                         │    Quit the dashboard                                                      │
+                                         │                                                                            │
+                                         │    ↑↓ pick · enter choose · esc close                                      │
+                                         ╰────────────────────────────────────────────────────────────────────────────╯
