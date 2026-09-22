@@ -49,7 +49,7 @@ from dashboard.tabstrip import fit
 from dashboard.menulayout import (BODY_MIN, PAGE_KEYS,
                                   menu_chrome, menu_desc_lines,
                                   menu_head_lines, menu_needed, menu_panel,
-                                  page_jump, page_land,
+                                  modal_width, page_jump, page_land,
                                   rendered_height)
 
 # The setting that hides tabs (dashboard/menus/tabs.py draws its menu).
@@ -511,7 +511,11 @@ class App:
         items = self.menu_entries()
         cur = self.menu["i"]
         height = self.console.size.height
-        width = self.console.size.width
+        # A CENTRED MENU IS CAPPED; the other two layouts fill the frame as
+        # they always have. The cap is also the width the descriptions are
+        # measured and wrapped at, so what is reserved is what is drawn.
+        width = (modal_width(self.console.size.width) if layout == "modal"
+                 else self.console.size.width)
         if layout == "bottom":
             kept = [p for _n, p in sections]
         elif layout == "modal":
@@ -528,23 +532,29 @@ class App:
         # decides whether this menu fits at all.
         desc_rows: int | None = None
         chrome, least = self._menu_budget(items, header, hint, width)
-        if height < least:
-            # THE EXPLANATIONS GO BEFORE THE LIST DOES. A terminal too short
-            # to hold a header, a description and three item lines keeps the
-            # rows -- a menu is a list you pick from, and an explanation of a
-            # row you cannot see is worth nothing.
-            header, desc_rows = "", 0
-            chrome = menu_chrome(hint is not None)
-            least = chrome + BODY_MIN
         if room < least:
             layout, kept, room = "modal", [], height
             title += "[/] [%s](modal: no room below)" % DIM
+            # The panel just became a centred one, so it is measured again at
+            # the cap: a description that fitted on one line across the whole
+            # console may want two inside 78 columns.
+            width = modal_width(self.console.size.width)
+            chrome, least = self._menu_budget(items, header, hint, width)
+        if height < least:
+            # THE EXPLANATIONS GO BEFORE THE LIST DOES, and this is checked
+            # last, at the width the panel will really be drawn at. A terminal
+            # too short to hold a header, a description and three item lines
+            # keeps the rows: a menu is a list you pick from, and an
+            # explanation of a row you cannot see is worth nothing.
+            header, desc_rows = "", 0
+            chrome = menu_chrome(hint is not None)
+            least = chrome + BODY_MIN
         rows = max(least, min(room, menu_needed(items, chrome)))
         self._menu_page = max(1, rows - chrome)
         panel = menu_panel(items, cur, title, rows, hint, width=width,
-                           header=header, desc_rows=desc_rows)
+                           header=header, desc_rows=desc_rows,
+                           shrink=(layout == "modal"))
         if layout == "modal":
-            panel.expand = False
             return Group(Align.center(panel, vertical="middle", height=height))
         return Group(*kept, panel)
 
@@ -591,8 +601,13 @@ class App:
         if not kept:
             # expand=False is what makes a centred panel the width of its
             # content instead of the console's -- the same line place_menu
-            # needs for the same reason.
+            # needs for the same reason -- and the same cap, so a picker
+            # opened under a capped menu is not wider than the menu that
+            # asked the question. Rich's own width, measured: a panel whose
+            # content is narrower than the cap keeps its own width.
             sub.expand = False
+            sub.width = min(modal_width(self.console.size.width),
+                            self.console.measure(sub).maximum)
             return Group(Align.center(sub, vertical="middle", height=height))
         return Group(*kept, sub)
 

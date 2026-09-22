@@ -15,6 +15,7 @@ no dashboard state, no I/O, only Rich.
     menu_needed(items, chrome)    -> int   rows to draw every item
     menu_viewport(n, cur, rows, chrome)    -> (top, show_up, show_down)
     menu_panel(items, cur, title, rows, ...) -> Panel, exactly `rows` tall
+    modal_width(console_width)    -> int   the widest a CENTRED panel is drawn
     rendered_height(console, renderable)   -> int, what Rich will really draw
 
 AND THE SAME ARITHMETIC FOR A TABLE on a short terminal, so there is one
@@ -100,6 +101,15 @@ DESC_MAX = 2
 # up under the row it explains rather than under the cursor arrow.
 DESC_INDENT = "   "
 
+# A CENTRED PANEL IS CAPPED. 78 columns, because a line much past 80 is hard
+# to come back to on the next one -- and because 80 is what a terminal still
+# is when nobody has resized it, so 78 is the widest a modal can be and still
+# have air either side of it there. The cap is a ceiling and not a width: a
+# panel whose content is narrower stays narrower, which is what made the
+# labels worth splitting in the first place.
+MODAL_MAX = 78
+MODAL_MARGIN = 4       # two columns of air either side of a centred panel
+
 # Wrapping is MEASURED, not counted in characters: these labels carry "▸",
 # "·" and box glyphs, and len() is wrong about every one of them. A console
 # of a fixed width, so the measurement does not depend on the terminal the
@@ -165,6 +175,17 @@ def menu_head_lines(header: str, width: int) -> int:
     return len(_block(header, width)) if header else 0
 
 
+def modal_width(console_width: int) -> int:
+    """The widest a CENTRED panel is drawn on a console this wide.
+
+    MODAL_MAX, less the margin when the console is not much wider than it.
+    Under 40 columns the margin is given back instead: this module promises a
+    panel drawn at any width >= 40, prove.sh drives 40-column terminals, and
+    a margin taken out of one of those comes out of the labels."""
+    return max(min(MODAL_MAX, console_width - MODAL_MARGIN),
+               min(console_width, 40))
+
+
 def menu_needed(items: list[dict], chrome: int = CHROME) -> int:
     """Rows to draw every item with no scrolling."""
     return len(items) + chrome
@@ -223,7 +244,8 @@ def _item_line(it: dict, is_cur: bool) -> Text:
 
 def menu_panel(items: list[dict], cur: int, title: str, rows: int,
                hint: str | None = HINT, width: int | None = None,
-               header: str = "", desc_rows: int | None = None) -> Panel:
+               header: str = "", desc_rows: int | None = None,
+               shrink: bool = False) -> Panel:
     """The menu as a Panel exactly `rows` lines tall at any width >= 40.
 
     `title` is markup, drawn as `[bold]<title>`, so a caller may add a dim
@@ -244,7 +266,12 @@ def menu_panel(items: list[dict], cur: int, title: str, rows: int,
     `desc_rows` overrides the reservation this would measure for itself, for
     a caller that has already measured it (place_menu, which needs the number
     to work out how many rows to ask for) or one that cannot afford it at all
-    (0, on a terminal too short to hold a list AND an explanation)."""
+    (0, on a terminal too short to hold a list AND an explanation).
+
+    `shrink` draws the panel at its CONTENT's width, capped at `width`,
+    instead of filling the console: what a centred panel wants, and what
+    keeps a menu of six short rows from being a box the width of the
+    screen."""
     has_text = bool(header) or any(_has_desc(it) for it in items)
     if has_text and width is None:
         raise ValueError("menu_panel needs width= to measure a description")
@@ -286,8 +313,53 @@ def menu_panel(items: list[dict], cur: int, title: str, rows: int,
                           overflow="ellipsis"))
     # One Text per line in a Group, not one joined Text: overflow belongs to a
     # whole Text, and a separator is cropped where a label is ellipsised.
-    return Panel(Group(*lines), title="[bold]" + title, title_align="left",
-                 border_style=ACCENT, box=box.ROUNDED, height=rows)
+    markup = "[bold]" + title
+    panel = Panel(Group(*lines), title=_fit_title(markup, width),
+                  title_align="left", border_style=ACCENT, box=box.ROUNDED,
+                  height=rows)
+    if shrink and width:
+        # RICH'S OWN WIDTH, not padded strings: the panel is drawn at exactly
+        # this many columns, and every line in it is already no_wrap +
+        # ellipsis, so a label past the cap is cut with "…" rather than
+        # wrapped onto a line that would push the border off the panel.
+        panel.expand = False
+        panel.width = min(width, _natural(lines, markup))
+    return panel
+
+
+# The room a title has: the panel's width less two corners, the leading dash
+# and a space either side of the title itself.
+TITLE_CHROME = 6
+
+
+def _fit_title(markup: str, width: int | None) -> Text | str:
+    """The title, shortened FROM THE MIDDLE when the panel is too narrow.
+
+    Rich simply cuts a title that does not fit, with nothing to say it did --
+    which is how a capped settings menu came out titled ".../mxsplit.dashboa"
+    and, worse, lost the "(modal: no room below)" note place_menu appends to
+    say the frame degraded. Both ends of this string matter and the middle
+    does not: the head names the menu, the tail names the file it writes and
+    anything the caller added. So the middle goes, with the "…" that says so."""
+    if width is None:
+        return markup
+    text = Text.from_markup(markup)
+    room = width - TITLE_CHROME
+    if text.cell_len <= room or room < 8:
+        return text
+    head = (room - 1) // 2
+    out = text[:head]
+    out.append("…", style=DIM)
+    out.append_text(text[text.cell_len - (room - 1 - head):])
+    return out
+
+
+def _natural(lines: list[Text], markup: str) -> int:
+    """The width a panel of these lines wants: its widest line plus the box
+    and its padding, and never less than its title needs in the top border
+    (two corners, the leading dash, and a space either side of the title)."""
+    widest = max([line.cell_len for line in lines] or [0])
+    return max(widest + 4, Text.from_markup(markup).cell_len + TITLE_CHROME)
 
 
 def rendered_height(console: Console, renderable: ConsoleRenderable) -> int:

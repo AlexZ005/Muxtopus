@@ -113,6 +113,14 @@ turns off THE MENU'S OWN HINT LINE -- the `↑↓ pick · enter choose · esc cl
 line inside the panel, not `add_hint`'s footer key line -- and the row it
 reserved goes back to the list.
 
+**How wide a menu is.** A centred (`modal`) menu and the submodes it opens
+are capped at `menulayout.MODAL_MAX` columns, and never wider than the
+console less a margin: a line much past 80 columns is hard to come back to,
+and 80 is what a terminal still is when nobody has resized it. A menu whose
+rows are shorter stays shorter -- the cap is a ceiling, not a width. A label
+past it is ellipsised, as it always was, and a description wraps inside it.
+The `table` and `bottom` layouts still fill the frame.
+
 **Notes.** `add_hint` writes at the end of the main view's key line;
 `add_version_note` writes beside the version in the deck header's subtitle,
 and returns markup rather than `Text` because that subtitle is markup. Both

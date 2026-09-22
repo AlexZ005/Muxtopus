@@ -532,6 +532,53 @@ try:
 finally:
     appmod.knob = real_knob
 
+print("== a centred menu is capped; the other two layouts still fill the frame")
+from dashboard.menulayout import MODAL_MAX, modal_width    # noqa: E402
+
+WIDE_ROWS = [{"label": "Schedule a resume of a window with a very long name "
+                       "at the next reset, reading its STATUS file",
+              "act": lambda: ""},
+             {"label": "Copy the handover path of that same window",
+              "act": lambda: ""}]
+
+
+def panel_width(a, layout, sections, at=0):
+    """The drawn width of the menu panel in the frame. Stripped at both ends:
+    a centred panel is padded on the LEFT by Align to put it in the middle."""
+    appmod.knob = lambda key, prof=None, _l=layout: _l
+    lines = a.console.render_lines(a.place_menu(sections, at),
+                                   a.console.options, pad=False)
+    return max(len("".join(seg.text for seg in line).strip()) for line in lines)
+
+
+real_knob = appmod.knob
+try:
+    a = app()                                   # a 120-column console
+    a.add_view(Spy("main"))
+    a.add_menu("mux", lambda: WIDE_ROWS)
+    a.open_menu("mux")
+    sections = [("top", Panel(Text("top")))]
+    check(panel_width(a, "modal", sections) <= modal_width(120),
+          "modal: no wider than the cap (%d)" % modal_width(120))
+    check(panel_width(a, "table", sections) == 120,
+          "table: still the width of the frame")
+    check(panel_width(a, "bottom", sections) == 120,
+          "bottom: still the width of the frame")
+
+    # The answers a capped menu collects are capped too, so a picker is not
+    # wider than the menu that asked the question.
+    appmod.knob = lambda key, prof=None: "modal"
+    sub = Panel(Text("a picker option longer than the cap " * 4))
+    a.place_submode(sections, 0, sub)
+    check(sub.width is not None and sub.width <= modal_width(120),
+          "a centred submode is capped the same way (%s)" % sub.width)
+    narrow = Panel(Text("yes / no"))
+    a.place_submode(sections, 0, narrow)
+    check(narrow.width < modal_width(120),
+          "...and one narrower than the cap keeps its own width (%s)" % narrow.width)
+finally:
+    appmod.knob = real_knob
+
 print()
 print("%d assertions passed" % PASSES if not FAILS
       else "%d passed, %d FAILED" % (PASSES, FAILS))

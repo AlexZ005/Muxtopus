@@ -16,9 +16,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from rich.console import Console  # noqa: E402
 
 from dashboard import menulayout  # noqa: E402
-from dashboard.menulayout import (CHROME, MENU_MIN, menu_chrome,  # noqa: E402
-                        menu_desc_lines, menu_head_lines, menu_needed,
-                        menu_panel, menu_viewport, rendered_height)
+from dashboard.menulayout import (CHROME, MENU_MIN, MODAL_MAX,  # noqa: E402
+                        MODAL_MARGIN, menu_chrome, menu_desc_lines,
+                        menu_head_lines, menu_needed, menu_panel,
+                        menu_viewport, modal_width, rendered_height)
 
 # The session menu with both global switches off, shaped as
 # Dashboard.menu_entries() builds it. The plan (§0.3) counts it as 11 entries,
@@ -319,6 +320,65 @@ def main():
     check(shown(without) == shown(with_hint) + 1,
           "and the line it reserved holds one more ITEM now (%d -> %d)"
           % (shown(with_hint), shown(without)))
+
+    # ------------------------------------------- how wide a centred panel is
+    # A modal used to be as wide as its content, and the content was labels
+    # with their explanations glued on -- so it was the width of the screen.
+    # Capped, it is a box you read rather than a band across the terminal.
+    check(modal_width(160) == MODAL_MAX, "a wide console: the cap, %d" % MODAL_MAX)
+    check(modal_width(80) == 80 - MODAL_MARGIN, "an 80-column one: the margin comes off")
+    check(modal_width(40) == 40, "at 40 the margin is given back, not taken from the labels")
+    check(modal_width(30) == 30, "and never more than the console")
+    for w in range(30, 200):
+        check(modal_width(w) <= max(w, 40) and modal_width(w) <= MODAL_MAX,
+              "modal_width(%d) is inside the console and inside the cap" % w, quiet=True)
+    section("modal_width is inside both bounds at every console width")
+
+    def drawn(panel, width):
+        con = Console(width=width, force_terminal=True, color_system="truecolor")
+        return ["".join(seg.text for seg in line)
+                for line in con.render_lines(panel, con.options, pad=False)]
+
+    wide_rows = [{"label": "Schedule a resume of %s at the next reset" % W},
+                 {"label": "Copy the handover path of %s" % W}]
+    cap = modal_width(160)
+    out = drawn(menu_panel(wide_rows, 0, "menu", 8, width=cap, shrink=True), 160)
+    check(max(len(l) for l in out) == cap,
+          "labels past the cap: the panel is exactly the cap (%d)" % cap)
+    check(any("…" in l for l in out), "...and the labels are ellipsised, not wrapped")
+    check(len(out) == 8, "and it is still exactly the rows asked for")
+
+    short_rows = [{"label": "Disconnect"}, {"label": "Quit the dashboard"}]
+    out = drawn(menu_panel(short_rows, 0, "muxtopus", 8, width=cap, shrink=True), 160)
+    check(max(len(l) for l in out) < cap,
+          "a menu of short rows stays narrower than the cap (%d)" % max(len(l) for l in out))
+    check(max(len(l) for l in out) >= len("↑↓ pick · enter choose · esc close") + 4,
+          "...and never narrower than the hint it has to draw")
+    out = drawn(menu_panel(short_rows, 0, "a title far longer than any row in this menu",
+                           8, width=cap, shrink=True), 160)
+    check("far longer than any row" in out[0] and "…" not in out[0],
+          "a panel is widened by its own title rather than cutting it: %r" % out[0][:60])
+
+    # A TITLE TOO LONG FOR THE CAP loses its MIDDLE, not its end. Rich cuts
+    # one from the right with nothing to say it did, and the right is where
+    # place_menu puts the note that says the frame degraded to modal.
+    long_title = ("settings[/] [%s]· /tmp/muxguide-sandbox/config/muxtopus/"
+                  "profiles/mxsplit.dashboard.conf (modal: no room below)"
+                  % menulayout.DIM)
+    out = drawn(menu_panel(short_rows, 0, long_title, 8, width=cap, shrink=True), 160)
+    check(len(out[0]) == cap, "a title past the cap does not widen the panel")
+    check("(modal: no room below)" in out[0],
+          "...and the note at its END survives: %r" % out[0][-40:])
+    check("settings ·" in out[0] and "…" in out[0],
+          "...as does the head, with the ellipsis that says the middle went")
+    from rich.text import Text as _T                  # noqa: E402
+    tail = _T.from_markup("[bold]" + long_title).plain[-30:]
+    check(tail in out[0], "...and the whole tail of it, not just the last word")
+
+    # The description wraps INSIDE the cap, and the height still holds.
+    out = drawn(menu_panel(WIDE, 0, "menu", 9, width=cap, shrink=True, desc_rows=2), 160)
+    check(max(len(l) for l in out) <= cap and len(out) == 9,
+          "a description wraps inside the cap and does not widen the panel")
 
     # ------------------------------------------------ tables on a short screen
     from rich.panel import Panel
