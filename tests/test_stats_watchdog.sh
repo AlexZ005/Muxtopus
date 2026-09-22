@@ -80,6 +80,15 @@ exec $(command -v python3) "\$@"
 EOF
 chmod +x "$SB/bin/tmux" "$SB/bin/python3"
 export PATH="$SB/bin:$PATH"
+# ...and named, because PATH alone no longer reaches it. The watchdog runs the
+# python half through $MUX_PYTHON, which profile.sh resolves once from an
+# ordered list of CANDIDATES -- a pinned one, the embedded one, the venv, then
+# `python3` -- and each candidate is an absolute path or a probe of PATH taken
+# before this stub was prepended. MUXTOPUS_PYTHON is the first of those
+# candidates and the documented way to pin one, so it is how the stub gets
+# chosen. Setting MUX_PYTHON directly would not survive: mux_resolve_python
+# overwrites it unless _MUX_PY_TAKEN is already set.
+export MUXTOPUS_PYTHON="$SB/bin/python3"
 
 # A synthetic transcript, so a real collect has something to count. Copied from
 # the fixtures the stats tests already use: invented projects, ids and counts
@@ -172,7 +181,7 @@ echo "== the bound on a collector that HANGS is still in the source"
 # `timeout` takes the same branch the simulated crash just proved. What a test
 # can do cheaply is refuse to let the bound be deleted.
 check "collect runs under timeout \$STATS_TIMEOUT" \
-  grep -q 'timeout "\$STATS_TIMEOUT" python3 "\$SCRIPT_DIR/muxstats.py"' "$W"
+  grep -q 'timeout "\$STATS_TIMEOUT" "\$MUX_PYTHON" "\$SCRIPT_DIR/muxstats.py"' "$W"
 
 echo "== the daemon collects too, and survives a failing collector"
 : > "$PYLOG"
