@@ -16,8 +16,8 @@
 # ONE NAME ON PATH: muxtopus. Not `mux`, which is already several other tools,
 # and never `cc`, which on any machine with a C toolchain is the C compiler --
 # a `cc` link there breaks every native build. Shorthands belong in your shell
-# rc, where they reach an interactive prompt and nothing else; the installer
-# prints them. A link named muxtopus-<account> opens that account.
+# rc, where they reach an interactive prompt and nothing else; docs/install.md
+# shows them. A link named muxtopus-<account> opens that account.
 #
 # NOTHING IS WRITTEN OUTSIDE YOUR HOME DIRECTORY, and every path is printed
 # before it is touched. This script is never piped from the network: it
@@ -93,6 +93,15 @@ echo "  config     $CFG"
 # (the version being too old) under a duplicate of the one that does not.
 step "1/7  Checking what is here"
 missing=0
+# WHAT STOPS MUXTOPUS FROM RUNNING, kept for the last thing printed. This
+# step is the first of seven; its warnings are forty lines up by the time the
+# closing "Done" is on screen, and "Done. Start with: muxtopus" was read as
+# exactly that on a box whose tmux was too old and whose `claude` was not on
+# PATH (measured: Ubuntu 20.04, where `muxtopus` then opened a window that
+# said "claude: command not found" and sat at a bare prompt). Each one is a
+# line the user can act on, and the closing block repeats them.
+BLOCKERS=()
+blocker() { BLOCKERS+=("$*"); }
 
 # THE PACKAGE IS NOT ALWAYS THE COMMAND. `sudo pacman -S python3` fails on
 # Arch (the package is `python`), and `claude` is not in any distro at all --
@@ -135,12 +144,38 @@ tool_version() {
   esac
 }
 
+# WHERE `claude` IS WHEN IT IS NOT ON PATH. Its own installer puts it in
+# ~/.local/bin and, like this one, cannot change the shell it was run from --
+# so on the machine that prompted this, `claude` was installed, in the very
+# directory step 4 puts on PATH, and this reported it missing and sent the
+# user to the docs to install it again. A binary that is there is named, with
+# the one thing that is actually wrong.
+claude_off_path() {   # prints the path of a claude that PATH cannot see
+  local d
+  for d in "$BIN" "$HOME/.local/bin"; do
+    if [ -x "$d/claude" ]; then echo "$d/claude"; return 0; fi
+  done
+  return 1
+}
+
 for c in bash tmux git jq python3 claude; do
   v="$(tool_version "$c")"
   if ! command -v "$c" >/dev/null 2>&1; then
     case "$c" in
-      bash|tmux|git) warn "$c MISSING (required) -- $(pkg_line "$c")"; missing=1 ;;
+      bash|tmux|git) warn "$c MISSING (required) -- $(pkg_line "$c")"; missing=1
+                     blocker "$c is not installed: $(pkg_line "$c")" ;;
       python3)       warn "python3 missing -- $(pkg_line python3), or let step 5 fetch one" ;;
+      claude)
+        # A NOTE, NOT A BLOCKER, either way: step 4 puts $BIN on PATH, and
+        # `muxtopus` puts ~/.local/bin in front of its own PATH before it
+        # runs anything, so a claude in either place is found from the
+        # first `muxtopus` on.
+        if cp="$(claude_off_path)"; then
+          skip "claude is at $cp, not on PATH in this shell -- muxtopus will find it there"
+        else
+          warn "claude missing -- $(pkg_line claude)"; missing=1
+          blocker "claude is not installed: $(pkg_line claude)"
+        fi ;;
       # jq IS OPTIONAL NOW, and this line is the whole reason it can
       # be: muxjson.py stands in for it (profile.sh, mux_json). It used to be
       # listed with the required tools, warned about once and then never
@@ -162,9 +197,17 @@ for c in bash tmux git jq python3 claude; do
       if awk -v n="$tv" 'BEGIN{exit !(n+0 >= 3.2)}'; then
         ok "tmux $v"
       else
+        # "sudo apt install tmux" IS THE WRONG ADVICE on the machine most
+        # likely to be reading it: Ubuntu 20.04's repository has 3.0a, so
+        # the command it printed reinstalled the version it had just
+        # complained about. Say what the package manager can do and what
+        # it cannot, rather than a line that looks like a fix and is not.
         warn "tmux $v is older than 3.2 -- per-window env (-e) will not work,"
-        warn "  so a window cannot be given its own account. Update it: $(pkg_line tmux)"
+        warn "  so a window cannot be given its own account. Try: $(pkg_line tmux)"
+        warn "  If that leaves it at $v, your distro's repository is too old (3.2 is in"
+        warn "  Ubuntu 22.04 and Debian 12); a newer tmux has to come from elsewhere."
         missing=1
+        blocker "tmux $v is older than 3.2: $(pkg_line tmux), or a newer one from outside your distro"
       fi
       ;;
     python3)
@@ -183,7 +226,7 @@ for c in bash tmux git jq python3 claude; do
     *)      ok "$c${v:+ $v}" ;;
   esac
 done
-[ "$missing" = 1 ] && warn "install the missing tools, then run this again to get a clean report"
+[ "$missing" = 1 ] && warn "install the missing tools, then run $SRC/install.sh again for a clean report"
 
 # A config that pins another checkout wins over this one: `muxtopus` reads
 # MUXTOPUS_DIR from it and runs THAT code, whatever the link points at. Say so,
@@ -278,32 +321,44 @@ done
 # and gets the line to type. The current shell cannot be changed from here --
 # least of all through `curl | bash` -- so the line is printed for it too.
 # This is the one write outside ~/.config and ~/.local; --no-rc skips it.
+# THE LINE ITSELF IS COMPUTED ONCE, HERE, because two places print it: the
+# rc files below, and the closing block, which repeats it for the shell the
+# installer was run from. `$HOME` rather than the literal path, so the same
+# line is right in a dotfile that travels between machines.
+PATH_SHORT="$BIN" PATH_TILDE="$BIN"
+case "$BIN" in
+  "$HOME"/*) PATH_SHORT="\$HOME${BIN#"$HOME"}"; PATH_TILDE="~${BIN#"$HOME"}" ;;
+esac
+PATH_LINE="export PATH=\"$PATH_SHORT:\$PATH\""
+case "$(basename -- "${SHELL:-sh}")" in
+  fish) PATH_LINE="fish_add_path $BIN" ;;
+esac
+# Whether THIS shell can see $BIN, decided once, before anything below
+# could change the answer.
+ON_PATH_NOW=0
+case ":$PATH:" in *":$BIN:"*) ON_PATH_NOW=1 ;; esac
+
 path_into_rc() {
-  local short="$BIN" tilde="$BIN" line f
-  case "$BIN" in
-    "$HOME"/*) short="\$HOME${BIN#"$HOME"}"; tilde="~${BIN#"$HOME"}" ;;
-  esac
-  line="export PATH=\"$short:\$PATH\""
+  local f
   local files=()
   case "$(basename -- "${SHELL:-sh}")" in
-    fish) warn "$BIN is NOT on PATH; for fish:  fish_add_path $BIN"; return 0 ;;
+    fish) warn "$BIN is NOT on PATH; for fish:  $PATH_LINE"; return 0 ;;
     zsh)  files=("$HOME/.zshrc") ;;
     *)    files=("$HOME/.profile" "$HOME/.bashrc") ;;
   esac
   for f in "${files[@]}"; do
-    if [ -f "$f" ] && grep -Fq -e "$BIN" -e "$short" -e "$tilde" "$f"; then
+    if [ -f "$f" ] && grep -Fq -e "$BIN" -e "$PATH_SHORT" -e "$PATH_TILDE" "$f"; then
       skip "$f already mentions $BIN"
     elif [ "$DRY" = 1 ]; then
-      printf '    \033[90m$ echo %s >> %s\033[0m\n' "'$line'" "$f"
+      printf '    \033[90m$ echo %s >> %s\033[0m\n' "'$PATH_LINE'" "$f"
     else
-      printf '\n# muxtopus (install.sh): the muxtopus link lives here\n%s\n' "$line" >> "$f"
-      ok "$f: $line"
+      printf '\n# muxtopus (install.sh): the muxtopus link lives here\n%s\n' "$PATH_LINE" >> "$f"
+      ok "$f: $PATH_LINE"
     fi
   done
-  case ":$PATH:" in
-    *":$BIN:"*) : ;;
-    *) warn "PATH changes at your next login; for this shell:  $line" ;;
-  esac
+  # The line for THIS shell is printed at the very end, beside "Start
+  # with", not here: here it was the middle of step 4 of 7 and off the
+  # screen by the time the user reached the command it was needed for.
 }
 
 # WRITE THE RC LINE ON ITS OWN MERITS, not on what THIS shell's PATH happens
@@ -321,22 +376,13 @@ path_into_rc() {
 # was already set up and fixes the machine that only looked as though it was.
 if [ "$RC" = 1 ]; then
   path_into_rc
+elif [ "$ON_PATH_NOW" = 1 ]; then
+  ok "$BIN is on PATH"
 else
-  case ":$PATH:" in
-    *":$BIN:"*) ok "$BIN is on PATH" ;;
-    *) warn "$BIN is NOT on PATH -- add it:  export PATH=\"$BIN:\$PATH\"" ;;
-  esac
+  warn "$BIN is NOT on PATH -- add it:  $PATH_LINE"
 fi
-echo "    shorthands, if you want them, go in your shell rc (interactive only):"
-echo "      alias cc='muxtopus'"
-echo "      alias cw='muxtopus --profile=work'"
-
-# Seed the default account's folders and templates so the first `muxtopus` is not
-# also the first time these directories are discovered to be missing.
-if [ "$DRY" = 0 ] && command -v python3 >/dev/null 2>&1; then
-  MUXTOPUS_HOME="$HOME_DIR" python3 "$SRC/setup-schedules.py" >/dev/null 2>&1 \
-    && ok "schedules/, backups/, handovers/ seeded under $HOME_DIR"
-fi
+# The alias suggestions that used to be printed here (cc, cw) are in
+# docs/install.md: a first install has one account and one command to learn.
 
 # --------------------------------------------------------------- 5. python
 # THE PYTHON HALF HAS A FLOOR OF 3.10 and a machine is allowed not to meet it.
@@ -491,6 +537,26 @@ if [ "$PY" != "python3" ] && [ "$DRY" = 0 ] && [ -f "$CFG" ] \
   ok "$CFG: MUXTOPUS_PYTHON=$PY"
 fi
 
+# Seed the default account's folders and templates so the first `muxtopus` is
+# not also the first time these directories are discovered to be missing.
+#
+# AFTER THE PYTHON STEP, WITH ITS PYTHON, AND NEVER SILENTLY. This ran in step
+# 4 with the system python3 and sent everything to /dev/null: on a box whose
+# python3 was 3.8 (Ubuntu 20.04) the import failed, nothing was seeded, and
+# nothing said so -- the "seeded" line was simply absent from a transcript
+# that ended in "Done". Step 5 exists to fetch a python that can run this.
+if [ "$DRY" = 1 ]; then
+  printf '    \033[90m$ %s %s/setup-schedules.py\033[0m\n' "$PY" "$SRC"
+elif ! "$PY" -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+  warn "no python3 >= 3.10, so schedules/, backups/, handovers/ are not seeded;"
+  warn "  muxtopus makes them on first run"
+elif MUXTOPUS_HOME="$HOME_DIR" "$PY" "$SRC/setup-schedules.py" >/dev/null 2>&1; then
+  ok "schedules/, backups/, handovers/ seeded under $HOME_DIR"
+else
+  warn "could not seed schedules/, backups/, handovers/ under $HOME_DIR; by hand:"
+  warn "  MUXTOPUS_HOME=\"$HOME_DIR\" $PY $SRC/setup-schedules.py"
+fi
+
 # ------------------------------------------------------- 6. dashboard runtime
 # The dashboard is Rich when $SRC/.venv/bin/python can import rich, and a plain
 # bash renderer otherwise (deck-status.sh). A venv beside the code, not a
@@ -538,11 +604,40 @@ else
   skip "no systemd --user here; muxtopus will start the daemon in the background instead"
 fi
 
+# ------------------------------------------------------------------ the end
+# THE LAST SCREENFUL IS THE ONE THAT IS READ, so it carries the two things a
+# user has to act on: what step 1 found that stops muxtopus running, and the
+# PATH line for the shell they are sitting in. Both used to be printed where
+# they were discovered, forty lines up, and "Done. Start with: muxtopus" was
+# taken at its word on a machine where it was not true. The shape follows
+# what rustup, uv and Claude Code's own installer print: restart the shell,
+# or paste this one line now.
+#
+# ONE COMMAND TO START WITH. A first install has one account; the second
+# account, named sessions and `-l` are one `muxtopus -h` away, and three
+# commands under "Start with" read as three things to do.
 echo
 if [ "$DRY" = 1 ]; then
   echo "dry run only -- nothing was written."
-else
-  echo "Done.  Start with:   muxtopus                  (personal account)"
-  echo "                     muxtopus --profile=work   (work account, ~/.claude-work)"
-  echo "                     muxtopus -l               (what is running)"
+  exit 0
 fi
+if [ "${#BLOCKERS[@]}" -gt 0 ]; then
+  echo "Done, but muxtopus cannot run yet:"
+  for b in "${BLOCKERS[@]}"; do warn "$b"; done
+  echo "    then run $SRC/install.sh again for a clean report"
+  echo
+else
+  echo "Done."
+  echo
+fi
+if [ "$ON_PATH_NOW" = 0 ]; then
+  if [ "$RC" = 1 ]; then
+    echo "$PATH_TILDE is on PATH from your next shell. For this shell, paste:"
+  else
+    echo "$PATH_TILDE is NOT on PATH (--no-rc). For this shell, paste:"
+  fi
+  echo "    $PATH_LINE"
+  echo
+fi
+echo "Start with:   muxtopus"
+echo "More:         muxtopus -h   (a second account, named sessions, what is running)"

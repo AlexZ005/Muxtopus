@@ -5,6 +5,8 @@ nav_order: 2
 {% raw %}
 # Install
 
+You need `tmux` 3.2 or newer and the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code); the installer checks for both and says so at the end if either is missing. Everything else it brings or builds itself.
+
 ```bash
 curl -fsSL https://github.com/AlexZ005/Muxtopus/releases/latest/download/get.sh | bash
 ```
@@ -43,7 +45,9 @@ Either way, `install.sh` does the same things. It symlinks `muxtopus` into `~/.l
 ./install.sh --no-rc          # do not add the bin dir to PATH in your shell rc
 ```
 
-If `~/.local/bin` is not on your `PATH`, the installer appends one line to `~/.profile` and `~/.bashrc`, or `~/.zshrc` under zsh, so the next shell finds `muxtopus`. A file that already mentions the directory is left alone, and a second install adds nothing. Under fish it prints the `fish_add_path` line instead. The shell you ran it from keeps its old `PATH`, so the installer prints the `export` line to paste there once.
+If `~/.local/bin` is not on your `PATH`, the installer appends one line to `~/.profile` and `~/.bashrc`, or `~/.zshrc` under zsh, so the next shell finds `muxtopus`. A file that already mentions the directory is left alone, and a second install adds nothing. Under fish it prints the `fish_add_path` line instead. The shell you ran it from keeps its old `PATH`, so the last thing the installer prints is the `export` line to paste there once, right above `Start with: muxtopus`.
+
+The end of the report is the part to read. If the check at the top found something that stops muxtopus from running, such as a `tmux` older than 3.2 or no `claude`, it is repeated there under `Done, but muxtopus cannot run yet`, with what to do and the path of `install.sh` to run again for a clean report. A `claude` that is installed but not on your shell's `PATH` (its own installer puts it in `~/.local/bin`, which is where this one puts `muxtopus`) is named rather than reported missing: `muxtopus` looks there itself.
 
 **Requirements:** `bash`, `tmux` ≥ 3.2 (for `new-window -e`), `git`, `jq`, `python3` ≥ 3.10 with its `venv` module (on Debian and Ubuntu that is the `python3-venv` package), `curl` or `wget`, and the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code). The installer builds the dashboard's [`rich`](https://github.com/Textualize/rich) venv itself. If it cannot, the dashboard falls back to a plain bash renderer instead of failing. `systemd --user` runs the watchdog where it is available; without it, the daemon is started as a plain background process.
 

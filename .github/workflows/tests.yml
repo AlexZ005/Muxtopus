@@ -82,5 +82,7 @@ jobs:
         run: bash tests/test_release.sh
       - name: install.sh -- one line per tool, and the fetched python
         run: bash tests/test_install_python.sh
+      - name: install.sh -- the closing block says what stops muxtopus running, and the PATH line
+        run: bash tests/test_install_done.sh
       - name: the dashboard package imports without a terminal
         run: python3 -c "import deck_status"
