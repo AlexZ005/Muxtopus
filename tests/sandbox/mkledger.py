@@ -31,7 +31,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 import muxstats  # noqa: E402
 
 PROJECTS = ["~/work/repo-a", "~/work/repo-b", "~/code/muxtopus"]
-MODELS = ["claude-opus-5", "claude-fable-5-1", "claude-haiku-4-5"]
+# claude-opus-5-5 FIRST: index 0 is today's first session on every run, so
+# whatever period the view is on and whatever day of the week the suite runs,
+# the newest Opus has a row -- which is what insights.sh's "priced, not
+# `no price`" check for it needs. Further down the list it only appeared
+# on some weekdays.
+MODELS = ["claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-haiku-4-5"]
 LANES = ["", "root-lane", "kid-lane", "insights-dash"]
 TOOLS = ["Bash", "Read", "Edit", "Grep", "Write", "Agent"]
 

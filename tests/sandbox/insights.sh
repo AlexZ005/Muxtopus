@@ -93,7 +93,14 @@ $K Right; shot period-rewound "this week"
 
 # ---------------------------------------------------------- the grouping
 $K g;     shot group-model    "by model"
-shot group-model-rows         "claude-opus-5"
+shot group-model-rows         "claude-opus-5 "
+# OPUS 5.5 IS PRICED. seeds/prices.md names claude-opus-5-5, so its row ends
+# in a $ figure. A model the table does not name ends in `—` instead, and
+# the COST row says "no price: claude-opus-5-5" -- measured with the block
+# removed, which is what every Opus 5.5 session showed before it existed.
+if grep -qE 'claude-opus-5-5 .* [0-9]+\.[0-9]{2} +│' "${CAPS:?}/group-model-rows.txt"; then ok
+else bad "group-model-rows: the claude-opus-5-5 row has no \$ figure"
+     grep -F 'claude-opus-5-5' "${CAPS:?}/group-model-rows.txt" >&2; fi
 $K g;     shot group-lane     "by lane"
 $K G;     shot group-back     "by model"
 
