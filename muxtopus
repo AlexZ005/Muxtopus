@@ -192,6 +192,19 @@ mux_use_profile "$PROFILE"
 mux_export_config_dir
 mux_tmux_env
 
+# NO `claude`, NO SESSION. Without this, a machine with no claude got a tmux
+# session with a dashboard in one window and, in the other, "bash: claude:
+# command not found" above a bare prompt -- and the watchdog up behind it,
+# ready to restart that window into the same message. One line here says
+# which thing is wrong. A claude that is only OFF PATH is not this case:
+# Claude Code's own installer puts it in ~/.local/bin, and the export at the
+# top of this file puts that directory in front of everything this script
+# and its windows run, whatever the calling shell's PATH said.
+if ! command -v claude >/dev/null 2>&1; then
+  echo "muxtopus: claude is not installed -- https://docs.claude.com/en/docs/claude-code" >&2
+  exit 1
+fi
+
 # A NEW ACCOUNT IS A QUESTION, NOT A SIDE EFFECT. Creating one makes a config
 # dir, three data folders and a systemd unit -- and a typo in --profile used
 # to do all of that silently. So an account that does not exist yet is
