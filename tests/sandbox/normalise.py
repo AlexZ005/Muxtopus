@@ -29,6 +29,7 @@ rather than one regex at a time wherever a diff turned up:
        a "N minutes ago" age       (12m ago)     -> (<age> ago)
        a written timestamp         2026-09-17 23:41 -> <stamp>
        the sandbox root            /tmp/muxsplit-sandbox -> <SB>
+       another account's servers   · 2 hidden  (f: all) -> (gone)
      An IDLE column age is NOT masked: it comes from the fixture's own
      integer, so it is fixed, and masking it would hide a real change.
   4. THE FILL BEFORE A BORDER, on a line a mask touched, and only there. A
@@ -55,6 +56,17 @@ import sys
 MACHINE_PANELS = ("deck", "lanes", "system")
 
 SB = os.environ.get("SB", "")
+
+# THE LANES TITLE'S "hidden" CLAUSE, which is there or not there depending on
+# whether the host happens to be running a dev server that belongs to another
+# account. Masking its NUMBER is not enough: with no such server the clause is
+# absent entirely, so a golden blessed on a machine that had one fails on the
+# same machine once it exits -- which is what happened here the day five stale
+# dev servers were finally killed, on every one of the 73 frames that draw the
+# lanes panel. The clause is the host's answer in the same sense the row count
+# is (mask 1), so it is masked WHOLE and its absence reads as its presence.
+# `(f: all)` is itself conditional, hence optional here.
+HIDDEN = re.compile(r" · \d+ hidden(?:  \(f: all\))?")
 
 NUM = re.compile(r"\d+(?:\.\d+)?")
 # The unit that follows a number this file just masked, in a machine panel's
@@ -91,6 +103,7 @@ def repad(line: str) -> str:
 
 def mask_machine(line: str) -> str:
     """A machine panel's border line: its numbers, and the unit after one."""
+    line = HIDDEN.sub("", line)
     return UNIT.sub(r"\1 <unit>", NUM.sub("<n>", line))
 
 
