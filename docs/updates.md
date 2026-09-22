@@ -30,7 +30,9 @@ There is one installed tree. However many accounts run out of it, the check, its
 ```
 ${XDG_STATE_HOME:-~/.local/state}/muxtopus-update/
     state              what the last check found (KEY=value)
-    notes-X.Y.Z.md     release notes, fetched once
+    notes-X.Y.Z.md     release notes, fetched once and then kept
+                       (a fetch that FAILS is not kept, so the next
+                        try is a real one)
     update.log         every check, stage, install and rollback
     install-X.Y.Z.log  what the installer said
 ```
@@ -38,6 +40,8 @@ ${XDG_STATE_HOME:-~/.local/state}/muxtopus-update/
 Every account's watchdog calls the check on every pass; all but the first return having read that file and asked nobody. The three settings are written to the shared `dashboard.conf` for the same reason, whichever account's dashboard you set them from — "check daily" cannot sensibly mean two different things on one machine. (A profile file can still narrow them by hand, as it can any key; the menu shows what that account actually reads.)
 
 ## Taking one
+
+While a release is waiting, the deck header says so beside the version — `v<running> (v<new> available)`, in yellow, and `(v<new> downloaded)` once `download` mode has fetched it — and the key line at the foot of the main view carries the same in short. Both are absent on every other day.
 
 The dashboard offers it under `esc` while there is one waiting, and in `Settings ▸ Updates` always:
 

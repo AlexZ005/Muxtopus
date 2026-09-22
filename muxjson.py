@@ -47,11 +47,19 @@ everywhere else.
     -n  no input: run the filter once against null (jq -n)
     -s  slurp: read every input value into one array before filtering
 
-INPUT IS ONE JSON VALUE PER LINE, which is what every muxtopus call site
-feeds it (a .jsonl transcript, a sessions/<pid>.json, a curl body). A blank
-line is skipped; a line that is not JSON is skipped too, because a poll that
-lands mid-write catches half a record and that one record is not worth
-failing the whole scan for (claude-watchdog.sh, token_totals).
+INPUT IS ONE JSON VALUE PER LINE, which is what almost every muxtopus call
+site feeds it (a .jsonl transcript, a sessions/<pid>.json). A blank line is
+skipped; a line that is not JSON is skipped too, because a poll that lands
+mid-write catches half a record and that one record is not worth failing the
+whole scan for (claude-watchdog.sh, token_totals).
+
+A CURL BODY IS THE EXCEPTION, and it cost a release to find: api.github.com
+pretty-prints, so its `{` sits on a line of its own and NOT ONE LINE of the
+reply parses. Read per line, a release with notes came out as no notes at
+all. So when the first non-blank line is not a whole value, the input is
+read as a stream of values separated by whitespace -- which is what jq does
+for every input, and is the only reading under which both shapes work. The
+line rule stays for everything after that first line: see read_values.
 """
 from __future__ import annotations
 
@@ -263,7 +271,7 @@ class Parser:
             raise Unsupported("%s() is not implemented" % t)
         raise Unsupported("cannot parse the filter near %r" % (t,))
 
-    # .a.b, .[] and a bare . -- the identity
+    # .a.b, .[], .[0] and a bare . -- the identity
     def parse_path(self):
         steps = []
         while self.at("op", "."):
@@ -272,8 +280,15 @@ class Parser:
                 steps.append(("field", self.take()))
             elif self.at("op", "["):
                 self.take()
+                if self.at("num"):
+                    # .[0] -- ONE ELEMENT, not a slice. `.[0:10]` gets as far
+                    # as the ':' and then take("op", "]") refuses it, which is
+                    # the behaviour tests/test_muxjson.py pins: a filter this
+                    # cannot do is named, never guessed at.
+                    steps.append(("index", self.take()))
+                else:
+                    steps.append(("iter", None))
                 self.take("op", "]")
-                steps.append(("iter", None))
             else:
                 break                      # a lone '.', the identity
         return _path(steps)
@@ -334,6 +349,26 @@ def _path(steps):
                         nxt.extend(item)
                     elif isinstance(item, dict):
                         nxt.extend(item.values())
+                    continue
+                if kind == "index":
+                    # jq's three answers, measured against jq 1.8: an index
+                    # off either end of an ARRAY is null, an index of null is
+                    # null, and an index of anything else is an ERROR. The
+                    # first two are what let `.[0].tag_name // empty` fall
+                    # through to empty on an empty releases list; the third is
+                    # refused here rather than guessed at, which is this
+                    # file's whole charter. (The tokeniser has no minus, so a
+                    # negative index never reaches this; the bound below is
+                    # written to be right either way.)
+                    if item is None or item is MISSING:
+                        nxt.append(None)
+                        continue
+                    if not isinstance(item, list):
+                        raise Unsupported(
+                            "cannot index %s with a number"
+                            % type(item).__name__)
+                    i = int(name)
+                    nxt.append(item[i] if -len(item) <= i < len(item) else None)
                     continue
                 if isinstance(item, dict):
                     nxt.append(item.get(name, MISSING))
@@ -529,9 +564,49 @@ def emit(value, raw: bool, out) -> None:
     out.write(json.dumps(value, separators=(",", ":"), ensure_ascii=False) + "\n")
 
 
+def _document_values(head: str, stream):
+    """A stream whose FIRST value spans several lines, as jq reads it.
+
+    api.github.com pretty-prints: `{` on a line of its own and one field per
+    line after it. Read a line at a time, every one of them fails to parse,
+    and the whole body comes out as nothing -- which is how `--notes` on a
+    box without jq printed "could not be fetched" for a release that had
+    perfectly good notes. jq has no line rule at all; it reads a stream of
+    values separated by whitespace, and this is that, for the one case the
+    line rule cannot serve.
+
+    IT KEEPS THE RECOVERY the line rule has: raw_decode refusing at some
+    offset means the bytes from there are not a value, so this skips to the
+    next line and tries again rather than giving up on the rest of the file.
+    """
+    text = head + stream.read()
+    dec = json.JSONDecoder()
+    i, n = 0, len(text)
+    while i < n:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            return
+        try:
+            value, i = dec.raw_decode(text, i)
+        except ValueError:
+            nl = text.find("\n", i)
+            if nl < 0:
+                return
+            i = nl + 1
+            continue
+        yield value
+
+
 def read_values(paths: list, raw_input: bool):
-    """Every input value, in order. One JSON value per line -- see the module
-    docstring for why a line that will not parse is skipped rather than fatal."""
+    """Every input value, in order.
+
+    ONE JSON VALUE PER LINE is the fast path and the usual one -- a .jsonl
+    transcript, a sessions/<pid>.json -- and a line that will not parse is
+    skipped rather than fatal (see the module docstring: a poll can land
+    mid-write). When the first non-blank line is not a whole value the input
+    is not that shape at all, and the rest is read as a stream of values the
+    way jq reads it; _document_values says why that case exists."""
     if paths:
         streams = []
         for p in paths:
@@ -543,17 +618,31 @@ def read_values(paths: list, raw_input: bool):
     else:
         streams = [sys.stdin]
     for s in streams:
+        first = True
         for line in s:
-            line = line.strip()
-            if not line:
+            stripped = line.strip()
+            if not stripped:
                 continue
             if raw_input:
-                yield line
+                first = False
+                yield stripped
                 continue
             try:
-                yield json.loads(line)
+                value = json.loads(stripped)
             except ValueError:
+                # THE DECISION IS MADE ONCE, on the first non-blank line, and
+                # never again: a torn line in the MIDDLE of a transcript must
+                # go on being skipped, not turn the rest of a 40 MB file into
+                # one string in memory.
+                if first:
+                    first = False
+                    for value in _document_values(line, s):
+                        yield value
+                    break
+                first = False
                 continue
+            first = False
+            yield value
         if s is not sys.stdin:
             s.close()
 

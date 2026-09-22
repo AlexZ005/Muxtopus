@@ -589,6 +589,13 @@ class MainView(View):
                      urows[2])
 
         subtitle = f"{os.uname().nodename} · {len(os.sched_getaffinity(0))} threads · {mode} mode · v{self.app.version}"
+        # WHAT THE LOADED MODULES WANT SAID BESIDE THE VERSION -- today that
+        # is one thing, "(vX.Y.Z available)" from the update menu, and it is
+        # here rather than only in the footer because the version is the
+        # thing the reader is looking at when the question occurs to them.
+        # Registered, not imported: App.add_version_note says why.
+        for note in self.app.version_notes():
+            subtitle += " " + note
         # An update landed under this process. Not a notice, which scrolls
         # away: a standing mark on the header, until R re-execs onto it.
         got = self.app.stale()

@@ -339,4 +339,16 @@ def register(app) -> None:
           "sub": "update", "order": 15}] if m.available() else []))
     app.add_hint(lambda a, m=menu: Text("  · %s out" % m.available(), style=YELLOW)
                  if m.available() else None)
+    # AND BESIDE THE VERSION IN THE HEADER. The footer hint above says the
+    # same thing, but it sits at the far end of the screen from the number it
+    # is about: "v<this one>" and "<that one> is out" were two facts in two
+    # places, and the question ("am I behind?") is one that occurs while
+    # reading the version. Yellow, in brackets, and gone on the ordinary day
+    # -- this is the one registry note that must not become permanent
+    # furniture. `staged` says the bytes are already down, which is the
+    # difference between "press enter twice" and "wait for a download".
+    app.add_version_note(lambda a, m=menu: (
+        "[%s](v%s %s)[/]" % (YELLOW, escape(m.available()),
+                             "downloaded" if m.state().get("STATE") == "staged"
+                             else "available")) if m.available() else None)
     app.add_help("UPDATES", HELP_UPDATE, order=37)
