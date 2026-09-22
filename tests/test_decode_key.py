@@ -31,6 +31,28 @@ dashboard started outside tmux sees:
 
 `~` is shared by Home, End, PageUp, PageDown, Insert, Delete and twelve F
 keys, which is why the PARAMETER and not the final byte has to be read.
+
+THE SHIFTED ARROWS, measured the same way and for the same reason -- the
+dashboard now names two of them, so which bytes they are is the difference
+between a key that scrolls a table and a key that moves the cursor. Sent
+with `tmux -L <sandbox socket> send-keys` to a pane in RAW MODE (a tty in
+canonical mode hands over nothing until a newline, and the first attempt at
+this measurement captured an empty file for exactly that reason), tmux 3.5a
+at TERM=tmux-256color with this repo's tmux.conf:
+
+    key         tmux-256color   what decode_key calls it
+    S-Left      ESC [ 1 ; 2 D   S-LEFT     the new name
+    S-Right     ESC [ 1 ; 2 C   S-RIGHT    the new name
+    S-Up        ESC [ 1 ; 2 A   UP         folded, on purpose
+    ctrl-Left   ESC [ 1 ; 5 D   LEFT       folded, unchanged
+    Left        ESC [ D         LEFT
+    Right       ESC [ C         RIGHT
+
+`1;2` is shift and nothing else: `1;5` is ctrl, `1;3` is alt, `1;6` is
+ctrl-shift, and every one of those still folds to the plain arrow. And
+`tmux list-keys -T root` on that server binds nothing but the mouse status
+menus -- no S-Left/S-Right binding stands between the terminal and the
+dashboard, and tmux.conf adds none.
 """
 import os
 import pathlib
@@ -86,11 +108,38 @@ decodes(b"\x1b[5;5~", "PGUP", "ctrl-PageUp")
 decodes(b"\x1b[6;2~", "PGDN", "shift-PageDown")
 
 print("== the arrows, which must not have moved")
+# b"\x1b[1;2D" WAS PINNED HERE AS "LEFT" and is not any more: it is the one
+# pin in this file that changed on purpose. shift-← and shift-→ now scroll a
+# table sideways, so they need names of their own (the plain arrows were
+# both spoken for -- they fold the session tree and cycle the tabs). It moved
+# to the block below rather than being deleted, so the table of what this
+# file promises still has a row for those bytes.
 for seq, want in ((b"\x1b[A", "UP"), (b"\x1b[B", "DOWN"),
                   (b"\x1b[C", "RIGHT"), (b"\x1b[D", "LEFT"),
                   (b"\x1bOA", "UP"), (b"\x1bOB", "DOWN"),
-                  (b"\x1b[1;5A", "UP"), (b"\x1b[1;2D", "LEFT")):
+                  (b"\x1b[1;5A", "UP")):
     decodes(seq, want)
+
+print("== shift-← and shift-→, the two sequences that DO get their own name")
+decodes(b"\x1b[1;2D", "S-LEFT", "S-Left (measured)")
+decodes(b"\x1b[1;2C", "S-RIGHT", "S-Right (measured)")
+
+print("== ...and every other modified arrow still folds to the plain key")
+# This block is the fence around the change: one parameter string, two final
+# bytes, and nothing else. A `1;2` test that only checked D and C would pass
+# just as happily if the code had matched a PREFIX and turned ctrl-shift-left
+# into a sideways scroll as well.
+for seq, want, why in ((b"\x1b[1;5D", "LEFT", "ctrl-Left (measured)"),
+                       (b"\x1b[1;3C", "RIGHT", "alt-Right"),
+                       (b"\x1b[1;6D", "LEFT", "ctrl-shift-Left: not shift alone"),
+                       (b"\x1b[1;10C", "RIGHT", "alt-shift-Right: nor is this"),
+                       (b"\x1b[1;2A", "UP", "shift-Up has no job: it moves the cursor"),
+                       (b"\x1b[1;2B", "DOWN", "...and so does shift-Down"),
+                       (b"\x1b[1;2H", "HOME", "shift-Home is still Home"),
+                       (b"\x1b[1;2F", "END", "...and shift-End still End"),
+                       (b"\x1b[2D", "LEFT", "a lone parameter is not `1;2`"),
+                       (b"\x1bOD", "LEFT", "the SS3 form has no parameters at all")):
+    decodes(seq, want, why)
 
 print("== AN UNKNOWN ESCAPE SEQUENCE IS IGNORED, NOT ESCAPE")
 # This is the same bug as the reported one. Every line here used to come back
@@ -202,6 +251,13 @@ check(through_pipe([b"\x1b", b"[A"], gap=d.ESC_TIME / 2) == "UP",
 # has the full 250ms, well past ESC_TIME.
 check(through_pipe([b"\x1b[", b"A"], gap=d.ESC_TIME * 1.5) == "UP",
       "a sequence already begun keeps the generous budget for its tail")
+# The new names go through the same loop as every other arrow: they are a
+# longer sequence, so they are the ones most likely to arrive in pieces.
+check(through_pipe([b"\x1b[1;", b"2D"]) == "S-LEFT",
+      "ESC [ 1 ; then 2 D is one shift-Left, not an Escape and four junk keys")
+check(through_pipe([b"\x1b", b"[", b"1", b";", b"2", b"C"]) == "S-RIGHT",
+      "six chunks still make one shift-Right")
+check(through_pipe([b"\x1b[1;2D"]) == "S-LEFT", "and one chunk is the easy case")
 check(through_pipe([b"\x1b["]) == d.IGNORED,
       "a lone ESC [ that never grows is IGNORED, not Escape")
 check(through_pipe([b"q"]) == "q", "an ordinary key does not wait at all")

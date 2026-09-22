@@ -246,6 +246,194 @@ def main():
                       % (width, lines, cur, h, want), quiet=True)
     section("make_table: the height is the chrome plus the lines given, at every width")
 
+    # ------------------------------------------ a table through a horizontal window
+    # THE FIXTURE IS THE REAL ONE: main.py's ct_cols in its under-100-columns
+    # form, copied rather than imported, because importing the view would pull
+    # in the whole dashboard to check some arithmetic -- and because a copy
+    # that drifts is caught by tests/test_names.py reading both.
+    from dashboard.menulayout import column_note, column_window
+    CT = [
+        ("", {"width": 3}, None),
+        ("MON", {"width": 4}, 3),
+        ("WINDOW", {"ratio": 1, "min_width": 12}, None),
+        ("MODEL", {"width": 11}, 7),
+        ("CONTEXT", {"width": 21}, 8),
+        ("SPENT", {"justify": "right", "width": 8}, 4),
+        ("IDLE", {"justify": "right", "width": 6}, 5),
+        ("STATE", {"width": 15}, None),
+        ("DIRTY", {"justify": "right", "width": 6}, 6),
+        ("WOUND", {"width": 12}, 2),
+        ("RESUMED", {"width": 12}, 1),
+    ]
+    NAMES = [c[0] for c in CT]
+    CT_ROWS = [["", "m", "win %d" % i, "sonnet", "ctx", "$1", "2m", "idle", "0",
+                "wound", "resumed"] for i in range(12)]
+
+    def natural(kw, want=20):
+        """column_window's own width arithmetic, written out a second time so
+        the test cannot inherit a bug from the code it is checking."""
+        if kw.get("ratio"):
+            return max(kw.get("min_width", 0), want) + 2
+        return kw.get("width", 0) + 2
+
+    def live(hidden):
+        return [i for i, n in enumerate(NAMES) if not (n and n in hidden)]
+
+    def unpinned(pinned, hidden):
+        return [i for i in live(hidden) if NAMES[i] and NAMES[i] not in pinned]
+
+    # -- wide: everything is drawn and the offset is 0 whatever was asked for
+    for width in (144, 160, 200, 400):
+        for ask in (-5, 0, 1, 4, 99):
+            keep, lf, rt, off = column_window(CT, width, set(), set(), ask)
+            tag = "w=%d ask=%d" % (width, ask)
+            check(keep == list(range(len(CT))), tag + ": every column drawn", quiet=True)
+            check((lf, rt, off) == (0, 0, 0), tag + ": nothing off either side, offset 0",
+                  quiet=True)
+    check(column_window(CT, 144, set(), set(), 0)[0] == list(range(11)),
+          "144 columns is what the claude table wants, and it gets all eleven")
+    section("wide: every column drawn and the offset clamps to 0, whatever was asked")
+
+    # -- narrow, at every width: a contiguous prefix at natural widths, and
+    # -- the three counts account for every unhidden column.
+    PINS = (set(), {"WINDOW"}, {"WINDOW", "RESUMED"}, {"MON", "STATE"})
+    for width in range(20, 201):
+        for pinned in PINS:
+            seq = unpinned(pinned, set())
+            pins = [i for i in live(set()) if i not in seq]
+            for ask in range(0, len(seq) + 2):
+                keep, lf, rt, off = column_window(CT, width, pinned, set(), ask)
+                tag = "w=%d pin=%s ask=%d" % (width, sorted(pinned), ask)
+                check(keep == sorted(set(keep)), tag + ": list order, no repeats", quiet=True)
+                check(all(i in keep for i in pins), tag + ": every pinned column drawn",
+                      quiet=True)
+                check(len(keep) + lf + rt == len(live(set())),
+                      tag + ": keep + left + right is every unhidden column", quiet=True)
+                check(lf == off, tag + ": left is the offset", quiet=True)
+                drawn = [i for i in keep if i in seq]
+                check(drawn == seq[off:off + len(drawn)],
+                      tag + ": a contiguous prefix, never skipping to a narrower one",
+                      quiet=True)
+                check(rt == len(seq) - off - len(drawn), tag + ": right counts the rest",
+                      quiet=True)
+                # Natural widths: nothing is squeezed to make it fit. The one
+                # exception is the pinned columns alone overflowing, which is
+                # the caller's instruction and is drawn anyway.
+                cost = sum(natural(CT[i][1]) for i in keep)
+                pincost = sum(natural(CT[i][1]) for i in pins)
+                check(cost <= width - 4 or pincost > width - 4,
+                      tag + ": %d of %d columns, nothing squeezed" % (cost, width - 4),
+                      quiet=True)
+                # One more unpinned column would NOT have fitted: the walk
+                # stopped because it ran out of room, not early.
+                nxt = off + len(drawn)
+                if nxt < len(seq) and pincost <= width - 4:
+                    check(cost + natural(CT[seq[nxt]][1]) > width - 4,
+                          tag + ": it stopped at the first one that did not fit", quiet=True)
+    section("narrow: a contiguous prefix at natural widths, every width 20..200")
+
+    # -- a pinned column past the cut is drawn; an unpinned one before it is not
+    keep, lf, rt, off = column_window(CT, 80, {"WINDOW", "RESUMED"}, set(), 0)
+    drawn = [NAMES[i] for i in keep]
+    check("RESUMED" in drawn, "a pinned LAST column is drawn at 80 columns")
+    check(any(NAMES[i] not in drawn for i in range(len(CT)) if NAMES[i] not in
+              ("", "WINDOW", "RESUMED")),
+          "...while an unpinned column ahead of it in the list is not")
+    check(drawn.index("RESUMED") == len(drawn) - 1,
+          "and it keeps its LIST ORDER: RESUMED is still drawn last")
+
+    # -- hidden: out of the table and counted nowhere
+    keep, lf, rt, off = column_window(CT, 80, set(), {"CONTEXT"}, 0)
+    check(4 not in keep, "a hidden column is not drawn")
+    check(len(keep) + lf + rt == 10, "...and is counted nowhere: ten columns, not eleven")
+    keep, lf, rt, off = column_window(CT, 200, {"CONTEXT"}, {"CONTEXT"}, 0)
+    check(4 not in keep and len(keep) + lf + rt == 10, "hidden beats pinned")
+    keep, lf, rt, off = column_window(CT, 40, set(), {""}, 0)
+    check(0 in keep, 'the "" cursor column cannot be hidden')
+    keep, _lf, _rt, _off = column_window(CT, 20, set(), set(), 0)
+    check(keep[0] == 0, 'the "" column is drawn even at 20 columns')
+    keep, lf, rt, off = column_window(CT, 80, {""}, set(), 3)
+    check(0 in keep and lf == 3, 'a "" in `pinned` is ignored, not obeyed')
+    all_but = {n for n in NAMES if n}
+    keep, lf, rt, off = column_window(CT, 80, set(), all_but, 4)
+    check(keep == [0] and (lf, rt, off) == (0, 0, 0),
+          'everything hidden but "": one column, and the offset goes back to 0')
+
+    # -- the offset walks one unpinned column at a time, and the end is clamped
+    seq = unpinned({"WINDOW"}, set())
+    walk = [column_window(CT, 80, {"WINDOW"}, set(), o)[3] for o in range(len(seq) + 4)]
+    check(walk[:7] == list(range(7)), "each step takes exactly one column off the left")
+    check(len(set(walk[7:])) == 1 and walk[-1] == 6,
+          "and then it clamps at 6 and stays there -- no wrap (%r)" % walk[-3:])
+    last = column_window(CT, 80, {"WINDOW"}, set(), 99)
+    check(NAMES[last[0][-1]] == "RESUMED" and last[2] == 0,
+          "the clamped offset is the first one that reaches the last column")
+    check(column_window(CT, 80, {"WINDOW"}, set(), -7)[3] == 0, "a negative offset is 0")
+    for width in range(20, 201):
+        seq = unpinned(set(), set())
+        keep, lf, rt, off = column_window(CT, width, set(), set(), 999)
+        check(rt == 0 or not keep or off == 0,
+              "w=%d: the clamped offset leaves nothing off the right" % width, quiet=True)
+    section("the clamp never lets a scroll run into blank space")
+
+    # -- pinned columns that cannot fit are drawn anyway, and nothing raises
+    fat = {"CONTEXT", "STATE", "WOUND", "RESUMED"}
+    keep, lf, rt, off = column_window(CT, 30, fat, set(), 2)
+    check(all(NAMES[i] in fat or NAMES[i] == "" for i in keep),
+          "pinned alone too wide: the pinned columns and nothing else")
+    check(len(keep) == 5, "...every one of them, none dropped (%d)" % len(keep))
+    check((lf, rt, off) == (0, 6, 0),
+          "...the six unpinned ones are all off the right, offset back to 0 (%r)"
+          % ((lf, rt, off),))
+
+    # -- the note
+    check(column_note(0, 0) == "", "nothing off screen: no note at all")
+    check(column_note(2, 0) == " · ◀ 2 more · shift-←→", "left only")
+    check(column_note(0, 3) == " · 3 more ▶ · shift-←→", "right only")
+    check(column_note(2, 3) == " · ◀ 2 more · 3 more ▶ · shift-←→", "both sides")
+    check("shift-←→" in column_note(0, 1),
+          "the note says WHICH KEY: a screen that only says something is missing")
+
+    # -- RENDERED: the promise made visible. A table drawn with the `keep` it
+    # -- was given is exactly as tall as it said, and no header is cut with "…"
+    # -- -- which is what "never squeezed" means on a screen rather than in a
+    # -- sum. A column that wraps is a frame one line too tall.
+    for width in range(20, 201):
+        for pinned in (set(), {"WINDOW"}, {"WINDOW", "RESUMED"}):
+            pins = [i for i in range(len(CT)) if NAMES[i] == "" or NAMES[i] in pinned]
+            pincost = sum(natural(CT[i][1]) for i in pins)
+            for ask in (0, 3, 99):
+                keep, lf, rt, off = column_window(CT, width, pinned, set(), ask)
+                con = Console(width=width)
+                tag = "w=%d pin=%s ask=%d" % (width, sorted(pinned), ask)
+                for lines in (TABLE_MIN, 5, 8):
+                    t = make_table(CT, keep, CT_ROWS, 4, 2, lines)
+                    h = rendered_height(con, Panel(t))
+                    check(h == 6 + lines, "%s lines=%d: %d lines, want %d"
+                          % (tag, lines, h, 6 + lines), quiet=True)
+                if pincost > width - 4:
+                    continue          # the caller's pinned columns overflow: Rich cuts them
+                # [1], not [0]: a SIMPLE_HEAD table opens with a blank line,
+                # then the header row, then its rule.
+                head = ["".join(s.text for s in l)
+                        for l in con.render_lines(make_table(CT, keep, CT_ROWS, 4, 2, 5),
+                                                  con.options)][1]
+                check("…" not in head, tag + ": no header cut with … (%r)" % head, quiet=True)
+                for i in keep:
+                    check(NAMES[i] in head or NAMES[i] == "",
+                          tag + ": %s is drawn whole" % NAMES[i], quiet=True)
+    section("rendered: the height it promised, and not one header squeezed")
+
+    # -- make_table survives a marker column that is not drawn
+    t = make_table(CT, [0, 2], CT_ROWS, 4, 9, 4)
+    check(rendered_height(Console(width=80), Panel(t)) == 10,
+          "a marker column that was scrolled away does not raise")
+    body = ["".join(s.text for s in l) for l in
+            Console(width=80).render_lines(make_table(CT, [0, 2], CT_ROWS, 4, 9, 4),
+                                           Console(width=80).options)]
+    check(any("more" in l for l in body), "...and the ▲/▼ count is still drawn somewhere")
+
+
     print()
     if fails:
         print("%d of %d checks FAILED" % (len(fails), count))

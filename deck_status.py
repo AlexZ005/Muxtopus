@@ -223,13 +223,34 @@ def decode_key(data: bytes) -> str:
             if 0x40 <= b <= 0x7E:
                 # The first final byte ends the sequence; everything before
                 # it is the parameters (ESC [ 1 ; 5 A is ctrl-up), and a
-                # modified arrow should still move the cursor.
+                # modified arrow should still move the cursor -- WITH ONE
+                # EXCEPTION, the two named just below.
                 if b == 0x7E:
                     head = body[:i].split(b";")[0]
                     try:
                         return _TILDE_KEYS.get(int(head), IGNORED)
                     except ValueError:
                         return IGNORED
+                # SHIFT-← AND SHIFT-→ GET THEIR OWN NAMES, and nothing else
+                # does. The dashboard needed a key to scroll a table
+                # sideways and the plain arrows were both spoken for -- ←→
+                # fold the session tree and cycle the tabs -- so the owner
+                # chose shift-←→ rather than take one of them. The VERTICAL
+                # shifted arrows keep folding to UP/DOWN: a shifted up-arrow
+                # has no job on this screen, so it goes on moving the cursor
+                # exactly as the comment above says, which is what a user
+                # who leans on shift while arrowing expects.
+                # `1;2` is the WHOLE parameter string, not a prefix: 1;6 is
+                # ctrl-shift and 1;10 is alt-shift, and both of those still
+                # mean "move the cursor".
+                # MEASURED on this machine, tmux 3.5a at TERM=tmux-256color
+                # with the repo's tmux.conf, by sending the key to a pane in
+                # raw mode: S-Left ESC[1;2D, S-Right ESC[1;2C, S-Up ESC[1;2A,
+                # C-Left ESC[1;5D. `list-keys -T root` on that server binds
+                # nothing but the mouse status menus, so no tmux binding eats
+                # the key before the dashboard reads it.
+                if b in (0x43, 0x44) and body[:i] == b"1;2":
+                    return "S-" + _FINAL_KEYS[b]
                 return _FINAL_KEYS.get(b, IGNORED)
         # A PREFIX THAT NEVER FINISHED -- the 250ms in read_key ran out
         # holding "ESC [". Half a sequence is not an Escape either.
