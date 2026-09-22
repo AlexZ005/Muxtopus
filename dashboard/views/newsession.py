@@ -199,26 +199,27 @@ class NewSession:
         where = ("under %s" % ns["window"]) if ns.get("window") else "a top-level window"
         prompt = ns.get("prompt") or ""
         items = [
-            {"label": "Create [%s]  and go to its window  · type to rename"
-                      % self._name_field(),
+            {"label": "Create [%s]" % self._name_field(),
+             "desc": "and go to its window · type to rename",
              "act": self._create, "edit": self._name_key},
             {"sep": True},
         ]
         items += self._quick_rows()
         items += [
-            {"label": "Folder: %s  where claude starts" % self._short(ns["cwd"]),
+            {"label": "Folder: %s" % self._short(ns["cwd"]),
+             "desc": "where claude starts",
              "act": self._edit_cwd, "stay": True},
-            {"label": "Model: %s  a CLI alias; the MODEL column's names are refused"
-                      % self._shows("model", ns["model"]),
+            {"label": "Model: %s" % self._shows("model", ns["model"]),
+             "desc": "a CLI alias; the MODEL column's names are refused",
              "act": self._edit_model, "stay": True},
             {"label": "Effort: %s" % self._shows("effort", ns["effort"]),
              "act": self._edit_effort, "stay": True},
-            {"label": "Permission mode: %s  cannot be changed after launch"
-                      % self._shows("mode", ns["mode"]),
+            {"label": "Permission mode: %s" % self._shows("mode", ns["mode"]),
+             "desc": "cannot be changed after launch",
              "act": self._edit_mode, "stay": True},
             {"label": "Where: %s" % where, "act": self._edit_where, "stay": True},
-            {"label": "First prompt: %s  empty makes it a plan entry"
-                      % (self._short_prompt(prompt)),
+            {"label": "First prompt: %s" % (self._short_prompt(prompt)),
+             "desc": "empty makes it a plan entry",
              "act": self._edit_prompt, "stay": True},
             {"sep": True},
             {"label": "Cancel", "act": self._cancel},
@@ -265,12 +266,24 @@ class NewSession:
         if not win:
             return []
         status = HANDOVERS_DIR / ("STATUS-%s.md" % lane)
+        # THESE TWO ROWS DIFFER ONLY IN THE PROMPT THEY SEND, so that
+        # difference belongs on the LABEL and not in the description: a
+        # description is drawn for one row at a time, and two rows both
+        # reading "Sub-window x under y", with the half that tells them
+        # apart visible only on whichever one the cursor is on, is a list
+        # you cannot choose from. An explicit `key` for the same reason --
+        # row_id would take the shared head off both and esc could not tell
+        # which of them it came from.
         rows = [
-            {"label": "Sub-window %s under %s  empty, no prompt"
-                      % (self.app.ns["slug"], win),
+            {"key": "sub_empty",
+             "label": "Sub-window %s under %s: empty" % (self.app.ns["slug"], win),
+             "desc": "no first prompt -- the window opens on a blank claude",
              "act": self._create_sub_empty},
-            {"label": "Sub-window %s under %s  continues from its handover"
+            {"key": "sub_handover",
+             "label": "Sub-window %s under %s: from its handover"
                       % (self.app.ns["slug"], win),
+             "desc": "continues from its handover -- STATUS-%s.md is read into "
+                     "its first prompt" % lane,
              "act": self._create_sub_handover},
         ]
         if not status.exists():

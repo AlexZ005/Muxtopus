@@ -95,7 +95,10 @@ print("== the menu: one row per tab, reached from Settings")
 a.menu = {"kind": "tabs", "i": 0}
 rows = [it for it in a.menu_entries() if "(tab of s)" in it.get("label", "")]
 check(len(rows) == 8 and all(r["on"] for r in rows), "eight rows, all SHOWN")
-check("locked" in row(a, "c6")["label"] and "scrolls" in row(a, "c7")["label"],
+# ON THE DESCRIPTION, not the label, since the label sweep: the row says
+# which tab it is and whether it is SHOWN (state), and why that matters on a
+# narrow strip is the sentence drawn under the cursor.
+check("locked" in row(a, "c6")["desc"] and "scrolls" in row(a, "c7")["desc"],
       "the first six say locked, the seventh says it scrolls")
 check("hidden wins" in a.menu_hint(), "the hint says which wins: %r" % a.menu_hint())
 

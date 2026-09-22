@@ -206,7 +206,13 @@ HELP_MUX = f"""
     The settings: the menu layout (table, modal, bottom), the permission mode,
     model and effort preselected when c creates a window, whether such a window
     is watched and monitored, the working folder offered first, and which
-    settings.json "make it the default" writes to.
+    settings.json "make it the default" writes to. The submenus hold the rest:
+    Notifications (what the phone is told), Tabs (which tabs the strip shows),
+    Updates (new releases) and HINTS -- what the dashboard explains on screen,
+    which is the row descriptions, the hint line inside a menu, the key line
+    under a view and the notes inside the tables, each one switchable and all
+    four moved together by Expert mode. A notice still reaches you with every
+    one of them off.
 
     RESTORE appears in the menu only while the watchdog holds a frozen window
     snapshot -- the windows a dead tmux server took, saved every pass and kept

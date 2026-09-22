@@ -12,11 +12,12 @@
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ←→ tab ─╯
 ╭─ menu · f-work.md ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │  ▸ Edit f-work.md                                                                                                                                            │
-│    Options  the checkbox table, pre-ticked from the header                                                                                                   │
-│    Launch now  make it due; the watchdog opens it within ~30s                                                                                                │
-│    Duplicate as a new pending entry  and open it in the editor                                                                                               │
-│    Check  resolve it without launching: slug, window, paste, verdict                                                                                         │
+│    Options                                                                                                                                                   │
+│    Launch now                                                                                                                                                │
+│    Duplicate as a new pending entry                                                                                                                          │
+│    Check                                                                                                                                                     │
 │    ····················································                                                                                                      │
 │    Delete f-work.md                                                                                                                                          │
+│                                                                                                                                                              │
 │    ↑↓ pick · enter choose · esc close                                                                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

@@ -199,6 +199,13 @@ class ColumnsMenu:
         return ("enter shown → pinned → hidden · pinned never scrolls · "
                 "hidden wins · esc back")
 
+    def desc(self) -> str:
+        # What the `Columns ▸` row in Settings used to carry glued onto its
+        # label, with its counts: the row is now just its name, and this is
+        # read once the menu it describes is open.
+        n, m = self.counts()
+        return "which columns the two tables show (%d hidden, %d pinned)" % (n, m)
+
 
 class PanelsMenu:
     def __init__(self, app) -> None:
@@ -268,6 +275,10 @@ class PanelsMenu:
         return ("enter show/hide · the claude table is the view and stays · "
                 "esc back")
 
+    def desc(self) -> str:
+        return ("which panels the main view shows (%d hidden)"
+                % len(columnsmod.hidden_panels(PROFILE)))
+
 
 HELP_COLUMNS = f"""
   [{DIM}]COLUMNS AND PANELS (esc ▸ Settings ▸ Columns │ Panels)[/]
@@ -313,22 +324,20 @@ HELP_COLUMNS = f"""
 def register(app) -> None:
     columnsmod.register_keys()
     cols, panels = ColumnsMenu(app), PanelsMenu(app)
-    app.add_menu("columns", cols.entries, title_fn=cols.title,
+    app.add_menu("columns", cols.entries, title_fn=cols.title, desc_fn=cols.desc,
                  hint_fn=cols.hint, esc_to="settings")
     app.add_menu("panels", panels.entries, title_fn=panels.title,
-                 hint_fn=panels.hint, esc_to="settings")
+                 desc_fn=panels.desc, hint_fn=panels.hint, esc_to="settings")
     # UNDER Tabs ▸ (+5) AND Update ▸ (+6), which were already taken on main
     # when this landed -- the brief asked for +6 and +7 and named Tabs as
     # the holder of +5; update.py holds +6, so these are the next two free.
     # Counted when drawn, as those rows are.
     app.add_rows("settings", lambda a: [{
-        "label": "Columns ▸  which columns the two tables show (%d hidden, %d pinned)"
-                 % cols.counts(),
+        "label": "Columns ▸",
         "sub": "columns",
         "order": len(muxsettings.DASHBOARD_KEYS) * 10 + 7}])
     app.add_rows("settings", lambda a: [{
-        "label": "Panels ▸  which panels the main view shows (%d hidden)"
-                 % len(columnsmod.hidden_panels(PROFILE)),
+        "label": "Panels ▸",
         "sub": "panels",
         "order": len(muxsettings.DASHBOARD_KEYS) * 10 + 8}])
     app.add_help("COLUMNS AND PANELS", HELP_COLUMNS, order=32)

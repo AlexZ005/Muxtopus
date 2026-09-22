@@ -16,16 +16,16 @@
 │   ✔    on     opted-out            fable         ··············   2% 20k              60k       2m   idle                   7   —              —             │
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ muxtopus ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  ▸ Settings ▸                                                                                                                                                │
+╭─ hints · 0 of 4 off ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│    what the dashboard explains on screen; Expert mode turns it all off                                                                                       │
+│    Row descriptions:   ON                                                                                                                                    │
+│    Menu hint line:     ON                                                                                                                                    │
+│    Footer key line:    ON                                                                                                                                    │
+│    Inline table notes: ON                                                                                                                                    │
 │    ····················································                                                                                                      │
-│    Watchdog: ON                                                                                                                                              │
-│    Monitor: ON                                                                                                                                               │
-│    Insights ▸                                                                                                                                                │
+│  ▸ Expert mode: off                                                                                                                                          │
 │    ····················································                                                                                                      │
-│    Disconnect                                                                                                                                                │
-│    Reload the dashboard                                                                                                                                      │
-│    Quit the dashboard                                                                                                                                        │
-│                                                                                                                                                              │
-│    Default working folder: not a directory: <SB>/work/repo-b/nope   ·   ↑↓ pick · enter choose · esc close <pad>│
+│    Back                                                                                                                                                      │
+│    turn all four off                                                                                                                                         │
+│    enter show/hide · a notice is shown whatever is off here · esc back                                                                                       │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

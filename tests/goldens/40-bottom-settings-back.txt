@@ -11,16 +11,16 @@
 
 
 
-                                         ╭─ muxtopus (modal: no room below) ──────────────────────────────────────────╮
-                                         │  ▸ Settings ▸                                                              │
-                                         │    ····················································                    │
-                                         │    Watchdog: ON                                                            │
-                                         │    Monitor: ON                                                             │
-                                         │    Insights ▸  tokens, cache, cost, context, sessions, budget, lanes, rhy… │
-                                         │    ····················································                    │
-                                         │    Disconnect                                                              │
-                                         │    Reload the dashboard                                                    │
-                                         │    Quit the dashboard                                                      │
-                                         │                                                                            │
-                                         │    ↑↓ pick · enter choose · esc close                                      │
-                                         ╰────────────────────────────────────────────────────────────────────────────╯
+                                                  ╭─ muxtopus (modal: no room below) ───────────────────────╮
+                                                  │  ▸ Settings ▸                                           │
+                                                  │    ···················································· │
+                                                  │    Watchdog: ON                                         │
+                                                  │    Monitor: ON                                          │
+                                                  │    Insights ▸                                           │
+                                                  │    ···················································· │
+                                                  │    Disconnect                                           │
+                                                  │    Reload the dashboard                                 │
+                                                  │    Quit the dashboard                                   │
+                                                  │                                                         │
+                                                  │    ↑↓ pick · enter choose · esc close                   │
+                                                  ╰─────────────────────────────────────────────────────────╯

@@ -40,13 +40,13 @@
 │    Send /rc to a new window: off                                                                                                                             │
 │    Handovers: show finished rows: off                                                                                                                        │
 │    Handovers: show question rows: ON                                                                                                                         │
-│    Notifications ▸  what the phone is told, and what it may answer                                                                                           │
-│    Tabs ▸  which tabs the strip shows (0 hidden)                                                                                                             │
-│    Updates ▸  new releases: whether to look, what to take, and what to keep                                                                                  │
-│    Columns ▸  which columns the two tables show (0 hidden, 2 pinned)                                                                                         │
-│    Panels ▸  which panels the main view shows (0 hidden)                                                                                                     │
-│    ····················································                                                                                                      │
-│    Back                                                                                                                                                      │
+│    Notifications ▸                                                                                                                                           │
+│    Tabs ▸                                                                                                                                                    │
+│    Updates ▸                                                                                                                                                 │
+│    Columns ▸                                                                                                                                                 │
+│    Panels ▸                                                                                                                                                  │
+│    Hints ▸                                                                                                                                                   │
+│    ▼ 2 more                                                                                                                                                  │
 │    table: under the panel · modal: centred · bottom: the footer                                                                                              │
 │    ↑↓ pick · enter change · esc back                                                                                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

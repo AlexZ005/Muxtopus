@@ -72,6 +72,10 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `DASHBOARD_COLUMNS_HIDDEN` | | columns left out of the main view's tables, as `<table>:<COLUMN>`, comma-separated (`claude:RESUMED,lanes:RAM`); tables are `lanes` and `claude`; written by Settings ▸ Columns |
 | `DASHBOARD_COLUMNS_PINNED` | `lanes:LANE,claude:WINDOW` | columns that never scroll off and are never squeezed, same shape. Unset is the default shown here — the column that names each row; `none` (or an empty value) pins nothing |
 | `DASHBOARD_PANELS_HIDDEN` | | panels left out of the main view, of `deck,lanes,uncommitted,system`, comma-separated; written by Settings ▸ Panels. The claude table is the view itself and cannot be hidden |
+| `DASHBOARD_HINTS_ROW_DESC` | `on` | draw the dim description under a menu's cursor row, and the one a submenu draws under its own title; `off` reserves no line for either, so the panel is shorter |
+| `DASHBOARD_HINTS_MENU_LINE` | `on` | draw the `↑↓ pick · enter choose · esc close` line inside a menu panel. `off` drops it — **except** while a notice is showing, when the line comes back for its eight seconds carrying the notice |
+| `DASHBOARD_HINTS_FOOTER_KEYS` | `on` | draw the key list under the main view (`q quit  r refresh  R reload …`). `off` drops the legend only: the notice, the counts other views add to that line and the reset flourish still draw |
+| `DASHBOARD_HINTS_TABLE_NOTES` | `on` | draw the parenthesised notes inside the tables — `(navigate by arrows)`, `(enter reclaims)`, `(f: all)`. All four are written by Settings ▸ Hints, and its **Expert mode** row moves them together |
 
 ```sh
 # ~/.config/muxtopus/config

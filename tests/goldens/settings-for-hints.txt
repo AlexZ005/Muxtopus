@@ -16,16 +16,27 @@
 │   ✔    on     opted-out            fable         ··············   2% 20k              60k       2m   idle                   7   —              —             │
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─ muxtopus ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  ▸ Settings ▸                                                                                                                                                │
+╭─ settings · <SB>/config/muxtopus/profiles/mxsplit.dashboard.conf ─<pad>╮
+│    menu layout, defaults for a new window, where a mode is made permanent                                                                                    │
+│  ▸ Menu layout: table                                                                                                                                        │
+│    Default permission mode for a new window: ask                                                                                                             │
+│    Where "make it permanent" writes: project                                                                                                                 │
+│    Watch a new window: ON                                                                                                                                    │
+│    Monitor a new window: off                                                                                                                                 │
+│    Default model for a new window: fable                                                                                                                     │
+│    Default effort for a new window: high                                                                                                                     │
+│    Default working folder: <SB>/work/repo-b <pad>│
+│    Send /rc to a new window: off                                                                                                                             │
+│    Handovers: show finished rows: off                                                                                                                        │
+│    Handovers: show question rows: ON                                                                                                                         │
+│    Notifications ▸                                                                                                                                           │
+│    Tabs ▸                                                                                                                                                    │
+│    Updates ▸                                                                                                                                                 │
+│    Columns ▸                                                                                                                                                 │
+│    Panels ▸                                                                                                                                                  │
+│    Hints ▸                                                                                                                                                   │
 │    ····················································                                                                                                      │
-│    Watchdog: ON                                                                                                                                              │
-│    Monitor: ON                                                                                                                                               │
-│    Insights ▸                                                                                                                                                │
-│    ····················································                                                                                                      │
-│    Disconnect                                                                                                                                                │
-│    Reload the dashboard                                                                                                                                      │
-│    Quit the dashboard                                                                                                                                        │
-│                                                                                                                                                              │
-│    Default working folder: not a directory: <SB>/work/repo-b/nope   ·   ↑↓ pick · enter choose · esc close <pad>│
+│    Back                                                                                                                                                      │
+│    table: under the panel · modal: centred · bottom: the footer                                                                                              │
+│    ↑↓ pick · enter change · esc back                                                                                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

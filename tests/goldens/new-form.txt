@@ -17,18 +17,19 @@
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ new session · <SB>/work/repo-b ─<pad>╮
-│  ▸ Create [repo-b-quail          ]  and go to its window  · type to rename                                                                                   │
+│  ▸ Create [repo-b-quail          ]                                                                                                                           │
 │    ····················································                                                                                                      │
-│    Sub-window repo-b-quail under root-lane  empty, no prompt                                                                                                 │
-│      Sub-window repo-b-quail under root-lane  continues from its handover  (root-lane has not written STATUS-root-lane.md)                                   │
+│    Sub-window repo-b-quail under root-lane: empty                                                                                                            │
+│      Sub-window repo-b-quail under root-lane: from its handover  (root-lane has not written STATUS-root-lane.md)                                             │
 │    ····················································                                                                                                      │
-│    Folder: <SB>/work/repo-b  where claude starts <pad>│
-│    Model: fable  a CLI alias; the MODEL column's names are refused                                                                                           │
+│    Folder: <SB>/work/repo-b <pad>│
+│    Model: fable                                                                                                                                              │
 │    Effort: high                                                                                                                                              │
-│    Permission mode: unset  (no flag; the CLI's own default)  cannot be changed after launch                                                                  │
+│    Permission mode: unset  (no flag; the CLI's own default)                                                                                                  │
 │    Where: a top-level window                                                                                                                                 │
-│    First prompt: (none)  empty makes it a plan entry                                                                                                         │
+│    First prompt: (none)                                                                                                                                      │
 │    ····················································                                                                                                      │
 │    Cancel                                                                                                                                                    │
+│    and go to its window · type to rename                                                                                                                     │
 │    ↑↓ pick · enter set · esc cancel                                                                                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

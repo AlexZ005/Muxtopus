@@ -254,6 +254,8 @@ class MainView(View):
         sid = self.cursor
         if sid == EXTRAS_SENTINEL:
             return [{"label": "Reclaim or start desktop extras",
+                     "desc": "stop Steam, Discover and the Plasma shell to free RAM, "
+                             "or bring them back",
                      "act": self.toggle_extras}]
         if sid.startswith(LANE_PREFIX):
             return [{"label": ("Show this account's lanes only" if self.lanes_all
@@ -274,19 +276,26 @@ class MainView(View):
                 {"key": "wd_win",
                  "label": "Restart %s after a limit: %s" % (
                      label, "YES" if not skipped else "no, left parked"),
+                 "desc": "opt this session out of the watchdog's automatic restart, "
+                         "or back in",
                  "on": not skipped, "act": self.toggle_selected},
                 {"key": "mon_win",
                  "label": "Wind %s down near the limit: %s" % (
                      label, "YES" if not mskipped else "no, never interrupted"),
+                 "desc": "exempt this session from the monitor's wind-down request, "
+                         "or put it back in scope",
                  "on": not mskipped, "act": self.act_mon_window},
                 {"sep": True},
                 {"label": "Open %s" % label, "act": self.open_selected, "need_pane": True},
                 {"label": "Rename %s" % label, "act": self.act_rename, "need_pane": True},
-                {"label": "Wind down %s now  ask it to checkpoint and stop" % label,
+                {"label": "Wind down %s now" % label,
+                 "desc": "ask it to checkpoint and stop",
                  "act": self.act_wind},
-                {"label": "Resume %s now  tell it to continue" % label,
+                {"label": "Resume %s now" % label,
+                 "desc": "tell it to continue",
                  "act": self.act_resume, "need_pane": True},
-                {"label": "Continue %s at low priority  spends the WEEKLY budget" % label,
+                {"label": "Continue %s at low priority" % label,
+                 "desc": "spends the WEEKLY budget",
                  "act": self.act_lowpri, "need_pane": True},
                 # "Schedule a resume of ..." used to sit here. It writes a
                 # schedule entry, so it belongs to the schedule view, and it
@@ -294,13 +303,17 @@ class MainView(View):
                 # ..., order=85) -- the registry doing the one job the old
                 # code really did reach across a view boundary to do.
                 {"sep": True},
-                {"label": "Close %s  kills the claude session in it" % label,
+                {"label": "Close %s" % label,
+                 "desc": "kills the claude session in it",
                  "act": self.act_close, "need_pane": True, "danger": True},
             ]
         else:
             items = [{"label": "no session selected", "disabled": "nothing to act on"}]
         # Say so when a global switch makes the rows above moot, rather than
         # letting a row read ON while nothing can happen.
+        # NOT split into desc: this row is ALWAYS disabled while it exists
+        # (menulayout._has_desc never draws a description for a disabled
+        # row), so a "(w turns it on)" moved there would never be seen again.
         if not wd_all:
             items.append({"label": "watchdog is off globally  (w turns it on)",
                           "disabled": "global"})
@@ -734,17 +747,23 @@ class MainView(View):
             self.lane_keys = [LANES_EMPTY]
             sel = self.cursor == LANES_EMPTY
             empty = "no dev servers running" if not hidden else f"none for {PROFILE_LABEL}"
-            if sel:
+            if sel and self.app.guide("notes"):
                 empty += "  (enter: %s)" % ("mine" if self.lanes_all else "all")
             cells = [Text("▸" if sel else " ", style="bold #c9a0dc"), Text("—", style=DIM), "", "",
                      Text(empty, style="#c9a0dc" if sel else DIM), "", ""]
             if self.lanes_all:
                 cells.insert(5, "")
             lane_rows.append(cells)
+        # The SCOPE is a fact about what the table is showing and stays
+        # whatever Hints says; the "(f: …)" that names the key to change it
+        # is the note. The hidden COUNT stays too -- a table quietly showing
+        # fewer rows than it has is the failure this whole group must not be.
+        note = self.app.guide("notes")
         if self.lanes_all:
-            lane_scope = " · every account  (f: this one)"
+            lane_scope = " · every account" + ("  (f: this one)" if note else "")
         elif hidden or MULTI_ACCOUNT:
-            lane_scope = f" · {PROFILE_LABEL}" + (f" · {hidden} hidden  (f: all)" if hidden else "")
+            lane_scope = f" · {PROFILE_LABEL}" + (
+                f" · {hidden} hidden" + ("  (f: all)" if note else "") if hidden else "")
         else:
             lane_scope = ""
 
@@ -935,8 +954,14 @@ class MainView(View):
         lane_names = {lane_name(g["pid"]).rsplit("/", 1)[-1] for g in shown.values()}
 
         ex_sel = (self.cursor == EXTRAS_SENTINEL)
-        ex_hint = ("  (enter %s)" % ("reclaims" if extras else "starts")) if ex_sel \
-                  else "  (navigate by arrows)"
+        # Both halves of this one are pure coaching -- what enter does here,
+        # and how to get anywhere at all -- so Hints takes the whole note.
+        if not self.app.guide("notes"):
+            ex_hint = ""
+        elif ex_sel:
+            ex_hint = "  (enter %s)" % ("reclaims" if extras else "starts")
+        else:
+            ex_hint = "  (navigate by arrows)"
         sysrow = Text.assemble(
             ("claude ", "bold"), f"{len(claude)} · {human_mb(sum(p.rss_mb for p in claude))}",
             "     ", ("playwright ", "bold"), (human_mb(pw) if pw else "—"),
@@ -946,7 +971,14 @@ class MainView(View):
             (ex_hint, "#c9a0dc" if ex_sel else DIM),
         )
 
-        keys = Text.assemble(
+        # SETTINGS ▸ HINTS ▸ FOOTER KEY LINE. Off, this starts from an EMPTY
+        # Text rather than returning None: the notice, the marks other
+        # modules append below and the reset flourish are news and are not
+        # what was turned off -- only the legend is. An empty Text is still
+        # one line, so every table that measures this footer keeps its
+        # arithmetic; a footer that vanished would reflow four views to hide
+        # a line the user only asked to be blank.
+        keys = Text() if not self.app.guide("footer") else Text.assemble(
             (" q", DIM), " quit  ", ("r", DIM), " refresh  ", ("R", DIM), " reload  ",
             ("s", DIM), " schedules  ",
             ("w", DIM), " watchdog  ", ("m", DIM), " monitor  ", ("u", DIM), "/", ("U", DIM), " usage  ", ("↑↓", DIM), " pick  ", ("pgup/dn home/end", DIM), " jump  ", ("enter", DIM), " open  ", ("space", DIM), " menu  ",

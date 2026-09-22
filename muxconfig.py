@@ -133,6 +133,15 @@ KEYS = {
     "MUXTOPUS_UPDATE_EVERY": "24",
     "MUXTOPUS_UPDATE_CHANNEL": "stable",
     "MUXTOPUS_NOTIFY_UPDATE": "off",
+    # WHAT THE DASHBOARD EXPLAINS ON SCREEN (Settings ▸ Hints, and
+    # dashboard/menus/hints.py). All four default ON: the dashboard a
+    # user already has is the one that keeps drawing until they ask
+    # otherwise. "HINTS_" is the group; the older `hint` names in the
+    # code mean narrower things, which that module's docstring lists.
+    "DASHBOARD_HINTS_ROW_DESC": "on",
+    "DASHBOARD_HINTS_MENU_LINE": "on",
+    "DASHBOARD_HINTS_FOOTER_KEYS": "on",
+    "DASHBOARD_HINTS_TABLE_NOTES": "on",
 }
 KINDS = ("schedules", "backups", "handovers")
 

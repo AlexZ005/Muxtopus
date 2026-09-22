@@ -61,16 +61,17 @@ class TabsMenu:
                 note = "locked: stays on a narrow strip (%d of %d)" % (pos, LOCKED)
             else:
                 note = "scrolls on a narrow strip"
-            items.append({"label": "%s  (tab of %s): %s  %s"
-                                   % (v.name, v.group, "hidden" if off else "SHOWN", note),
+            items.append({"label": "%s  (tab of %s): %s"
+                                   % (v.name, v.group, "hidden" if off else "SHOWN"),
+                          "desc": note,
                           "on": not off, "stay": True,
                           "act": lambda n=v.name: self.toggle(n)})
         opens = [v for v in self.tabs() if v.name in hidden]
         if opens:
             items.append({"sep": True})
             for v in opens:
-                items.append({"label": "Open %s once  it stays hidden; ←→ from there "
-                                       "walks the shown tabs" % v.name,
+                items.append({"label": "Open %s once" % v.name,
+                              "desc": "it stays hidden; ←→ from there walks the shown tabs",
                               "act": lambda n=v.name: self.open_once(n)})
         if not items:
             items.append({"label": "no view has tabs", "disabled": "nothing to hide"})
@@ -103,6 +104,14 @@ class TabsMenu:
     def hint(self) -> str:
         return ("enter show/hide · hidden wins: the first %d SHOWN tabs are the "
                 "locked ones · esc back" % LOCKED)
+
+    def desc(self) -> str:
+        # THE COUNT COMES WITH THE SENTENCE. It used to be on the `Tabs ▸`
+        # row in Settings, and that row is now just its name -- so the one
+        # number a reader of that row wanted ("have I hidden anything?")
+        # moves here rather than being dropped, and is read on the way in.
+        n = len(self.app.hidden_tabs() & {v.name for v in self.tabs()})
+        return "which tabs the strip shows (%d hidden)" % n
 
 
 HELP_TABS = f"""
@@ -142,12 +151,12 @@ def register(app) -> None:
         _register_key()
     menu = TabsMenu(app)
     app.add_menu("tabs", menu.entries, title_fn=menu.title, hint_fn=menu.hint,
-                 esc_to="settings")
+                 desc_fn=menu.desc, esc_to="settings")
     app.add_rows("settings", lambda a: [{
-        "label": "Tabs ▸  which tabs the strip shows (%d hidden)"
-                 % len(a.hidden_tabs() & {v.name for v in menu.tabs()}),
+        "label": "Tabs ▸",
         "sub": "tabs",
-        # Under the last setting, beside Notifications ▸ (which takes +5):
-        # counted when drawn, as that row's is, and after it on the label.
+        # Under the last setting, beside Notifications ▸ (which takes +5).
+        # Counted when the menu is DRAWN, never a fixed number that goes
+        # stale the day somebody registers a tenth setting.
         "order": len(muxsettings.DASHBOARD_KEYS) * 10 + 5}])
     app.add_help("TABS", HELP_TABS, order=31)

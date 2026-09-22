@@ -491,7 +491,10 @@ class InsightsView(View):
         rep = self.report()
         head = self.figures_panel(rep)
 
-        keys = Text.assemble(
+        # Settings ▸ Hints ▸ Footer key line, gated as the main view's is:
+        # an empty Text, so the notice prepended below still lands and the
+        # panel above keeps the height it measured against.
+        keys = Text() if not self.app.guide("footer") else Text.assemble(
             (" ←→", DIM), " period  ", ("↑↓", DIM), " pick  ",
             ("enter", DIM), " drill  ", ("⌫", DIM), " up  ",
             ("g", DIM), " group  ", ("f", DIM), " filter  ", ("F", DIM), " clear  ",
@@ -520,8 +523,9 @@ class InsightsView(View):
 
     # ---------------------------- the row this view puts in the esc menu
     def mux_rows(self, app) -> list[dict]:
-        return [{"label": "Insights ▸  tokens, cache, cost, context, sessions, "
-                          "budget, lanes, rhythm  (i)",
+        return [{"label": "Insights ▸",
+                 "desc": "tokens, cache, cost, context, sessions, "
+                         "budget, lanes, rhythm (i)",
                  "act": self.act_open}]
 
     def act_open(self) -> str:

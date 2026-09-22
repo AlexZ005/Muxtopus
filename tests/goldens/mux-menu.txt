@@ -21,7 +21,7 @@
 │    ····················································                                                                                                      │
 │    Watchdog: ON                                                                                                                                              │
 │    Monitor: ON                                                                                                                                               │
-│    Insights ▸  tokens, cache, cost, context, sessions, budget, lanes, rhythm  (i)                                                                            │
+│    Insights ▸                                                                                                                                                │
 │    ····················································                                                                                                      │
 │    Disconnect                                                                                                                                                │
 │    Reload the dashboard                                                                                                                                      │
