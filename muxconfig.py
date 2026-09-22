@@ -103,6 +103,24 @@ KEYS = {
     # WHICH TABS THE STRIP SHOWS (dashboard/menus/tabs.py): view names,
     # comma-separated, hidden from the strip and from ←→. Unset: all shown.
     "DASHBOARD_TABS_HIDDEN": None,
+    # WHICH COLUMNS THE MAIN VIEW'S TWO TABLES SHOW (dashboard/columns.py):
+    # items are "<table>:<COLUMN>", comma-separated, tables `lanes` and
+    # `claude`. BY NAME WITH THE TABLE IN FRONT, never by index: STATE and
+    # DIRTY exist in both tables, ACCOUNT exists only while f shows every
+    # account, and the lists change shape with the terminal's width, so an
+    # index means a different column tomorrow. Unset: nothing hidden.
+    "DASHBOARD_COLUMNS_HIDDEN": None,
+    # The columns that are never scrolled off and never squeezed, same
+    # shape. UNSET IS NOT EMPTY here: unset means the default below -- the
+    # column that names each row -- because a table scrolled sideways with
+    # its name column gone is a grid of numbers about nothing. An explicit
+    # empty value is the user saying they want nothing pinned, and is kept.
+    "DASHBOARD_COLUMNS_PINNED": None,
+    # Whole sections of the main view the user does not want drawn, of
+    # deck,lanes,uncommitted,system. `claude` is deliberately absent: it is
+    # the screen. Unset: all shown. The degrade rule (a short terminal) is
+    # separate and its note never names one of these.
+    "DASHBOARD_PANELS_HIDDEN": None,
     "WATCHDOG_RESTORE": "ask",
     "WATCHDOG_RESTORE_MAX_AGE": "24",
     "MUXTOPUS_TMUX_SOCKET": "default",

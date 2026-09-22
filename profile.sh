@@ -104,6 +104,9 @@ MUXTOPUS_NOTIFY_STALLED=on
 MUXTOPUS_NOTIFY_STRANDED=on
 DASHBOARD_NEW_RC=off
 DASHBOARD_TABS_HIDDEN=-
+DASHBOARD_COLUMNS_HIDDEN=-
+DASHBOARD_COLUMNS_PINNED=-
+DASHBOARD_PANELS_HIDDEN=-
 WATCHDOG_RESTORE=ask
 WATCHDOG_RESTORE_MAX_AGE=24
 MUXTOPUS_TMUX_SOCKET=default
@@ -356,6 +359,12 @@ mux_key_help() {
                             echo "a schedule entry; empty falls back to the selected session's cwd." ;;
     DASHBOARD_TABS_HIDDEN)  echo "Tabs hidden from the dashboard's strip and from ←→, by view name,"
                             echo "comma-separated (handovers). esc > Settings > Tabs writes it." ;;
+    DASHBOARD_COLUMNS_HIDDEN) echo "Columns left out of the main view's tables, as <table>:<COLUMN>,"
+                            echo "comma-separated (claude:RESUMED,lanes:RAM). Settings > Columns." ;;
+    DASHBOARD_COLUMNS_PINNED) echo "Columns that never scroll off and are never squeezed, same shape."
+                            echo "Unset means lanes:LANE,claude:WINDOW; empty means nothing pinned." ;;
+    DASHBOARD_PANELS_HIDDEN) echo "Panels left out of the main view, of deck,lanes,uncommitted,system,"
+                            echo "comma-separated. Unset shows all. esc > Settings > Panels." ;;
     # Phone notifications (claude-notify.sh + muxtelegram.py). These are
     # PREFERENCES and live here, per account; the backend and its token live
     # in ~/.config/claude-notify.conf, which is per machine and holds a
