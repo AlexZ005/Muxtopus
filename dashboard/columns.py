@@ -35,7 +35,8 @@ each table. A table scrolled sideways with its name column gone is a grid
 of numbers about nothing -- which is exactly what the first wiring of this
 did at 80 columns, and it is also what make_table's marker column needs (it
 draws "▼ N more" in a wide column that is always present). An EXPLICIT
-empty value is the user saying they want nothing pinned, and it is kept.
+empty value -- or the word NONE, which is what the menu writes -- is the
+user saying they want nothing pinned, and it is kept.
 """
 from __future__ import annotations
 
@@ -62,6 +63,16 @@ PANELS = ("deck", "lanes", "uncommitted", "system")
 # Unset pinned means these: the flexible, row-naming column of each table.
 DEFAULT_PINNED = "lanes:LANE,claude:WINDOW"
 
+# "NOTHING PINNED", SPELLED OUT. muxsettings.put DELETES a key written with
+# an empty value -- which is right for every other setting, where absent and
+# empty mean the same thing, and wrong for exactly this one, where absent
+# means DEFAULT_PINNED. Without a word for it the menu could not express
+# "nothing pinned" at all: unpinning the last column would write "", drop
+# the line, and the default would come back on the next frame while the
+# menu still said the column was shown. A hand-edited empty value is read
+# the same way, so both spellings work; this is the one the menu writes.
+NONE = "none"
+
 # A column header as this dashboard writes them -- upper-case words, and
 # CONTEXT/RESUMED/ACCOUNT are the longest. Permissive on purpose: a column
 # this release does not have is KEPT (see the module docstring), so this
@@ -81,6 +92,8 @@ def parse(value: str) -> dict[str, set[str]]:
     what tells the user, at the moment they write it.
     """
     out: dict[str, set[str]] = {t: set() for t in TABLES}
+    if value.strip() == NONE:
+        return out
     for item in value.split(","):
         item = item.strip()
         if not item or ":" not in item:
@@ -103,6 +116,8 @@ def validate_columns(value: str) -> str:
     """Why this value cannot be written, or "". The `check` of both column
     specs; the complaint carries THE ITEM'S OWN TEXT, because "not a
     column" about a list of nine tells the user nothing they can act on."""
+    if value.strip() == NONE:
+        return ""
     bad = []
     for item in value.split(","):
         item = item.strip()
@@ -166,7 +181,7 @@ def pinned_columns(profile: str = "") -> dict[str, set[str]]:
         raw = have.get(PINNED_KEY)
         if raw is None:
             raw = DEFAULT_PINNED
-        return parse(raw)
+        return parse(raw)          # "" and NONE both parse to nothing
     return _cached(PINNED_KEY, read, profile)
 
 
@@ -209,7 +224,8 @@ def register_keys() -> None:
         PINNED_KEY: {
             "label": "Pinned columns", "kind": "text",
             "check": validate_columns,
-            "hint": "never scrolled off; unset means " + DEFAULT_PINNED},
+            "hint": "never scrolled off; unset means %s, %r means none"
+                    % (DEFAULT_PINNED, NONE)},
         PANELS_KEY: {
             "label": "Hidden panels", "kind": "text",
             "check": validate_panels,
