@@ -117,7 +117,7 @@ All of it in `~/.local/state/claude-watchdog[-<account>]/`, read by the dashboar
 
 | file | |
 |---|---|
-| `status.tsv` | one row per session: id, window, pane, context, state, reset, what was spent, model, idle seconds, cwd, wound-at, opt-outs, pid |
+| `status.tsv` | one row per session: id, window, pane, context, state, reset, what was spent, model, idle seconds, cwd, wound-at, opt-outs, pid, and the last thing it said — the first 80 characters of its last text, on one line, or `-` when there is no transcript to read (`--status` prints it as `SAID`) |
 | `sched-why.tsv` | one verdict per pending entry: `due` · `waiting` · `blocked` · `stalled`, with its sentence |
 | `tree.tsv` | the window tree: slug, parent, window id, pane id, launched-at, entry file |
 | `windows.tsv` | the window snapshot, rewritten every pass the session is there; `windows.last.tsv` is the frozen one after a loss, `windows.restored.tsv` / `windows.declined.tsv` what became of it |

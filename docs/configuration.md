@@ -71,6 +71,7 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `DASHBOARD_TABS_HIDDEN` | | tabs hidden from the strip and from `←` `→`, by view name, comma-separated (`handovers`); written by Settings ▸ Tabs |
 | `DASHBOARD_COLUMNS_HIDDEN` | | columns left out of the main view's tables, as `<table>:<COLUMN>`, comma-separated (`claude:RESUMED,lanes:RAM`); tables are `lanes` and `claude`; written by Settings ▸ Columns |
 | `DASHBOARD_COLUMNS_PINNED` | `lanes:LANE,claude:WINDOW` | columns that never scroll off and are never squeezed, same shape. Unset is the default shown here — the column that names each row; `none` (or an empty value) pins nothing |
+| `DASHBOARD_COLUMNS_SHOWN` | | of the columns hidden until asked for (`claude:SAID`), the ones you asked for, same shape; written by Settings ▸ Columns. A key of its own so that a config which already hides a column still starts with SAID hidden |
 | `DASHBOARD_PANELS_HIDDEN` | | panels left out of the main view, of `deck,lanes,uncommitted,system`, comma-separated; written by Settings ▸ Panels. The claude table is the view itself and cannot be hidden |
 | `DASHBOARD_HINTS_ROW_DESC` | `on` | draw the dim description under a menu's cursor row, and the one a submenu draws under its own title; `off` reserves no line for either, so the panel is shorter |
 | `DASHBOARD_HINTS_MENU_LINE` | `on` | draw the `↑↓ pick · enter choose · esc close` line inside a menu panel. `off` drops it — **except** while a notice is showing, when the line comes back for its eight seconds carrying the notice |
