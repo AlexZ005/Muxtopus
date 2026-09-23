@@ -1,0 +1,8 @@
+{"type": "summary", "summary": "a bookkeeping record with no timestamp"}
+{"type": "user", "timestamp": "2026-09-23T10:00:00.000Z", "message": {"role": "user", "content": "a user turn whose content is a STRING"}}
+{"type": "assistant", "timestamp": "2026-09-23T10:00:05.000Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "An older text block, superseded below."}]}}
+{"type": "user", "timestamp": "2026-09-23T10:00:06.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t0", "content": "ok"}]}}
+{"type": "assistant", "timestamp": "2026-09-23T10:00:10.000Z", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "not said out loud"}, {"type": "text", "text": "P1 is in:\tthe digest\nfolds a tab, a newline\r\nand keeps éèç — ✓ whole; a back\\slash and a literal \\n stay; this text runs well past eighty characters so the cut shows."}]}}
+{"type": "assistant", "timestamp": "2026-09-23T10:00:11.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}}
+{"type": "user", "timestamp": "2026-09-23T10:00:12.000Z", "message": {"role": "user", "content": "the LAST turn: a user record with string content"}}
+{"type": "last-prompt", "lastPrompt": "trailing metadata, no timestamp"}
