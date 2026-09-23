@@ -2394,7 +2394,11 @@ sched_check_one() {
   sched_template_file "$f" >/dev/null && parts="template + "
   parts="${parts}body"
   [ "$type" = work ] && parts="$parts + handover footer"
-  if sched_compose "$f" "$slug" "$wname" "$parent" | grep -q '[^[:space:]]'; then
+  # NOT grep -q: under pipefail, -q exits at the first match and a compose
+  # still writing takes SIGPIPE, so the pipeline fails and a 6 KB body was
+  # reported "empty" -- measured 1 run in 100 under load on this box. Plain
+  # grep reads to the end.
+  if sched_compose "$f" "$slug" "$wname" "$parent" | grep '[^[:space:]]' >/dev/null; then
     kv body "${nlines:-0} lines; ${nbytes} bytes pasted in all ($parts)"
   else
     kv body "empty -- nothing is pasted; the window opens at a blank prompt"

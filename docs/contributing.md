@@ -49,6 +49,7 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | every name the code mentions is reachable | `tests/test_names.py` | yes |
 | the settings store and both halves of the key list | `tests/test_settings.py` | yes |
 | what a ticked box does to an entry | `tests/test_entry_options.py` | yes |
+| `c ▸ orchestrate ▸ wave / sweep`: the entry it writes, inert to the executor, and `o` on it | `tests/test_create_orchestrate.py` | yes |
 | the menu layout engine | `tests/test_menulayout.py` | yes |
 | the options file parser | `tests/test_options.py` | yes |
 | the templates `setup-schedules.py` seeds: all eight written, an edited one kept, executor placeholders only | `tests/test_templates.py` | yes |
