@@ -36,7 +36,7 @@ The new window opens right after its `window:` target, named for its slug, and t
 
 | field | required | values | |
 |---|---|---|---|
-| `type` | yes | `plan` · `work` | a `work` entry pastes its body as the prompt and must have one; a `plan` entry may have an empty body — nothing is then pasted and the window opens at a blank prompt — and may name a `template:` |
+| `type` | yes | `plan` · `work` | a `work` entry pastes its prompt and must have one — a body, a `template:`, or both — and gets the handover footer after it; a `plan` entry may have neither — nothing is then pasted and the window opens at a blank prompt |
 | `at` | yes | `reset` · `YYYY-MM-DD HH:MM` | when it is due. `reset` is [two gates](#at-reset-is-two-gates); an absolute time (anything `date -d` accepts, but the dashboard's linter wants `YYYY-MM-DD HH:MM[:SS]`) fires when it passes |
 | `title` | yes | free text | what the row says; the slug is derived from it unless `slug:` is set |
 | `slug` | no | `[A-Za-z0-9._-]`, ≤ 22 | pins [the lane's name](#the-slug-is-the-lanes-name-in-four-places) and wins over the title |
@@ -44,7 +44,7 @@ The new window opens right after its `window:` target, named for its slug, and t
 | `after` | no | slugs, comma or space separated | hold until [every named lane is done](#after-slug-slug) |
 | `parent` | no | a slug | [draw this window under that one](#parent-slug--draw-this-window-under-that-one); usually derived from `window:` |
 | `cwd` | yes | an existing directory | where the session starts |
-| `template` | no | a file in `templates/`, without `.md` | `plan` only: the body is built from it |
+| `template` | no | a file in `templates/`, without `.md` | pasted first, then the body (then, for `work`, the footer). Read at paste time, so an edit to the template reaches every entry that names it. A name with no file is a warning in `--check` and nothing is prepended. `resume-status` stays a `plan` template in practice: its `{{STATUS_FILE}}` is filled by the dashboard when it writes the entry, not by the executor |
 | `model` | no | `fable` · `opus` · `sonnet` · a full model id | [`claude --model`](#model-and-effort); absent is the account default |
 | `effort` | no | `low` · `medium` · `high` · `xhigh` · `max` | `claude --effort` |
 | `permission-mode` | no | `acceptEdits` · `auto` · `bypassPermissions` · `manual` · `dontAsk` · `plan` | [`claude --permission-mode`](#permission-mode-the-one-setting-that-cannot-be-fixed-after-launch); absent means absent |

@@ -1463,20 +1463,43 @@ sched_perm_canon() {
 }
 
 # THE SUBSTITUTABLE PART OF THE PASTE, exactly as written and before any
-# placeholder is resolved: the template (plan only), the body, and the work
-# footer. Split out from sched_compose because two things need it -- the
+# placeholder is resolved: the template, the body, and the work footer. Split out from sched_compose because two things need it -- the
 # composer, which substitutes over it, and the placeholder report, which has to
 # see what was WRITTEN rather than what came out.
 #
 # The footer is itself written in placeholders. It says the same bytes it
 # always did, but it now says them through the same table the body uses, so
 # there is one definition of "the handover file" rather than two.
+# The template file an entry names, on stdout, if it names one that exists.
+# One test, used by the composer, the empty-prompt rule and --check, so the
+# three cannot disagree about whether a template goes into the paste.
+sched_template_file() {
+  local tmpl
+  tmpl="$(sched_field "$1" template)"
+  [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ] || return 1
+  printf '%s' "$SCHEDULES/templates/$tmpl.md"
+}
+
+# Does a work entry have anything to paste? Its body, or -- since a work entry
+# may name a template -- the template alone. An entry whose body is empty
+# because the template carries the whole brief is the shape a
+# self-rescheduling sweep writes, and skipping it as "empty" would end the
+# chain on its second link.
+sched_has_prompt() {
+  [ -n "$(sched_body "$1")" ] || sched_template_file "$1" >/dev/null
+}
+
 sched_raw() {
-  local f="$1" footer="${2:-1}" type tmpl
+  local f="$1" footer="${2:-1}" type tfile
   type="$(sched_field "$f" type)"
-  tmpl="$(sched_field "$f" template)"
-  if [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
-    cat "$SCHEDULES/templates/$tmpl.md"
+  # ANY TYPE, not only plan. It used to be plan-only, which made a work entry
+  # that wanted a shared brief carry a copy of it: a self-rescheduling sweep
+  # wrote its next entry with the whole 60-line template pasted into the body,
+  # so an edit to the template never reached a chain already in flight. Now a
+  # work entry names the template and the body is only what is particular to
+  # this run; the footer still comes last, after both.
+  if tfile="$(sched_template_file "$f")"; then
+    cat "$tfile"
     echo
   fi
   sched_body "$f"
@@ -2135,9 +2158,14 @@ sched_check_one() {
   if [ -n "$cwd" ] && [ -d "$cwd" ]; then kv cwd "$cwd"
   else kv cwd "${cwd:-(missing)}   -- NOT A DIRECTORY"; rcout=1; fi
   if [ -n "$tmpl" ]; then
-    if [ -f "$SCHEDULES/templates/$tmpl.md" ]; then kv template "$tmpl   ($SCHEDULES/templates/$tmpl.md)"
-    else kv template "$tmpl   -- NOT IN templates/"; rcout=1; fi
-    [ "$type" = plan ] || kv "" "(a template is only prepended for type: plan)"
+    if [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
+      kv template "$tmpl   ($SCHEDULES/templates/$tmpl.md)"
+      if [ "$type" = work ]; then kv "" "(pasted first, then the body, then the handover footer)"
+      else kv "" "(pasted first, then the body)"; fi
+    else
+      kv template "$tmpl   -- NOT IN templates/"; rcout=1
+      kv "" "(so nothing is prepended: the body is pasted on its own)"
+    fi
   fi
   kv status "${st:-(missing)}"
   after="$(sched_field "$f" after)"
@@ -2188,7 +2216,7 @@ sched_check_one() {
   nlines="$(sched_body "$f" | grep -c '' 2>/dev/null)"
   nbytes="$(sched_compose "$f" "$slug" "$wname" "$parent" | wc -c)"
   local parts=""
-  [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ] && parts="template + "
+  sched_template_file "$f" >/dev/null && parts="template + "
   parts="${parts}body"
   [ "$type" = work ] && parts="$parts + handover footer"
   if sched_compose "$f" "$slug" "$wname" "$parent" | grep -q '[^[:space:]]'; then
@@ -2197,7 +2225,7 @@ sched_check_one() {
     kv body "empty -- nothing is pasted; the window opens at a blank prompt"
   fi
   kv identity "$STATE_DIR/identity/$slug.md, on claude's --append-system-prompt-file (pasted first instead if the CLI lacks it)"
-  if [ "$type" = work ] && [ -z "$(sched_body "$f")" ]; then
+  if [ "$type" = work ] && ! sched_has_prompt "$f"; then
     kv "" "-- EMPTY BODY: a work item with nothing to paste is skipped"; rcout=1
   fi
   case "$type" in plan|work) ;; *) kv "" "-- type must be plan or work"; rcout=1 ;; esac
@@ -2284,8 +2312,8 @@ check_schedules() {
     if [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
       sched_note "$f" stalled "STALLED: cwd \"${cwd:-}\" is not a directory"; continue
     fi
-    if [ "$type" = work ] && [ -z "$(sched_body "$f")" ]; then
-      sched_note "$f" stalled "STALLED: a work item with an empty prompt body has nothing to paste"; continue
+    if [ "$type" = work ] && ! sched_has_prompt "$f"; then
+      sched_note "$f" stalled "STALLED: a work item with an empty prompt body and no template has nothing to paste"; continue
     fi
 
     # THE DEPENDENCY IS ASKED FIRST. An entry held behind another lane is not
