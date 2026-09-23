@@ -96,7 +96,10 @@ SUBS = (
     (re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?"), "<stamp>"),
     # The create flow names its file after the wall clock before anything is
     # written; the title of the options table carries that name.
-    (re.compile(r"(plan|work)-\d{8}-\d{6}"), r"\1-<newname>"),
+    (re.compile(r"(plan|work|wave)-\d{8}-\d{6}"), r"\1-<newname>"),
+    # A sweep is named for the DAY instead (sweep-<MMDD>, -b, -c ... on a
+    # second one), so its table's title moves at midnight.
+    (re.compile(r"sweep-\d{4}(?:-[b-z])?\b"), "sweep-<newname>"),
 )
 
 # Every token a mask can leave behind, and the two shapes of fill that a

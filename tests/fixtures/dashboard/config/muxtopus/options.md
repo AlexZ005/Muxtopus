@@ -1,7 +1,7 @@
 # The fake machine's options.md -- one block of every shape the table can
-# draw: a plain line, a types-filtered line, an ask: that opens the prompt, a
-# set: that opens the picker, and one deliberately broken block that must be
-# shown greyed with its reason rather than dropped.
+# draw: a plain line, a types-filtered line (work, and orchestrate), an ask:
+# that opens the prompt, a set: that opens the picker, and one deliberately
+# broken block that must be shown greyed with its reason rather than dropped.
 
 key: questions
 group: contract
@@ -32,6 +32,16 @@ hint: a number; {{VALUE}} in the sentence
 default: off
 ask: number
 line: Run at most {{VALUE}} lanes in parallel.
+
+# Offered only to the orchestrate pick (c ▸ orchestrate ▸ wave / sweep):
+# hidden from every plan and work table, so no older screen moves.
+key: automate
+group: orchestrate
+label: full automation, end to end
+hint: commit, push, PRs, merge when green; never stop to ask
+default: on
+types: orchestrate
+line: Full automation, end to end: work until the whole item is finished.
 
 key: model
 group: model
