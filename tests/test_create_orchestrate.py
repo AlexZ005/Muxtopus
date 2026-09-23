@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""`c ▸ orchestrate ▸ wave / sweep` in the schedules view.
+"""`c ▸ orchestrate ▸ wave / sweep` in the schedules view, and `o` on what it
+wrote.
 
 Run it:  .venv/bin/python tests/test_create_orchestrate.py   (needs rich)
 
@@ -14,6 +15,8 @@ the form writes, because the file is what the executor reads:
   - dashboard/schedules.py validate_schedule accepts it, and
     `claude-watchdog.sh --check <file>` warns about nothing -- `kind:` is inert
     to both;
+  - `o` on it offers the orchestrate rows again, read from `kind:`; `o` on a
+    plain work entry offers none.
 
 The picture of the pickers is tests/sandbox/goldens.sh's job; this is what
 enter DOES.
@@ -297,6 +300,49 @@ cont()
 work = new_files(before)[0]
 h, _ = head_body(work)
 ok(h.get("type") == "work" and "kind" not in h, "a plain work entry has no kind: line")
+
+# ------------------------------------------------------------------ o reopens
+print("== o reopens by kind:")
+
+
+def reopen(f):
+    V.rows = [r for r in read_schedules() if r["file"] == f]
+    V.i = 0
+    msg = V.reopen_options()
+    return msg
+
+
+ok(reopen(sweep) == "" and APP.modal["typ"] == "orchestrate",
+   "o on a kind: sweep entry reopens with the orchestrate kind (%r)"
+   % (APP.modal and APP.modal["typ"]))
+keys, heads = table_keys()
+ok("ORCHESTRATE" in heads and {"automate", "cadence", "preview-gate"} <= set(keys),
+   "…and shows the orchestrate rows, the unticked ones too (%s)" % heads)
+ok("automate" in APP.modal["on"] and "nopush" not in APP.modal["on"],
+   "…pre-ticked from the entry's own options: line")
+before_text = sweep.read_text()
+APP.route_key("\x1b")
+ok(sweep.read_text() == before_text, "esc on the reopen leaves the file alone")
+
+ok(reopen(work) == "" and APP.modal["typ"] == "work", "o on a plain work entry: kind work")
+keys, heads = table_keys()
+ok("ORCHESTRATE" not in heads and not {"automate", "cadence"} & set(keys),
+   "…and no orchestrate row (%s)" % heads)
+APP.route_key("\x1b")
+
+# A sweep writes its OWN next entry (sweep.md step 7). That entry must carry
+# kind: sweep too, or `o` on the second sweep of a chain loses these rows.
+ok("kind: sweep" in (TEMPLATES / "sweep.md").read_text(),
+   "sweep.md tells the next entry in the chain to carry kind: sweep")
+
+# A kind: the form does not know is not trusted: the reopen falls back to the
+# entry's type rather than offering a table for a kind nobody defined.
+odd = SCHEDULES / "odd-kind.md"
+odd.write_text(work.read_text().replace("type: work\n", "type: work\nkind: banana\n", 1))
+ok(reopen(odd) == "" and APP.modal["typ"] == "work",
+   "an unknown kind: reopens as its type: (%r)" % (APP.modal and APP.modal["typ"]))
+APP.route_key("\x1b")
+odd.unlink()
 
 # ------------------------------------------------------------------ missing
 print("== a template setup-schedules.py never wrote")

@@ -24,6 +24,7 @@ watchdog: off                 # optional: never restart this session after a lim
 monitor: off                  # optional: never wind this session down
 rc: on                        # optional: send /rc once it is ready (default: Settings)
 options: questions, phases, lanes=3, model=opus[1m]   # written by the options table
+kind: sweep                   # written by c ▸ orchestrate; read only by o
 status: pending
 created: 2026-09-06 09:55
 launched:
@@ -53,6 +54,7 @@ The new window opens right after its `window:` target, named for its slug, and t
 | `monitor` | no | `off` | never wind this session down |
 | `rc` | no | `on` · `off` | [send `/rc` once the window is ready](#rc-on-and-rc-off); absent is the Settings default, `DASHBOARD_NEW_RC` |
 | `options` | no | `key, key=value, …` | [what the options table ticked](#the-options-table); the executor parses nothing from it |
+| `kind` | no | `wave` · `sweep` | written by the form, read by the form, ignored by the executor. `c ▸ orchestrate` writes it on a [wave or a sweep](orchestration.md), which is still `type: work`, and `o` reads it to offer the orchestrate options again. Any other value is ignored and the entry reopens as its `type:` |
 | `status` | written by the executor | `pending` · `launched` · `error` · empty | empty counts as pending. `error` is a launch that failed, with the reason in the log and on the phone |
 | `created` | informational | a timestamp | |
 | `launched` | written by the executor | a timestamp, or empty | |
@@ -195,7 +197,7 @@ A `{{NAME}}` outside that table is left in the paste as **literal text** and war
 |---|---|
 | `↑` `↓` | pick an entry; the WHY panel under the table explains the one under the cursor |
 | `enter` / `e` | edit it |
-| `c` | create: type, template, the options table, then the editor to paste the prompt |
+| `c` | create: `plan`, `work` or `orchestrate` (then `wave` or `sweep`), a template for a plan, the options table, then the editor to paste the prompt |
 | `o` | reopen the options table on a pending entry |
 | `l` | launch now |
 | `d` | delete |
@@ -222,9 +224,13 @@ group: contract           # the table's section heading
 label: questions go to a file
 hint: nobody is watching: QUESTIONS-{{SLUG}}.md, recommended answer
 default: on               # ticked when the table opens
-types: work               # optional: only offered for this type
+types: work               # optional: plan, work or orchestrate; absent = all
 line: Nobody is watching this window: do not ask questions. …
 ```
+
+Which blocks the table offers depends on what `c` was asked to make. A `plan` sees the blocks with no `types:` and `types: plan`; a `work` entry, no `types:` and `types: work`; an **`orchestrate`** pick sees those work blocks too, plus the `types: orchestrate` ones — `automate`, `preview-gate`, `rules-file`, `cadence` and the rest, described on [Orchestrators](orchestration.md). The entry it writes is still `type: work` with a `kind: wave` or `kind: sweep` line beside it, which is how `o` knows to offer the orchestrate rows again. The two shapes start from different ticks: a **wave** turns on `orchestrate`; a **sweep** turns off `subwindows`, `preview-gate` and `rules-file`, because it owns no lanes and never releases; **both** turn off `nopush`, because `automate` tells the window to push, open PRs and merge them. An option that is ticked is always shown, whatever its `types:`, so a tick can always be taken off.
+
+A sweep's entry is named `sweep-<MMDD>` — `-b`, `-c` … when that name already has an entry or a handover — and pins it with `slug:`, because the sweep closes finished windows by slug and one called plain `sweep` would find its predecessor's handover in `done/` and close itself. If `templates/orchestrate.md` or `templates/sweep.md` is missing (an account whose `setup-schedules.py` has not run since they were added), the picker says so on that row and choosing it writes nothing. An `options.md` from before the orchestrate blocks existed has none of them — `install.sh` copies it once and never again — and the table says so when it opens; copy the `orchestrate` group from `seeds/options.md` to get them.
 
 A tick writes one of two things: a **sentence**, appended to the body under a `## Options` heading at the end of it, or a **header field** — `set: model` with `choices:` opens the picker and writes `model:`, which the launcher passes as `claude --model`. `ask: number` (or `text`) collects a value on toggle and substitutes it into `{{VALUE}}`.
 

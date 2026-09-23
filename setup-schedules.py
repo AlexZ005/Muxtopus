@@ -269,8 +269,8 @@ You work on this account only: every path below is its own.
    line and in {{HANDOVER}}, and end the chain; the owner starts the next one
    with `c`. Otherwise write {{SCHEDULES}}/sweep-<MMDD>.md, today's date, with
    -b, -c ... added when that slug is {{SLUG}} or already has an entry or a
-   handover: type: work, template: sweep, slug: the same name, cwd: {{CWD}},
-   at: the cadence an option below gives, or `reset` when none does -- NEVER
+   handover: type: work, kind: sweep, template: sweep, slug: the same name,
+   cwd: {{CWD}}, at: the cadence an option below gives, or `reset` when none does -- NEVER
    sooner -- and the model:, effort:, permission-mode: and options: lines of
    the entry that launched you. Its body is that entry FILE's `## Options` section,
    copied from the file, not from this paste: the file still holds its
@@ -316,6 +316,7 @@ Format:
     monitor: off                   (optional: opt this session out of wind-downs)
     rc: on                         (optional: send /rc once the window is ready; default from Settings)
     options: questions, phases     (written by the dashboard's options table; see below)
+    kind: sweep                    (written by the dashboard's c ▸ orchestrate; see below)
     status: pending                (the executor rewrites this)
     created: 2026-09-06 09:55
     launched:
@@ -375,6 +376,10 @@ THE EXECUTOR PARSES NOTHING FROM IT. The sentences those options produce are
 ordinary body text by the time this folder is read, and the header fields they
 set (`model:`, `effort:`, `permission-mode:`) are ordinary header fields. Deleting the line changes
 nothing about how the entry runs -- only what the table shows when reopened.
+
+`kind: wave` or `kind: sweep` is the same kind of line: written by the form's
+third pick (`c` > orchestrate), read by the form (`o` offers the orchestrate
+options again), ignored by the executor. The entry is still `type: work`.
 
 ## `permission-mode:` -- the one setting that cannot be fixed after launch
 

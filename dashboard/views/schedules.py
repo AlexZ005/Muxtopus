@@ -201,7 +201,13 @@ class ScheduleView(View):
         for o in opts:
             if o["set"] and o["key"] not in on and have.get(o["set"]):
                 on[o["key"]] = have[o["set"]]
-        self.open_options(r["file"].name[:-3], r["type"], opts, on,
+        # THE KIND IS READ FROM `kind:`, not `type:`. An orchestrator is
+        # `type: work` (the executor knows no third type), so the header type
+        # alone would reopen a wave or a sweep on the plain work table and
+        # lose its orchestrate rows. A kind: the form never writes is not
+        # trusted -- the entry reopens as its type, as before kind: existed.
+        kind = "orchestrate" if have.get("kind") in ORCH_SHAPES else r["type"]
+        self.open_options(r["file"].name[:-3], kind, opts, on,
                           lambda st, f=r["file"]: self._write_options(f, st),
                           mode="reopen")
         return ""
