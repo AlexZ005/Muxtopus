@@ -86,6 +86,11 @@ ARMED_ONCE="$STATE_DIR/armed.once"
 # migrate_window_names.
 NAMES_MIGRATED="$STATE_DIR/names.migrated"
 STATUS="$STATE_DIR/status.tsv"
+# ITS COLUMNS, NAMED ONCE for the two things that print them: --status, whose
+# raw rows had no names at all until SAID made twenty of them, and --dry-run's
+# table. SAID is last in the file and so last here: it is the widest and the
+# least needed, and the end of the line is what a narrow terminal loses first.
+STATUS_COLS=$'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\tMONOPTOUT\tPID\tSAID'
 PROMPTED="$STATE_DIR/prompted"
 LOG="$STATE_DIR/log"
 MSGFILE="$STATE_DIR/message"
@@ -343,6 +348,9 @@ case "${1:---once}" in
                hb="$(awk -F'\t' -v n="$(date +%s)" '{printf "%ds ago", n-$1}' "$STATE_DIR/heartbeat")"
              fi
              echo "# account=$MUX_LABEL restart=$r monitor=$m soft=$SOFT_PCT% hard=$HARD_PCT% interval=${INTERVAL}s usage-every=${USAGE_EVERY}m scanned=$hb"
+             # A comment line, like the one above, so a reader that skips
+             # `#` lines still gets exactly the rows the file holds.
+             echo "# $STATUS_COLS"
              [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
   # ARM AND DISARM ARE DECISIONS, and they are now RECORDED as such
   # (ARMED_ONCE). Whether this install has ever had one made is what tells a
@@ -3686,7 +3694,7 @@ pass() {
   # `muxtopus stats` read, accruing whether or not anybody is looking.
   stats_collect "$now"
   if [ "$DRY" = 1 ]; then
-    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\tMONOPTOUT\tPID\n'
+    { printf '%s\n' "$STATUS_COLS"
       awk -F'\t' 'BEGIN{OFS="\t"} {$1=substr($1,1,8);
         if ($9!="-" && $9!="") $9=strftime("%m-%d %H:%M",$9); print}' "$STATUS"
     } | column -t -s $'\t'

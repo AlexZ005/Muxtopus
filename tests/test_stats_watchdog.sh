@@ -224,6 +224,11 @@ idle="$(awk -F'\t' -v s="$SID2" '$1==s{print $14}' "$ST/status.tsv")"
 E="$(date -d 2026-09-23T10:00:12Z +%s)"
 check "the idle column is still the last TURN's ($idle s)" \
   [ "$idle" -ge $(( t0 - E )) ] && [ "$idle" -le $(( t1 - E )) ]
+out="$("$W" --status)"
+check "--status names the column, last"       grep -q $'\tPID\tSAID$' <<<"$out"
+check "--status prints the digest"            grep -qF 'P1 is in: the digest' <<<"$out"
+out="$("$W" --dry-run 2>/dev/null)"
+check "--dry-run's table has it too"          grep -qE 'PID +SAID$' <<<"$out"
 kill "$SLEEPER2" 2>/dev/null; SLEEPER2=""
 
 echo "== nothing outside the sandbox was touched"
