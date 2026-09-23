@@ -4,6 +4,22 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.3.3 — 2026-09-23
+
+The release that prices Opus 5.5. Sessions on `claude-opus-5-5` showed `no price`
+in the insights view and `muxtopus stats`; the seed price table now carries Opus
+5.5's own list prices.
+
+A patch: a new row in a seed file; nothing a user's own files name is renamed or
+moved, and an existing install keeps its own price table.
+
+### Insights
+
+#### insights: Opus 5.5 sessions are priced
+
+- The insights view and `muxtopus stats` price Opus 5.5 sessions (`claude-opus-5-5`) and show their share of the context window, where before they said `no price` and skipped the %. Opus 5.5 has its own list prices, lower than Opus 5's: $4 in, $20 out, and $0.20 for a cache read.
+- The installer copies `seeds/prices.md` only onto a machine that has no price table, so an existing install keeps showing `no price` until you copy the `claude-opus-5-5` block from `seeds/prices.md` into `~/.config/muxtopus/prices.md`.
+
 ## v5.3.2 — 2026-09-22
 
 The release that stops a new window spending its first turn on its own
