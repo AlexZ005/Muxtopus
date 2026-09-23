@@ -30,6 +30,11 @@ What is promised:
   * hiding `system` takes the extras row out of the walk, and a session row
     still opens;
   * shift-← at offset 0 says "nothing to scroll" and does not move.
+  * SAID, the last thing each session said, is HIDDEN UNTIL ASKED FOR --
+    on a fresh config AND on one that already hides something else -- and
+    once asked for draws the digest, or "—" for a session whose `-` means
+    not known. The row parser reads it as status.tsv's column 19 and an
+    older watchdog's nineteen-column row as `-`.
 
 `open_selected` is exercised on a BACKGROUND session on purpose: the other
 branch shells out to tmux, and a test in this repo does not run a bare tmux
@@ -74,13 +79,15 @@ def check(cond, what):
 
 
 # ---------------------------------------------------------------- fixtures
-def session(sid, window, ctx, spent=1000, job=""):
+def session(sid, window, ctx, spent=1000, job="", said="-"):
     return ClaudeSession(sid=sid, window=window, pane="", ver="1", ctx=ctx,
                          state="working", reset="", action="", spent=spent,
-                         model="opus", idle=60, job=job, cwd=TMP, pid=os.getpid())
+                         model="opus", idle=60, job=job, cwd=TMP, pid=os.getpid(),
+                         said=said)
 
 
-SESSIONS = [session("aaaaaaaa-1", "lane-one", 300000, job="bg1"),
+SAID1 = "P3 is in: SAID is a hidden column one enter away"
+SESSIONS = [session("aaaaaaaa-1", "lane-one", 300000, job="bg1", said=SAID1),
             session("bbbbbbbb-2", "lane-two", 120000, job="bg2")]
 
 mainmod.claude_sessions = lambda: (list(SESSIONS), 1.0)
@@ -92,7 +99,8 @@ def fresh(width=200, height=60):
     app = App(2.0, Console(width=width, height=height, force_terminal=False))
     view = mainmod.MainView(app)
     app.add_view(view)
-    for key in (columnsmod.HIDDEN_KEY, columnsmod.PINNED_KEY, columnsmod.PANELS_KEY):
+    for key in (columnsmod.HIDDEN_KEY, columnsmod.PINNED_KEY, columnsmod.PANELS_KEY,
+                columnsmod.SHOWN_KEY):
         muxsettings.put(key, "", PROFILE)
     columnsmod.forget()
     return app, view
@@ -304,6 +312,71 @@ check("bg2" in msg, "enter on a session still opens it: %r" % msg)
 check(view.cursor_sid() == SESSIONS[-1].sid,
       "...and the cursor is on a session, not on the extras sentinel")
 put(columnsmod.PANELS_KEY, "")
+
+# ======================================================== SAID, until asked
+print("== SAID is hidden until asked for")
+app, view = fresh()
+sections = view.build_main()
+plan = view.column_plans()["claude"]
+check("SAID" not in plan[0] + plan[1] + plan[2],
+      "a fresh config: not drawn, and not counted off either side")
+check(SAID1 not in text_of(app, sections), "...and the digest is nowhere on screen")
+check(columnsmod.hidden_columns(PROFILE)["claude"] == {"SAID"},
+      "it is the ONLY column hidden on a fresh config")
+put(columnsmod.HIDDEN_KEY, "claude:RESUMED")
+view.build_main()
+plan = view.column_plans()["claude"]
+check("SAID" not in plan[0] + plan[1] + plan[2] and "RESUMED" not in plan[0],
+      "a config that already hides something else STILL hides SAID -- the upgrade case")
+put(columnsmod.HIDDEN_KEY, "")
+
+print("== asked for, SAID draws the digest, and '-' as every unknown is drawn")
+# 260, not 200: the whole claude table wants 144 and SAID 82 more, so at 200
+# it is -- correctly -- off-screen right. The 80-column case is below.
+app, view = fresh(width=260)
+put(columnsmod.SHOWN_KEY, "claude:SAID")
+sections = view.build_main()
+frame = text_of(app, sections)
+check("SAID" in view.column_plans()["claude"][0], "at 260 columns it is drawn")
+check(SAID1 in frame, "the digest is on screen")
+row2 = next(l for l in frame.splitlines() if "lane-two" in l)
+check(row2.rstrip(" │╯╮").endswith("—"),
+      "a session with no digest ends in '—', not blank: %r" % row2[-20:])
+check("SAID" == view.column_plans()["claude"][0][-1], "...and it is the LAST column")
+narrow, nview = fresh(width=80)
+put(columnsmod.SHOWN_KEY, "claude:SAID")
+nview.build_main()
+nview.cursor = SESSIONS[0].sid
+for _ in range(12):
+    nview.scroll_columns(1)
+nview.build_main()
+check("SAID" in nview.column_plans()["claude"][0],
+      "at 80 columns shift-→ reaches it: its width follows the terminal (%r)"
+      % nview.column_plans()["claude"][0])
+put(columnsmod.SHOWN_KEY, "")
+
+print("== the row parser: column 19, and an older watchdog's nineteen")
+from dashboard import data as datamod      # noqa: E402
+_status = pathlib.Path(TMP) / "status.tsv"
+_base = ["sid-%d", "win", "%1", "1", "10", "idle", "-", "", "0", "0", "0", "0",
+         "opus", "5", "", "/tmp", "0", "0", "123"]
+_status.write_text("\n".join([
+    "\t".join([_base[0] % 1] + _base[1:]),                        # 19: old
+    "\t".join([_base[0] % 2] + _base[1:] + ["said this"]),        # 20: new
+    "\t".join([_base[0] % 3] + _base[1:] + [""]),                 # 20, empty
+    "\t".join([_base[0] % 4] + _base[1:] + ["-"])]) + "\n")       # 20, unknown
+_was = datamod.WATCHDOG_STATUS
+datamod.WATCHDOG_STATUS = _status
+try:
+    got = {x.sid: x for x in datamod.claude_sessions()[0]}
+finally:
+    datamod.WATCHDOG_STATUS = _was
+check(len(got) == 4 and got["sid-1"].pid == 123,
+      "an old nineteen-column row parses, every field where it was")
+check(got["sid-1"].said == "-", "...and its SAID is '-': not known")
+check(got["sid-2"].said == "said this", "a twenty-column row carries the digest")
+check(got["sid-3"].said == "-" and got["sid-4"].said == "-",
+      "an empty field reads as '-', never as 'said nothing'")
 
 # =============================================================== the values
 print("== the values themselves")

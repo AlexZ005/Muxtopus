@@ -3,7 +3,8 @@
 Two menus over the main view's shape: which of its table columns are shown,
 pinned or hidden, and which of its whole sections are drawn at all. Written
 through muxsettings into dashboard.conf as DASHBOARD_COLUMNS_HIDDEN,
-DASHBOARD_COLUMNS_PINNED and DASHBOARD_PANELS_HIDDEN; the parsing, the
+DASHBOARD_COLUMNS_PINNED, DASHBOARD_COLUMNS_SHOWN and DASHBOARD_PANELS_HIDDEN;
+the parsing, the
 validation and the cached reading are dashboard/columns.py's, which the
 main view reads through as well, so the menu and the table can never
 disagree about what the file says.
@@ -44,7 +45,7 @@ is the reason this menu is allowed to exist:
   * THE CLAUDE TABLE CANNOT BE HIDDEN and neither can the marker column the
     cursor is drawn in; dashboard/columns.py refuses both by name.
 
-This file registers everything it needs -- the three keys, two menus, two
+This file registers everything it needs -- the four keys, two menus, two
 Settings rows and its help -- so it is one of the "a feature is one file"
 kind, the way dashboard/menus/tabs.py is.
 """
@@ -68,7 +69,7 @@ from dashboard.data import processes, uptime_seconds
 COLUMNS = {
     "lanes": ("PORT", "RAM", "AGE", "LANE", "ACCOUNT", "DIRTY", "STATE"),
     "claude": ("MON", "WINDOW", "MODEL", "CONTEXT", "SPENT", "IDLE",
-               "STATE", "DIRTY", "WOUND", "RESUMED"),
+               "STATE", "DIRTY", "WOUND", "RESUMED", "SAID"),
 }
 
 # ACCOUNT is in the lanes table only while `f` shows every account. It is
@@ -76,6 +77,15 @@ COLUMNS = {
 # twice must not lose the choice, and a row that vanished from this menu
 # with the column would be a setting the user could never take back.
 ONLY_WITH_F = {("lanes", "ACCOUNT")}
+
+# THE HIDDEN-UNTIL-ASKED COLUMNS (dashboard/columns.py, DEFAULT_HIDDEN) say
+# what they would show, in the row, because a column nobody has ever seen is
+# a name nobody can guess the meaning of.
+HIDDEN_UNTIL_ASKED = {
+    ("claude", "SAID"): "hidden until asked for -- enter shows it: the last "
+                        "thing each session said, its first 80 characters, "
+                        "from the watchdog (--status has it too)",
+}
 
 # What each panel actually holds, said in the row, because "system" is not
 # a thing anybody has a picture of until you say what is on it.
@@ -109,6 +119,14 @@ class ColumnsMenu:
         hidden = columnsmod.hidden_columns(PROFILE).get(table, set())
         pinned = columnsmod.pinned_columns(PROFILE).get(table, set())
         if name in hidden:
+            if (name not in columnsmod.chosen_hidden(PROFILE).get(table, set())
+                    and columnsmod.hidden_by_default(table, name)):
+                # Hidden because nobody asked for it yet, not because the
+                # user hid it -- so the row says what it WOULD show, which
+                # is the one thing a person deciding whether to press enter
+                # needs to know.
+                return "hidden", HIDDEN_UNTIL_ASKED.get(
+                    (table, name), "hidden until asked for: enter shows it")
             return "hidden", "not drawn, and its data is unchanged: the row, the session menu and enter never read a column"
         plan = self.plans().get(table)
         keep, left, right = (plan[0], plan[1], plan[2]) if plan else ([], [], [])
@@ -163,26 +181,43 @@ class ColumnsMenu:
         that becomes hidden has to leave the pinned list in the same
         breath, or the file holds the one combination that cannot be drawn
         and the window has to rescue it on every frame afterwards.
+
+        A HIDDEN-UNTIL-ASKED COLUMN (SAID) is shown by joining the shown
+        key and hidden again by LEAVING it, never by joining the hidden key:
+        its default is hidden, so "hidden" for it is "back to the default",
+        and a hidden key that named it would outlive the user's next change
+        of mind for no reason. The three keys are written together for the
+        same one-answer reason as the two always were.
         """
-        hidden = {t: set(v) for t, v in columnsmod.hidden_columns(PROFILE).items()}
+        hidden = {t: set(v) for t, v in columnsmod.chosen_hidden(PROFILE).items()}
         pinned = {t: set(v) for t, v in columnsmod.pinned_columns(PROFILE).items()}
-        if name in hidden.get(table, ()):
+        shown = {t: set(v) for t, v in columnsmod.shown_columns(PROFILE).items()}
+        by_default = columnsmod.hidden_by_default(table, name)
+        if name in columnsmod.hidden_columns(PROFILE).get(table, ()):
             hidden[table].discard(name)             # hidden -> shown
             pinned[table].discard(name)
+            if by_default:
+                shown[table].add(name)
             now = "shown"
         elif name in pinned.get(table, ()):
             pinned[table].discard(name)             # pinned -> hidden
-            hidden[table].add(name)
+            if by_default:
+                shown[table].discard(name)
+            else:
+                hidden[table].add(name)
             now = "hidden"
         else:
             pinned[table].add(name)                 # shown -> pinned
             now = "pinned"
         # NONE, not "": muxsettings.put deletes a key written empty, and an
         # absent pinned key means the DEFAULT rather than nothing -- so
-        # unpinning the last column would quietly pin it again.
+        # unpinning the last column would quietly pin it again. The shown
+        # key has no such trap: absent means none shown, which is what an
+        # empty one means too.
         for key, value in ((columnsmod.HIDDEN_KEY, columnsmod.unparse(hidden)),
                            (columnsmod.PINNED_KEY,
-                            columnsmod.unparse(pinned) or columnsmod.NONE)):
+                            columnsmod.unparse(pinned) or columnsmod.NONE),
+                           (columnsmod.SHOWN_KEY, columnsmod.unparse(shown))):
             err = muxsettings.put(key, value, PROFILE)
             if err:
                 columnsmod.forget()
@@ -305,6 +340,11 @@ HELP_COLUMNS = f"""
     nine names at 80 columns. HIDDEN WINS OVER PINNED. ACCOUNT is always
     listed even though the lanes table only has it under [bold]f[/].
 
+    [bold]SAID[/] -- the last thing each session said, its first 80 characters --
+    is HIDDEN UNTIL ASKED FOR: one enter on its row shows it, and hiding it
+    again puts it back to that default. The watchdog publishes it whether
+    or not it is shown, and `claude-watchdog.sh --status` prints it too.
+
     Settings ▸ Panels leaves a whole section out: the deck header, the lanes
     table, the uncommitted trees or the system line. That is a CHOICE and is
     made before the short-terminal rule runs, so the "hidden: short
@@ -314,8 +354,9 @@ HELP_COLUMNS = f"""
     than out of reach. The claude table is the view itself and cannot be
     hidden.
 
-    All three are written to dashboard.conf: DASHBOARD_COLUMNS_HIDDEN,
-    DASHBOARD_COLUMNS_PINNED and DASHBOARD_PANELS_HIDDEN, by NAME with the
+    All of it is written to dashboard.conf: DASHBOARD_COLUMNS_HIDDEN,
+    DASHBOARD_COLUMNS_PINNED, DASHBOARD_COLUMNS_SHOWN (the hidden-until-asked
+    columns you asked for) and DASHBOARD_PANELS_HIDDEN, by NAME with the
     table in front ({columnsmod.DEFAULT_PINNED}) -- never by index, because
     STATE and DIRTY are in both tables and ACCOUNT comes and goes with [bold]f[/].
 """

@@ -841,6 +841,16 @@ class MainView(View):
         # can never take a row with it.
             ("WOUND", {"width": 12}, None),
             ("RESUMED", {"width": 12}, None),
+            # SAID -- the last thing the session said -- LAST, and HIDDEN
+            # UNTIL ASKED FOR (dashboard/columns.py, DEFAULT_HIDDEN). Its
+            # width follows the terminal because a fixed 80 could never be
+            # reached: the window draws a column whole or not at all, and at
+            # 80 columns only 47 are left beside the marker and the pinned
+            # WINDOW (76 inside the borders, less 5 and 22), so an 80-wide
+            # SAID would sit off-screen right with shift-→ unable to bring
+            # it in. So: all 80 from 113 columns up, less below, never under
+            # 20 -- and a digest longer than its cell ends in an ellipsis.
+            ("SAID", {"width": max(20, min(80, self.app.console.size.width - 33))}, None),
         ]
         ct_rows: list[list] = []
         ct_cur = -1
@@ -914,12 +924,16 @@ class MainView(View):
                        Text(human_tokens(s.spent), style=DIM), idle_txt, st_txt,
                        dirty_txt,
                        Text(when(s.wound), style=DIM if s.wound else FRAME),
-                       Text(when(s.resumed), style=DIM if s.resumed else FRAME)])
+                       Text(when(s.resumed), style=DIM if s.resumed else FRAME),
+                       # `-` is "not known" (no transcript, or a watchdog too
+                       # old to publish it), drawn as every unknown here is.
+                       (Text(s.said, style=DIM) if s.said != "-"
+                        else Text("—", style=FRAME))])
 
         if not sessions:
             ct_rows.append(["", "", Text("—", style=DIM), "",
                             Text("no claude sessions" if not wd_stale else "watchdog not running",
-                                 style=DIM), "", "", "", "", "", ""])
+                                 style=DIM), "", "", "", "", "", "", ""])
 
         wd_label = ("watchdog on", GREEN) if wd_on else ("watchdog off", DIM)
         if wd_stale:
@@ -1536,6 +1550,9 @@ HELP_CLAUDE = f"""
     [bold]IDLE[/] is time since that session last wrote a turn; it goes amber past
     15 minutes, so a stalled window reads differently from a finished one.
     [bold]RESUMED[/] is when the watchdog last restarted that session.
+    [bold]SAID[/] is the first 80 characters of the last thing it said -- its last
+    text, so after a tool call it is older than the turn IDLE counts from.
+    Hidden until asked for: esc ▸ Settings ▸ Columns, enter on its row.
 """
 
 HELP_DIRTY = f"""

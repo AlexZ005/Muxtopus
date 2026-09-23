@@ -189,11 +189,11 @@ def ports_for(pids: list[int], inodes: dict[int, int]) -> dict[int, int]:
 class ClaudeSession:
     __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action",
                  "resumed", "spent", "cached", "optout", "model", "idle", "job",
-                 "cwd", "wound", "dirty", "moptout", "pid")
+                 "cwd", "wound", "dirty", "moptout", "pid", "said")
 
     def __init__(self, sid, window, pane, ver, ctx, state, reset, action,
                  resumed=0, spent=0, cached=0, optout=False, model="-", idle=-1, job="",
-                 cwd="-", wound=0, moptout=False, pid=0):
+                 cwd="-", wound=0, moptout=False, pid=0, said="-"):
         self.sid, self.window, self.pane, self.ver = sid, window, pane, ver
         self.ctx, self.state, self.reset, self.action = ctx, state, reset, action
         self.resumed, self.spent, self.cached = resumed, spent, cached
@@ -201,6 +201,7 @@ class ClaudeSession:
         self.idle, self.job = idle, job
         self.cwd, self.wound, self.moptout = cwd, wound, moptout
         self.pid = pid
+        self.said = said
         self.dirty = 0          # filled in from the repo sweep at render time
 
 
@@ -240,6 +241,10 @@ def claude_sessions() -> tuple[list[ClaudeSession], float]:
             num(f, 16) if len(f) > 16 else 0,
             (len(f) > 17 and f[17] == "1"),
             num(f, 18) if len(f) > 18 else 0,
+            # SAID, the last column since the watchdog learned it: an older
+            # watchdog's nineteen-column row reads as `-` -- not known, which
+            # is the truth -- never as "" (said nothing).
+            (f[19] or "-") if len(f) > 19 else "-",
         ))
     return out, age
 

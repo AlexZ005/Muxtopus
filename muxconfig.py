@@ -116,6 +116,12 @@ KEYS = {
     # its name column gone is a grid of numbers about nothing. An explicit
     # empty value is the user saying they want nothing pinned, and is kept.
     "DASHBOARD_COLUMNS_PINNED": None,
+    # The columns that are HIDDEN UNTIL ASKED FOR (SAID, the last thing each
+    # session said) and that the user has asked for, same shape. A key of
+    # its own rather than a default for the hidden key, because every config
+    # that already names a hidden column would otherwise show SAID the day
+    # it appeared. Unset: none of them shown.
+    "DASHBOARD_COLUMNS_SHOWN": None,
     # Whole sections of the main view the user does not want drawn, of
     # deck,lanes,uncommitted,system. `claude` is deliberately absent: it is
     # the screen. Unset: all shown. The degrade rule (a short terminal) is

@@ -106,6 +106,7 @@ DASHBOARD_NEW_RC=off
 DASHBOARD_TABS_HIDDEN=-
 DASHBOARD_COLUMNS_HIDDEN=-
 DASHBOARD_COLUMNS_PINNED=-
+DASHBOARD_COLUMNS_SHOWN=-
 DASHBOARD_PANELS_HIDDEN=-
 WATCHDOG_RESTORE=ask
 WATCHDOG_RESTORE_MAX_AGE=24
@@ -367,6 +368,8 @@ mux_key_help() {
                             echo "comma-separated (claude:RESUMED,lanes:RAM). Settings > Columns." ;;
     DASHBOARD_COLUMNS_PINNED) echo "Columns that never scroll off and are never squeezed, same shape."
                             echo "Unset means lanes:LANE,claude:WINDOW; empty means nothing pinned." ;;
+    DASHBOARD_COLUMNS_SHOWN) echo "Columns hidden until asked for (claude:SAID) that you asked for, same"
+                            echo "shape. Unset shows none of them. Settings > Columns writes it." ;;
     DASHBOARD_PANELS_HIDDEN) echo "Panels left out of the main view, of deck,lanes,uncommitted,system,"
                             echo "comma-separated. Unset shows all. esc > Settings > Panels." ;;
     # Phone notifications (claude-notify.sh + muxtelegram.py). These are

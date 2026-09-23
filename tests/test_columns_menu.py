@@ -21,6 +21,10 @@ What is promised:
     in this frame is kept (that is ACCOUNT under a filtered lanes table);
   * COLUMNS here does not drift from the view's specs: every name listed,
     ACCOUNT aside, is a column of the real wide frame;
+  * SAID is listed, HIDDEN on a fresh config, and its row says what it would
+    show; enter shows it through DASHBOARD_COLUMNS_SHOWN, and hidden again
+    it goes back to its default -- the shown key emptied, the hidden key
+    never naming it;
   * the LABEL carries the state and the position -- what a narrow terminal
     must keep -- and the sentence explaining it is the row's `desc`, the
     line the menu engine reserves under the cursor.
@@ -84,7 +88,8 @@ def fresh(width=200, height=60):
     view = mainmod.MainView(app)
     app.add_view(view)
     menumod.register(app)
-    for key in (columnsmod.HIDDEN_KEY, columnsmod.PINNED_KEY, columnsmod.PANELS_KEY):
+    for key in (columnsmod.HIDDEN_KEY, columnsmod.PINNED_KEY, columnsmod.PANELS_KEY,
+                columnsmod.SHOWN_KEY):
         muxsettings.put(key, "", PROFILE)
     columnsmod.forget()
     view.build_main()
@@ -113,7 +118,7 @@ items = [it for it in rows(app, "columns") if "·" in it.get("label", "")
 labels = [it["label"] for it in items]
 check(len(labels) == len(menumod.COLUMNS["lanes"]) + len(menumod.COLUMNS["claude"]),
       "%d rows, one per named column" % len(labels))
-check(labels[0].startswith("lanes · PORT") and labels[-1].startswith("claude · RESUMED"),
+check(labels[0].startswith("lanes · PORT") and labels[-1].startswith("claude · SAID"),
       "lanes first, then claude, each in the table's own order")
 check(not any(l.startswith("lanes ·  ") for l in labels),
       'the unnamed marker column is never listed')
@@ -149,6 +154,10 @@ check("only with f: all accounts" in it["desc"],
 
 print("== COLUMNS does not drift from the view's specs")
 wide, wview = fresh(width=260)
+# SAID is hidden until asked for, and a hidden column is in no plan list --
+# so it is asked for here, or the walk could not see it at all.
+muxsettings.put(columnsmod.SHOWN_KEY, "claude:SAID", PROFILE)
+columnsmod.forget()
 wview.lanes_all = True
 wview.build_main()
 plans = wview.column_plans()
@@ -201,8 +210,37 @@ row(app, "columns", "claude · WOUND")["act"]()     # shown -> pinned
 row(app, "columns", "claude · WOUND")["act"]()     # pinned -> hidden
 app.menu = {"kind": "columns", "i": 0}
 t = app.menu_title()
-check("1 hidden" in t and "3 pinned" in t,
-      "columns title counts both: %r (LANE, WINDOW, RESUMED pinned)" % t)
+check("2 hidden" in t and "3 pinned" in t,
+      "columns title counts both: %r (WOUND and SAID hidden; LANE, WINDOW, RESUMED pinned)" % t)
+
+# ======================================================= SAID, until asked
+print("== SAID: hidden until asked for, and back to that default")
+app, view = fresh(width=260)          # wide enough to draw all of it
+it = row(app, "columns", "claude · SAID")
+check(it["label"].endswith("hidden") and it["on"] is False,
+      "listed, and hidden on a fresh config: %r" % it["label"])
+check("last thing each session said" in it["desc"] and "enter shows it" in it["desc"],
+      "its row says what it would show, and what to press: %r" % it["desc"])
+msg = it["act"]()
+columnsmod.forget()
+check("SAID shown" in msg and 'DASHBOARD_COLUMNS_SHOWN="claude:SAID"' in conf(),
+      "hidden -> shown, through the SHOWN key: %r" % msg)
+check("SAID" not in columnsmod.chosen_hidden(PROFILE)["claude"]
+      and "SAID" not in columnsmod.hidden_columns(PROFILE)["claude"],
+      "...and it is out of the hidden set a frame draws from")
+view.build_main()
+check("SAID" in view.column_plans()["claude"][0], "the frame behind the menu draws it")
+row(app, "columns", "claude · SAID")["act"]()          # shown -> pinned
+check("SAID" in columnsmod.pinned_columns(PROFILE)["claude"], "shown -> pinned")
+row(app, "columns", "claude · SAID")["act"]()          # pinned -> hidden
+columnsmod.forget()
+check("SAID" in columnsmod.hidden_columns(PROFILE)["claude"]
+      and "SAID" not in columnsmod.pinned_columns(PROFILE)["claude"],
+      "pinned -> hidden")
+check("DASHBOARD_COLUMNS_SHOWN" not in conf() and "claude:SAID" not in conf(),
+      "...by going back to its DEFAULT: the shown key emptied, the hidden key never names it")
+check(row(app, "columns", "claude · SAID")["label"].endswith("hidden"),
+      "and the row says hidden again")
 
 # ================================================================== panels
 print("== the panel rows")
