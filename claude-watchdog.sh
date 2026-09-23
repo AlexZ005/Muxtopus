@@ -2442,12 +2442,45 @@ model_of() {
 }
 
 # Uncommitted work, published for the dashboard because that process must not
-# fork per frame. Only DIRTY repos are listed, so the common answer is an empty
-# file. -uno skips untracked scanning, which is the slow half of git status and
-# not what "work I could lose" means here -- an untracked scratch file is noise,
-# a modified tracked file is not.
+# fork per frame. Only trees with something to lose are listed, so the common
+# answer is an empty file. -uno skips untracked scanning, which is the slow half
+# of git status and not what "work I could lose" means here -- an untracked
+# scratch file is noise, a modified tracked file is not.
+#
+# AN UNPUSHED COMMIT IS WORK I COULD LOSE TOO, in exactly the sense above: a
+# clean tree three commits ahead of its upstream exists on this disk and
+# nowhere else. So a row is written when the tree is dirty OR ahead, and it
+# carries three more columns after the original three:
+#
+#   path  name  changed  branch  ahead  behind
+#
+# APPENDED, never interleaved: the dashboard's reader is positional and takes
+# any row of three or more, so an older dashboard reading this file keeps
+# every field it knew (a clean-but-ahead tree reaches it as a true 0 files).
+#
+# AHEAD AND BEHIND ARE `-` WHEN THEY CANNOT BE KNOWN, never 0. A branch with no
+# upstream, a detached HEAD, an upstream whose remote-tracking ref is gone:
+# rev-list fails, and "0 unpushed" there would be a guess dressed as a count.
+# `-` means "not measurable", and such a tree is listed only if it is dirty.
+# The detached HEAD's branch is `-` as well rather than its short sha: the
+# column answers "which branch", a sha in it reads as a branch name, and the
+# row's path already says which checkout it is.
+#
+# NO NETWORK. The counts are against the LAST-FETCHED upstream -- this never
+# fetches, so "behind" is only as fresh as the last `git fetch` somebody ran.
+# The open-PR count that would complete the picture is deliberately not here:
+# it needs `gh` and a network, a fresh machine has neither, and a hung call
+# would hold up the pass that restarts limited windows.
+#
+# WHAT IT COSTS, measured on this box: 76 checkouts under ~/.code; the
+# status loop alone took 0.31-0.35 s wall, and the two added calls per
+# checkout (symbolic-ref, rev-list) added 0.40-0.44 s; the whole sweep as
+# written here, 0.82 s, once per REPO_EVERY (120 s). 23 of the 76 had no
+# usable upstream and 12 were detached -- `-` is the common case, not a
+# corner.
+# A detached HEAD skips the rev-list, whose answer would be `-` anyway.
 sweep_repos() {
-  local last=0 now d n name
+  local last=0 now d n name br ab ahead behind
   [ -f "$REPOS_AT" ] && read -r last < "$REPOS_AT" 2>/dev/null
   now="$(date +%s)"
   [ $(( now - ${last:-0} )) -lt "$REPO_EVERY" ] && return 0
@@ -2455,9 +2488,23 @@ sweep_repos() {
   for d in "$HOME"/.code/*/ "$HOME"/.code/*/*/; do
     [ -e "$d/.git" ] || continue
     n="$(git -C "$d" status --porcelain -uno 2>/dev/null | wc -l)"
-    [ "${n:-0}" -gt 0 ] || continue
+    ahead=-; behind=-
+    br="$(git -C "$d" symbolic-ref --short -q HEAD 2>/dev/null)"
+    if [ -n "$br" ]; then
+      # LEFT IS THE UPSTREAM: `@{u}...HEAD` counts upstream-only commits
+      # first (behind), then ours (ahead). Anything but two numbers -- no
+      # upstream, a gone remote ref, a git that errors -- stays `-`.
+      ab="$(git -C "$d" rev-list --left-right --count '@{u}...HEAD' 2>/dev/null)"
+      case "$ab" in
+        [0-9]*[[:space:]][0-9]*) read -r behind ahead <<< "$ab"
+          case "$behind$ahead" in *[!0-9]*) ahead=-; behind=- ;; esac ;;
+      esac
+    else
+      br=-
+    fi
+    case "$ahead" in -|0) [ "${n:-0}" -gt 0 ] || continue ;; esac
     name="${d%/}"; name="${name##*/}"
-    printf '%s\t%s\t%s\n' "${d%/}" "$name" "$n" >> "$REPOS.tmp"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${d%/}" "$name" "${n:-0}" "$br" "$ahead" "$behind" >> "$REPOS.tmp"
   done
   mv "$REPOS.tmp" "$REPOS"
   printf '%s\n' "$now" > "$REPOS_AT"
