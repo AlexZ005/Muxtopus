@@ -63,7 +63,7 @@ The screens that share a tab strip name each tab **with its count** — `▸sche
 - **deck** — memory, swap, CPU, and the usage limits top right.
 - **lanes** — dev servers by port, with age and whether the tree is dirty.
 - **claude** — one row per session: context used, tokens spent, idle time, state, when it was last wound down and when it was last resumed. The account name appears in the title once you have more than one. A scheduled window that has been idle past `WATCHDOG_STRANDED` (default 120 min) with an open handover and nothing pending that names it reads **`stranded`** rather than `idle` — see [the watchdog](watchdog.md#stranded).
-- **uncommitted** — its own table rather than a column, because dirty trees and sessions do not line up: a repo can be dirty with no session and no dev server near it, and that is the copy most likely to be lost.
+- **uncommitted** — its own table rather than a column, because dirty trees and sessions do not line up: a repo can be dirty with no session and no dev server near it, and that is the copy most likely to be lost. `↑2` beside the file count is two commits not yet pushed.
 - **system** — process counts and free disk.
 
 ### The claude table
@@ -102,6 +102,8 @@ RAM is summed per **process group**: `npm run dev` and the vite it spawns are se
 ### Uncommitted work
 
 **DIRTY** on the lanes table is tracked files changed in that working tree. It is not on the claude table because a session's cwd is often your home, which is not a repo — the question is only answerable per *tree*. A dirty repo with no dev server would then be invisible, so the uncommitted table names those separately. Untracked files are ignored: a scratch file is noise, a modified tracked file is work you could lose.
+
+An unpushed commit is work you could lose too, so a tree that is **ahead** of its upstream is listed even when it is clean, with `↑n` beside its file count (`0 ↑2` is a clean tree two commits ahead) and the unpushed total in the panel's title. The count is against the last `git fetch` — the watchdog never touches the network — and a branch with no upstream, or a detached HEAD, shows no arrow at all rather than a `↑0` it cannot know. Such a tree is listed only when it is dirty. Trees with changed files come first, the most files at the top, then the clean-but-ahead ones. Behind is recorded in `repos.tsv` but not drawn: it is not work this machine could lose.
 
 ### Usage limits (top right)
 
