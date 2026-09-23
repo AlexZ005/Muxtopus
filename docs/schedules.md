@@ -1,6 +1,7 @@
 ---
 title: Scheduled windows
 nav_order: 5
+has_children: true
 ---
 {% raw %}
 # Scheduled windows
@@ -235,7 +236,7 @@ A block the reader cannot make sense of is shown greyed with its reason and cann
 
 ## `stranded`, and why the orchestrator is a pattern rather than a process
 
-An orchestrator doing two jobs at once — splitting a plan into lanes and writing their briefs, which needs a model, and noticing when a lane stops, which needs a clock — spends tokens on the second. Measured: four lanes settled into one state and stayed there for 3½ days, and the first change the watching loop saw woke the orchestrator to broadcast a pause to four windows, four turns for a message that said "do nothing". **So the liveness half belongs in the watchdog, a deterministic loop that costs nothing, and the judgment half belongs in a Claude window that stops between the two** — the window writes one entry per lane and one more with `after:` naming all of them, then ends its turn.
+An orchestrator doing two jobs at once — splitting a plan into lanes and writing their briefs, which needs a model, and noticing when a lane stops, which needs a clock — spends tokens on the second. Measured: four lanes settled into one state and stayed there for 3½ days, and the first change the watching loop saw woke the orchestrator to broadcast a pause to four windows, four turns for a message that said "do nothing". **So the liveness half belongs in the watchdog, a deterministic loop that costs nothing, and the judgment half belongs in a Claude window that stops between the two** — the window writes one entry per lane and one more with `after:` naming all of them, then ends its turn. The templates that do this — a wave that splits a plan into lanes, and a sweep that recurs to act on whatever has finished — are on [Orchestrators](orchestration.md).
 
 That needs the scheduler to say when a lane has gone quiet for good, which is what [`stranded`](watchdog.md#stranded) is: a lane, idle past `WATCHDOG_STRANDED` minutes, with an **open** handover, and no pending entry naming it — not its slug, not its `resume-` entry, not an `after:` waiting on it, nor a `window:` or `parent:` that will open under it. `idle` is a fact about the last turn; `stranded` is a fact about the future, and it is shown to a human rather than acted on. Nothing automatically resumes a stranded lane: an unrequested turn is still a turn. (A window the daemon itself wound down hard *is* resumed once its budget comes back — see [resuming a wind-down](watchdog.md#resuming-a-wind-down). That is a different case: there the turn was requested, by the directive that told the window to stop.)
 {% endraw %}
