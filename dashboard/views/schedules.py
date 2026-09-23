@@ -1077,8 +1077,8 @@ HELP_OPTIONS = f"""
     edit it in options.md where it came from.
 
     Placeholders in a sentence ({{{{SLUG}}}}, {{{{WINDOW}}}}, {{{{HANDOVER}}}},
-    {{{{QUESTIONS}}}}, {{{{SCHEDULES}}}}, {{{{CWD}}}}, {{{{PARENT}}}}) are written out
-    LITERALLY and resolved by the executor when the prompt is pasted, because
+    {{{{HANDOVERS}}}}, {{{{QUESTIONS}}}}, {{{{SCHEDULES}}}}, {{{{STATE}}}}, {{{{CWD}}}},
+    {{{{PARENT}}}}) are written out LITERALLY and resolved by the executor when the prompt is pasted, because
     the slug does not exist yet while the table is open. {{{{VALUE}}}} is the
     exception -- it is what the prompt collected, and it is resolved here.
 

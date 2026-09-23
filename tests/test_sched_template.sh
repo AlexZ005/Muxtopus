@@ -14,6 +14,11 @@
 #     flight. Now: the template, then the body, then the handover footer, in
 #     that order; a plan entry is unchanged; a work entry whose body is empty
 #     is NOT "empty" when its template carries the prompt.
+#   - {{HANDOVERS}} and {{STATE}}, the two folders an orchestrator reads,
+#     resolved beside {{HANDOVER}} in one body. sched_subst replaces
+#     {{HANDOVER}} FIRST -- the order that would break if its pattern could
+#     match the front of {{HANDOVERS}} -- so a clean paste here is the proof
+#     that the whole token, closing braces included, is what is matched.
 #
 # The sandbox of tests/notify_sandbox.sh on a socket of its own; nothing here
 # reaches a real pane, schedule or account.
@@ -73,4 +78,23 @@ chk="$("$W" --check lane-miss --body 2>&1)"
 check "NOT IN templates/" grep -q 'nosuch   -- NOT IN templates/' <<<"$chk"
 check "..and says nothing is prepended" grep -q 'nothing is prepended' <<<"$chk"
 check "the body is still pasted" grep -q 'BODY-LINE: alone' <<<"$(sed -n '/what would be pasted/,$p' <<<"$chk")"
+
+echo "== {{HANDOVER}}, {{HANDOVERS}} and {{STATE}} in one body"
+ST="$XDG_STATE_HOME/claude-watchdog"
+entry lane-ph work "" "one=[{{HANDOVER}}] all=[{{HANDOVERS}}] state=[{{STATE}}] again=[{{HANDOVERS}}/x]"
+chk="$("$W" --check lane-ph --body 2>&1)"
+out="$(sed -n '/what would be pasted/,$p' <<<"$chk")"
+check "{{HANDOVER}} is this lane's file" grep -qF "one=[$HO/STATUS-lane-ph.md]" <<<"$out"
+check "{{HANDOVERS}} is the folder, whole" grep -qF "all=[$HO]" <<<"$out"
+check "..every time it appears" grep -qF "again=[$HO/x]" <<<"$out"
+check "{{STATE}} is the watchdog's state folder" grep -qF "state=[$ST]" <<<"$out"
+check "..the folder the daemon keeps its tables in" \
+  bash -c '"$1" --on >/dev/null 2>&1; "$1" --once >/dev/null 2>&1; test -f "$2/sched-why.tsv"' _ "$W" "$ST"
+check "no braces left in the paste" bash -c '! grep -q "{{" <<<"$1"' _ "$out"
+check "no unknown-placeholder warning" bash -c '! grep -q "does not resolve" <<<"$1"' _ "$chk"
+check "--check lists all three as used" \
+  grep -q 'placeholders .*{{HANDOVER}} {{HANDOVERS}} {{STATE}}' <<<"$chk"
+entry lane-unk work "" "{{HANDOVERSX}} {{STATES}}"
+check "a near miss is still unknown, and said" \
+  grep -q 'contains {{HANDOVERSX}} {{STATES}}, which this scheduler does not resolve' <<<"$("$W" --check lane-unk 2>&1)"
 sb_done

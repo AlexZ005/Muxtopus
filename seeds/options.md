@@ -11,8 +11,8 @@
 #   ask:      number | text -- collects {{VALUE}} when ticked
 #
 # Placeholders are resolved when the prompt is PASTED, by sched_compose:
-#   {{SLUG}} {{WINDOW}} {{HANDOVER}} {{QUESTIONS}} {{SCHEDULES}} {{CWD}}
-#   {{PARENT}} {{VALUE}}
+#   {{SLUG}} {{WINDOW}} {{HANDOVER}} {{HANDOVERS}} {{QUESTIONS}} {{SCHEDULES}}
+#   {{STATE}} {{CWD}} {{PARENT}} {{VALUE}}
 #
 # Per account: profiles/<name>.options.md is read after this file and
 # overrides or adds by key. This file is yours; install.sh never rewrites it.

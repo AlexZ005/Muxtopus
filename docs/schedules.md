@@ -163,14 +163,16 @@ claude-watchdog.sh --tree     what the tree currently holds
 
 ## Placeholders in the body
 
-The body is not a literal string. Seven names are resolved when the body is *pasted*, over the template, the body and the work footer — never over the `[muxtopus]` identity lines, which are built from the resolved values already and go into the session's system prompt (`claude --append-system-prompt-file`) rather than the paste:
+The body is not a literal string. Nine names are resolved when the body is *pasted*, over the template, the body and the work footer — never over the `[muxtopus]` identity lines, which are built from the resolved values already and go into the session's system prompt (`claude --append-system-prompt-file`) rather than the paste:
 
 ```
 {{SLUG}}       27-storage
 {{WINDOW}}     the tmux window name: 27-storage
 {{HANDOVER}}   <handovers>/STATUS-27-storage.md
+{{HANDOVERS}}  <handovers>, the folder every lane's handover is in
 {{QUESTIONS}}  <handovers>/QUESTIONS-27-storage.md
 {{SCHEDULES}}  the schedules folder
+{{STATE}}      the watchdog's state folder: status.tsv, repos.tsv, tree.tsv, sched-why.tsv
 {{CWD}}        the entry's cwd: field
 {{PARENT}}     the entry's parent slug, or empty for a root window
 ```
@@ -224,7 +226,7 @@ The actions are **rows** at the bottom of the table: *check all*, *uncheck all*,
 
 The header also records `options: questions, phases, lanes=3`, and **that is the source of truth**. `o` reopens the table from it and regenerates the section, so a sentence edited by hand in that section is overwritten on the next save — move it above the heading (everything above is preserved byte for byte) or edit it in `options.md` where it came from. **The executor parses nothing from that line**: the sentences those options produce are ordinary body text by the time the folder is read, and the header fields they set are ordinary header fields. Deleting the line changes nothing about how the entry runs — only what the table shows when reopened.
 
-Every other placeholder — `{{SLUG}}`, `{{WINDOW}}`, `{{HANDOVER}}`, `{{QUESTIONS}}`, `{{SCHEDULES}}`, `{{CWD}}`, `{{PARENT}}` — is written out **literally** and resolved when the prompt is pasted, because the slug does not exist while the table is open. `{{VALUE}}` is the exception: it is what the prompt collected, and it is resolved in the table.
+Every other placeholder — `{{SLUG}}`, `{{WINDOW}}`, `{{HANDOVER}}`, `{{HANDOVERS}}`, `{{QUESTIONS}}`, `{{SCHEDULES}}`, `{{STATE}}`, `{{CWD}}`, `{{PARENT}}` — is written out **literally** and resolved when the prompt is pasted, because the slug does not exist while the table is open. `{{VALUE}}` is the exception: it is what the prompt collected, and it is resolved in the table.
 
 A block the reader cannot make sense of is shown greyed with its reason and cannot be ticked, exactly as a corrupted schedule entry is — it is never silently dropped. `python3 muxconfig.py --options` prints the same verdicts without a dashboard.
 

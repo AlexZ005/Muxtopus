@@ -1523,14 +1523,27 @@ sched_raw() {
 # Pattern quoted, replacement not: quoting the pattern is what stops bash
 # treating a placeholder as a glob, and the replacements are paths that must go
 # in verbatim.
-SCHED_PLACEHOLDERS="SLUG WINDOW HANDOVER QUESTIONS SCHEDULES CWD PARENT"
+#
+# {{HANDOVERS}} and {{STATE}} are the two folders an orchestrating window
+# reads, not writes: every lane's handover, and the watchdog's own tables
+# (status.tsv, repos.tsv, tree.tsv, sched-why.tsv). Without them a template
+# shared by every account had to spell ~/.code/handovers, which is the wrong
+# folder on any account whose MUXTOPUS_HOME is elsewhere.
+#
+# {{HANDOVER}} BEFORE OR AFTER {{HANDOVERS}} IS THE SAME: the pattern is the
+# whole token, closing braces included, and "{{HANDOVER}}" is not a substring
+# of "{{HANDOVERS}}" -- the S comes before the braces. tests/test_sched_template.sh
+# resolves both in one body rather than trust that.
+SCHED_PLACEHOLDERS="SLUG WINDOW HANDOVER HANDOVERS QUESTIONS SCHEDULES STATE CWD PARENT"
 sched_subst() {
   local txt="$1" slug="$2" wname="$3" cwd="$4" parent="$5"
   txt="${txt//"{{SLUG}}"/$slug}"
   txt="${txt//"{{WINDOW}}"/$wname}"
   txt="${txt//"{{HANDOVER}}"/$HANDOVERS/STATUS-$slug.md}"
+  txt="${txt//"{{HANDOVERS}}"/$HANDOVERS}"
   txt="${txt//"{{QUESTIONS}}"/$HANDOVERS/QUESTIONS-$slug.md}"
   txt="${txt//"{{SCHEDULES}}"/$SCHEDULES}"
+  txt="${txt//"{{STATE}}"/$STATE_DIR}"
   txt="${txt//"{{CWD}}"/$cwd}"
   txt="${txt//"{{PARENT}}"/$parent}"
   printf '%s' "$txt"

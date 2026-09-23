@@ -59,6 +59,7 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | `install.sh`: the PATH line in the shell rc, once | `tests/test_install_path.sh` | no — local |
 | `install.sh`: the closing block repeats what stops muxtopus running, and the PATH line; `muxtopus` refuses without `claude` | `tests/test_install_done.sh` | yes |
 | the window's identity on `--append-system-prompt-file`, the paste without it, and nothing pasted for an empty plan | `tests/test_identity.sh` | no — local |
+| what is pasted: a `template:` on either type, then the body, then the footer; every placeholder resolved | `tests/test_sched_template.sh` | no — local |
 | `install.sh`: one line per tool, and the fetched python (checked, unpacked, never on PATH) | `tests/test_install_python.sh` | no — local |
 | where the no-systemd watchdog's pid file goes, under `su` | `tests/test_run_dir.sh` | no — local |
 | the notify shell: setup, pull, inbound, forks, the watchdog's pushes | `tests/test_notify_*.sh`, `tests/test_stats_watchdog.sh` | no — local |
