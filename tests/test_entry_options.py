@@ -154,6 +154,22 @@ def main() -> int:
               < h4.split("\n").index("status: pending"),
               "…ahead of the bookkeeping fields")
 
+        # ---- which kind is offered which blocks ----
+        # The form's three picks. An orchestrator (a wave or a sweep, written
+        # `type: work`) is offered the work blocks AND its own; a plain work
+        # entry never sees an orchestrate block, and a plan sees neither.
+        from dashboard.schedules import option_offered
+        kinds = {t: {"types": t} for t in ("both", "plan", "work", "orchestrate")}
+        want = {"plan": {"both", "plan"},
+                "work": {"both", "work"},
+                "orchestrate": {"both", "work", "orchestrate"}}
+        for kind, seen in want.items():
+            got = {t for t, o in kinds.items() if option_offered(o, kind)}
+            check(got == seen, "kind %-11s is offered types %s (got %s)"
+                  % (kind, sorted(seen), sorted(got)))
+        check({t for t, o in kinds.items() if option_offered(o, "bogus")} == {"both"},
+              "an unknown kind is offered the both blocks only, never everything")
+
         # ---- a file the table cannot own ----
         _, err = d.rewrite_options("type: work\nno separator here\n", opts, {})
         check(err == "no --- separator line", "a headless file is refused, not mangled")

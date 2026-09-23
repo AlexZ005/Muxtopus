@@ -65,6 +65,10 @@ def main() -> int:
             check(any(frag in b for b in got),
                   "%-13s rejected for %r (got %r)" % (key or "(no key)", frag, got))
 
+        check(any("plan/work/orchestrate/both" in b for b in
+                  [o["bad"] for o in by_key.get("typesall", [])]),
+              "the types: complaint names every accepted word, orchestrate included")
+
         for key in GOOD:
             o = by_key[key][0]
             check(o["bad"] == "", "%-13s is accepted (bad=%r)" % (key, o["bad"]))
@@ -119,14 +123,11 @@ def main() -> int:
         check(muxconfig.options() == [], "a missing options.md reads as no options")
 
         # ---- the SHIPPED table: seeds/options.md, what install.sh copies ----
-        # Every block reads clean, EXCEPT that the orchestrate-only blocks may
-        # be `bad` for their type and nothing else. They land in the
-        # orch-templates lane as text; the orch-form lane adds "orchestrate"
-        # to OPTION_TYPES, and from then on they must be clean too. Written to
-        # hold either way, so the two lanes can merge in either order -- and
-        # so that the moment the word is accepted, any OTHER fault in these
-        # blocks (a missing {{VALUE}}, a typo'd field) fails here, because it
-        # is no longer hidden behind the type complaint.
+        # Every block reads clean, the orchestrate-only ones included. They
+        # landed as text before the form knew the word, and were `bad` for
+        # their type until OPTION_TYPES gained "orchestrate"; from then on any
+        # OTHER fault in them (a missing {{VALUE}}, a typo'd field) fails here
+        # rather than hiding behind the type complaint.
         (tmp / "seed").mkdir()
         shutil.copy(pathlib.Path(__file__).resolve().parent.parent
                     / "seeds" / "options.md", tmp / "seed" / "options.md")
@@ -135,15 +136,13 @@ def main() -> int:
         sby = {o["key"]: o for o in seed}
         orch = ("cadence", "automate", "preview-gate", "plan-window",
                 "rules-file", "roles", "credits")
-        accepted = "orchestrate" in muxconfig.OPTION_TYPES
-        type_only = "types: must be %s (got 'orchestrate')" % "/".join(muxconfig.OPTION_TYPES)
+        check("orchestrate" in muxconfig.OPTION_TYPES,
+              "types: orchestrate is a known option type")
         for key in orch:
             o = sby.get(key)
-            check(o is not None and o["types"] == "orchestrate"
-                  and o["bad"] == ("" if accepted else type_only),
-                  "seed %-12s is types: orchestrate, %s (bad=%r)"
-                  % (key, "clean" if accepted else "bad for its type only",
-                     o and o["bad"]))
+            check(o is not None and o["types"] == "orchestrate" and o["bad"] == "",
+                  "seed %-12s is types: orchestrate and clean (bad=%r)"
+                  % (key, o and o["bad"]))
         others = [o for o in seed if o["key"] not in orch]
         check(others and all(o["bad"] == "" for o in others),
               "every other seed block reads clean (%s)"

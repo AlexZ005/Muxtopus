@@ -303,7 +303,12 @@ def suffix_of(profile: str) -> str:
 OPTION_FIELDS = ("key", "group", "label", "hint", "default",
                  "line", "set", "choices", "ask", "types")
 OPTION_KEY_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
-OPTION_TYPES = ("plan", "work", "both")
+# `orchestrate` is not a schedule type -- the executor still knows only plan
+# and work, and an orchestrator entry is written `type: work`. It is the KIND
+# the create form's third pick passes to the options table, so a block can be
+# offered to an orchestrator and to nothing else. Which kind sees which
+# blocks is decided in one place, dashboard/schedules.py OPTION_KINDS.
+OPTION_TYPES = ("plan", "work", "orchestrate", "both")
 OPTION_ASKS = ("number", "text")
 OPTIONS_FILE = "options.md"
 

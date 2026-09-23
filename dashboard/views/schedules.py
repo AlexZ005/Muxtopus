@@ -45,7 +45,8 @@ from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, HOME, PROFILE,
                             read_options)
 from dashboard.data import (handover_state, lane_slug_of, live_windows,
                             read_tree, sched_why, usage_limits)
-from dashboard.schedules import (asked_value, options_fields, options_line,
+from dashboard.schedules import (asked_value, option_offered,
+                                 options_fields, options_line,
                                  options_section, parse_options_line,
                                  read_schedules, rewrite_options,
                                  sanitise_slug)
@@ -211,7 +212,7 @@ class ScheduleView(View):
         name = "%s-%s.md" % (typ, time.strftime("%Y%m%d-%H%M%S"))
         opts = read_options(PROFILE)
         on = {o["key"]: True for o in opts
-              if o["default"] and not o["bad"] and o["types"] in ("both", typ)}
+              if o["default"] and not o["bad"] and option_offered(o, typ)}
         self.open_options(name[:-3], typ, opts, on,
                           lambda st: self._create_write(typ, tpl, name, st))
         return ""
@@ -311,7 +312,7 @@ class ScheduleView(View):
             # A TICKED OPTION IS ALWAYS SHOWN, even where types: would hide it:
             # a hand-edited entry can carry one, and a tick nobody can see is a
             # tick nobody can take off.
-            if (not o["bad"] and o["types"] not in ("both", st["typ"])
+            if (not o["bad"] and not option_offered(o, st["typ"])
                     and o["key"] not in st["on"]):
                 continue
             if o["group"] != group:
