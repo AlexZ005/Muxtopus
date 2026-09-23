@@ -117,6 +117,44 @@ def main() -> int:
         # No file at all is empty, not an exception.
         os.environ["MUXTOPUS_CONFIG"] = str(tmp / "nowhere" / "config")
         check(muxconfig.options() == [], "a missing options.md reads as no options")
+
+        # ---- the SHIPPED table: seeds/options.md, what install.sh copies ----
+        # Every block reads clean, EXCEPT that the orchestrate-only blocks may
+        # be `bad` for their type and nothing else. They land in the
+        # orch-templates lane as text; the orch-form lane adds "orchestrate"
+        # to OPTION_TYPES, and from then on they must be clean too. Written to
+        # hold either way, so the two lanes can merge in either order -- and
+        # so that the moment the word is accepted, any OTHER fault in these
+        # blocks (a missing {{VALUE}}, a typo'd field) fails here, because it
+        # is no longer hidden behind the type complaint.
+        (tmp / "seed").mkdir()
+        shutil.copy(pathlib.Path(__file__).resolve().parent.parent
+                    / "seeds" / "options.md", tmp / "seed" / "options.md")
+        os.environ["MUXTOPUS_CONFIG"] = str(tmp / "seed" / "config")
+        seed = muxconfig.options()
+        sby = {o["key"]: o for o in seed}
+        orch = ("cadence", "automate", "preview-gate", "plan-window",
+                "rules-file", "roles", "credits")
+        accepted = "orchestrate" in muxconfig.OPTION_TYPES
+        type_only = "types: must be %s (got 'orchestrate')" % "/".join(muxconfig.OPTION_TYPES)
+        for key in orch:
+            o = sby.get(key)
+            check(o is not None and o["types"] == "orchestrate"
+                  and o["bad"] == ("" if accepted else type_only),
+                  "seed %-12s is types: orchestrate, %s (bad=%r)"
+                  % (key, "clean" if accepted else "bad for its type only",
+                     o and o["bad"]))
+        others = [o for o in seed if o["key"] not in orch]
+        check(others and all(o["bad"] == "" for o in others),
+              "every other seed block reads clean (%s)"
+              % [(o["key"], o["bad"]) for o in others if o["bad"]])
+        check(len(seed) == len(sby), "no key repeats in the seed")
+        check([sby[k]["default"] for k in orch]
+              == [False, True, True, False, True, False, False],
+              "the seed's orchestrate defaults are a wave's (automate, "
+              "preview-gate, rules-file on)")
+        check(sby["cadence"]["ask"] == "text" and sby["credits"]["ask"] == "text",
+              "cadence and credits ask for text")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -5,7 +5,10 @@
 #   key:      id, [a-z0-9-]+, unique; recorded as `options: a, b, lanes=3`
 #   group:    table section (contract | windows | model | output | project)
 #   label:    the checkbox text        hint: the dim text beside it
-#   default:  on | off                 types: plan | work  (optional filter)
+#   default:  on | off                 types: plan | work | orchestrate
+#                                      (optional filter; orchestrate = the
+#                                      form's orchestrate pick, which still
+#                                      writes type: work)
 #   line:     ONE sentence appended to the prompt body, under "## Options"
 #   set:      a header field instead of a line (needs choices:)
 #   ask:      number | text -- collects {{VALUE}} when ticked
@@ -101,6 +104,80 @@ label: orchestrate, don't babysit
 hint: spawn, end the turn, get resumed by after:
 default: off
 line: You are the orchestrator, and you do no lane work yourself: split the plan into lanes, write one schedule entry per lane (`window: {{WINDOW}}`, a brief each, `after:` where one depends on another), then write ONE more entry named integrate-{{SLUG}} with `after:` listing every lane and a body that says to read every lane's handover and integrate -- and then END YOUR TURN. Do not wait, poll or run a monitor: the scheduler resumes you when the lanes are done, and a turn spent waiting is budget spent on nothing.
+
+# ---------------------------------------------------------- orchestrate
+# Offered only when the form's third pick, `orchestrate`, is chosen: a wave or
+# a sweep. The entry it writes is still `type: work` -- these are sentences in
+# the paste, not a new kind of entry, and the executor never sees the word.
+#
+# THE DEFAULTS BELOW ARE A WAVE'S. A sweep owns no lanes and never releases,
+# so the form turns preview-gate and rules-file off for one (and, from the
+# work set, nopush -- a sweep pushes -- and subwindows -- it opens nothing).
+# cadence is read only by sweep.md; a wave does not recur.
+#
+# Until the form accepts `types: orchestrate`, a reader that does not know the
+# word shows these greyed with the reason -- never dropped, never offered.
+# The line texts are the owner's own asks from the tp-games round, made general.
+
+key: cadence
+group: orchestrate
+label: sweep cadence
+hint: asks for a time; unticked, the sweep's next entry is at: reset
+default: off
+types: orchestrate
+ask: text
+line: Your next entry's `at:` is {{VALUE}}; never sooner.
+
+key: automate
+group: orchestrate
+label: full automation, end to end
+hint: commit, push, PRs, merge when green, in order; never stop to ask
+default: on
+types: orchestrate
+line: Full automation, end to end: work until the whole item is finished; commit, push, open PRs and merge them when their checks are green, in dependency order; never stop to ask.
+
+key: preview-gate
+group: orchestrate
+label: stop at a preview before anything irreversible
+hint: a release, tag or deploy waits for "release" typed in this window
+# A sweep turns this off: it never releases, so it never reaches the gate.
+default: on
+types: orchestrate
+line: Before anything irreversible (a release, a tag, a production deploy, a tag move) stop at a preview the owner can check, write "ready for check: <where>" at the top of {{HANDOVER}} and in {{QUESTIONS}}, and wait for a message in THIS window that says "release".
+
+key: plan-window
+group: orchestrate
+label: plan in a separate window first
+hint: a plan-type entry under this one writes the plan; lanes come from it
+default: off
+types: orchestrate
+line: Write the plan in a separate window first (a `plan`-type entry under this one, `window: {{WINDOW}}`), then spawn lanes from the plan file it writes.
+
+key: rules-file
+group: orchestrate
+label: one rules file every lane reads
+hint: bases, PR targets, shared resources, evidence, acceptance test
+# A sweep turns this off: it has no lanes to give a rules file to.
+default: on
+types: orchestrate
+line: Write one rules file every lane reads first (bases, PR targets, ports or other shared resources, evidence folder, acceptance test), and name it in every brief; a lane's brief says what differs and that the difference wins.
+
+key: roles
+group: orchestrate
+label: a professional role per lane
+hint: each brief names the role its lane works in
+default: off
+types: orchestrate
+line: Pick a professional role per lane and say it in the brief.
+
+key: credits
+group: orchestrate
+label: a shared external budget
+hint: asks for the budget; planned in the STATUS file, a share per lane
+default: off
+types: orchestrate
+ask: text
+line: An external budget ({{VALUE}}) is shared by the lanes: plan its spend in {{HANDOVER}} before spawning and give each lane its share in its brief.
 
 # ---------------------------------------------------------------- model
 
