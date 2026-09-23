@@ -81,6 +81,18 @@ check "..nor the second one" not_in_tree my-notes
 check "..nor the status window muxtopus draws itself" not_in_tree status
 both_there() { has_window scratch && has_window my-notes; }
 check "..and they are all still on screen, untouched" both_there
+# window: and parent: of a pending entry hold a lane off `stranded`, but they
+# must not make the window they name a lane: `window:` is the field that
+# routinely names a window opened by hand. Far-future, so never launched.
+for f in 'window: scratch' 'parent: my-notes'; do
+  n="under-${f%%:*}"
+  printf 'type: work\nat: 2099-01-01 00:00\nslug: %s\n%s\ncwd: %s\nstatus: pending\n---\nlater\n' \
+    "$n" "$f" "$HOME" > "$SC/$n.md"
+done
+"$W" --once >/dev/null 2>&1
+check "a pending window: scratch does not adopt scratch" not_in_tree scratch
+check "..nor a pending parent: my-notes adopt my-notes" not_in_tree my-notes
+rm -f "$SC/under-window.md" "$SC/under-parent.md"
 
 echo "== a hand-made window that HAS a handover IS a lane (it wrote one)"
 tmux new-window -d -t claude -n adopted-me -c "$HOME" "sleep 600"

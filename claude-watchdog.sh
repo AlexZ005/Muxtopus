@@ -1025,10 +1025,34 @@ sched_after_ok() {
 # is waiting for it. The basename goes in as well as the slug because a resume
 # entry's SLUG is truncated to 22 characters while its filename is not --
 # `resume-sched-options-core` keeps its name and loses its slug.
+#
+# SCHED_UNDER, BUILT IN THE SAME LOOP, IS A FOURTH WAY -- AND KEPT APART. A
+# pending entry's `window:` and `parent:` name the window it will open UNDER.
+# FOUND on the orch-impl wave, 2026-09-24: its root window ended its turn with
+# an open handover and eight entries written `window: orch-impl`, two still
+# pending -- the integrate one `after:` seven lanes. Not one of them names
+# orch-impl by slug, by resume- or by after:, so once it had sat idle for
+# WATCHDOG_STRANDED (120) minutes it would go red and page the phone, for a
+# window waiting exactly as designed. tests/test_notify_watchdog.sh drives
+# that case in the sandbox and sees `stranded` without this set. So the
+# stranded test asks both sets.
+#
+# It is not folded into SCHED_NAMED because tree_is_lane asks that set too, and
+# there "named by an entry" means "this window IS a lane". `window:` is the one
+# field that routinely names a window opened by hand (`window: status`, a
+# `claude` window, a planning window with no handover), and a hand-made window
+# must never be adopted into the tree for being somebody's insertion point.
+# The stranded test cannot have that problem: it only runs for a window with an
+# open handover, which is a lane already.
+#
+# `window:` is a tmux window name, which for a lane is its slug (tree_wname);
+# old entries still carry the ➥ markers, stripped the way lane_slug_of strips
+# a window's name, so the two sides compare the same string.
 SCHED_NAMED=""
+SCHED_UNDER=""
 sched_named_slugs() {
-  local f st b
-  SCHED_NAMED=" "
+  local f st b w p
+  SCHED_NAMED=" "; SCHED_UNDER=" "
   [ -d "$SCHEDULES" ] || return 0
   for f in "$SCHEDULES"/*.md; do
     [ -f "$f" ] || continue
@@ -1037,6 +1061,9 @@ sched_named_slugs() {
     [ "$st" = pending ] || continue
     b="$(basename "$f" .md)"
     SCHED_NAMED="$SCHED_NAMED$(sched_slug "$f") $b $(sched_after_deps "$(sched_field "$f" after)" | paste -sd' ' -) "
+    w="$(lane_slug_of "$(sched_field "$f" window)")"
+    p="$(sched_field "$f" parent)"
+    SCHED_UNDER="$SCHED_UNDER${w:+$w }${p:+$p }"
   done
   return 0
 }
@@ -1049,6 +1076,15 @@ sched_names_slug() {
   case "$SCHED_NAMED" in *" $slug "*|*" resume-$slug "*) return 0 ;; esac
   r="$(sched_sanitise "resume-$slug")"
   case "$SCHED_NAMED" in *" $r "*) return 0 ;; esac
+  return 1
+}
+
+# Is some pending entry going to open UNDER this window -- its window: or its
+# parent: -- so that the window is waiting for it rather than forgotten? Only
+# the stranded test asks this; see SCHED_UNDER above for why it is its own set.
+sched_under_slug() {
+  [ -n "$SCHED_NAMED" ] || sched_named_slugs
+  case "$SCHED_UNDER" in *" $1 "*) return 0 ;; esac
   return 1
 }
 
@@ -3138,7 +3174,7 @@ pass() {
   local spent rd resumed model optout idle jobid cwd turn_at wound moptout
   local prev lane stranded pprev since hkey
   # Rebuilt lazily, once per pass at most, by the stranded test below.
-  SCHED_NAMED=""
+  SCHED_NAMED=""; SCHED_UNDER=""
   SNAP_SID=(); SNAP_PID=(); SNAP_CWD=()
   notify_begin
   # Read once per pass, not once per session: every session is judged against
@@ -3387,7 +3423,7 @@ pass() {
       lane="$(lane_slug_of "$name")"
       if [ -n "$lane" ] && [ -f "$HANDOVERS/STATUS-$lane.md" ] \
          && [ ! -f "$HANDOVERS/done/STATUS-$lane.md" ] \
-         && ! sched_names_slug "$lane"; then
+         && ! sched_names_slug "$lane" && ! sched_under_slug "$lane"; then
         stranded=1
       fi
     fi
