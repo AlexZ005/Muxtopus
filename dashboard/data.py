@@ -32,6 +32,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 from dashboard.core import (
     HANDOVERS_DIR, HOME, PAGE, PROFILE, SCRIPTS, TICKS, USAGE_MAX_AGE,
@@ -351,24 +352,69 @@ def hooray() -> bool:
         return False
 
 
-def dirty_repos() -> list[tuple[str, str, int]]:
-    """(path, name, changed files) for every repo the watchdog found dirty."""
-    out = []
+class Repo(NamedTuple):
+    """One row of repos.tsv: a tree with something on it that could be lost.
+
+    ahead and behind are the file's own words, kept as strings on purpose:
+    digits, or `-` when the watchdog could not know (no upstream, a detached
+    HEAD, a gone remote ref). A `-` read as 0 would be the guess the column
+    exists to refuse, so nothing here converts it for you -- `ahead_n` is
+    None for it."""
+    path: str
+    name: str
+    changed: int
+    branch: str = "-"
+    ahead: str = "-"
+    behind: str = "-"
+
+    @property
+    def ahead_n(self) -> int | None:
+        return int(self.ahead) if self.ahead.isdigit() else None
+
+
+def _count(field: str) -> str:
+    """A count column as the watchdog wrote it, or `-` for anything that is
+    not a plain non-negative number -- including a value from a newer writer
+    this reader does not understand."""
+    field = field.strip()
+    return field if field.isdigit() else "-"
+
+
+def dirty_repos() -> list[Repo]:
+    """Every tree the watchdog found dirty or ahead of its upstream.
+
+    THE ROW GREW, AT THE END. The watchdog's sweep once wrote path, name,
+    changed; it now appends branch, ahead, behind. This stays positional and
+    takes any row of three or more, so a file written by an older daemon (the
+    one still running until its next restart) reads with `-` for the new
+    fields, and an older dashboard reading a new file keeps every field it
+    knew.
+
+    ORDER: most changed files first, as before, then most commits ahead. A
+    clean-but-ahead tree therefore sorts BELOW every dirty one: an uncommitted
+    edit is in no commit at all and dies with a `git checkout .`, while an
+    unpushed commit survives everything but the disk -- both are at risk, the
+    first more so."""
+    out: list[Repo] = []
     try:
         for line in WATCHDOG_REPOS.read_text().splitlines():
             f = line.split("\t")
             if len(f) >= 3:
                 try:
-                    out.append((f[0], f[1], int(f[2])))
+                    n = int(f[2])
                 except ValueError:
-                    pass
+                    continue
+                branch = f[3].strip() if len(f) > 3 and f[3].strip() else "-"
+                out.append(Repo(f[0], f[1], n, branch,
+                                _count(f[4]) if len(f) > 4 else "-",
+                                _count(f[5]) if len(f) > 5 else "-"))
     except OSError:
         pass
-    out.sort(key=lambda r: -r[2])
+    out.sort(key=lambda r: (-r.changed, -(r.ahead_n or 0)))
     return out
 
 
-def dirty_for(cwd: str, repos: list[tuple[str, str, int]]) -> int:
+def dirty_for(cwd: str, repos: list[Repo]) -> int:
     """Uncommitted files in the repo the session is sitting in.
 
     Longest prefix wins, because a worktree lives inside the parent checkout's
@@ -379,7 +425,7 @@ def dirty_for(cwd: str, repos: list[tuple[str, str, int]]) -> int:
         return 0
     best = 0
     best_len = -1
-    for path, _name, n in repos:
+    for path, _name, n, *_ in repos:
         if (cwd == path or cwd.startswith(path.rstrip("/") + "/")) and len(path) > best_len:
             best, best_len = n, len(path)
     return best

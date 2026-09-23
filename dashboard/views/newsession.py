@@ -550,8 +550,8 @@ class NewSession:
         add(muxsettings.get("DASHBOARD_NEW_CWD", PROFILE))
         for _sid, _win, _pane, cwd in main.listed_sessions():
             add(cwd)
-        for path, _name, _n in dirty_repos():
-            add(path)
+        for r in dirty_repos():
+            add(r.path)
         home = mux_home(PROFILE)
         try:
             for d in sorted(os.scandir(home), key=lambda e: e.name):

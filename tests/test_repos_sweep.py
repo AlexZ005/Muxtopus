@@ -9,6 +9,11 @@ written -- not a copy of it -- and run by bash against a temporary HOME whose
 the remote. Nothing here touches the network or the real ~/.code: the only
 remote is a path, and HOME, REPOS and REPOS_AT all point into a temp dir.
 
+THEN THE READER. The file the sweep just wrote is read back by the
+dashboard's `dirty_repos`, alongside hand-written 3- and 6-column rows (an
+older daemon's file, and garbage), and the uncommitted panel's cell and
+title are checked for ahead, not ahead, and unknown.
+
 THE RULE IT HOLDS. A row is written when a tree is dirty OR ahead of its
 upstream. Ahead and behind are `-` -- never 0 -- when there is no upstream,
 the HEAD is detached, or the upstream's remote-tracking ref is gone: a 0
@@ -27,6 +32,19 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 fails = 0
+
+# The dashboard half imports with a scratch HOME, so nothing here can read
+# the real watchdog's files or config.
+_DASH_HOME = tempfile.mkdtemp(prefix="mux-repos-dash-")
+atexit.register(shutil.rmtree, _DASH_HOME, ignore_errors=True)
+os.environ.update(HOME=_DASH_HOME,
+                  XDG_CONFIG_HOME=_DASH_HOME + "/.config",
+                  XDG_STATE_HOME=_DASH_HOME + "/.local/state",
+                  XDG_DATA_HOME=_DASH_HOME + "/.local/share")
+for _k in ("MUXTOPUS_CONFIG", "MUXTOPUS_HOME", "MUXTOPUS_DIR",
+           "CLAUDE_CONFIG_DIR", "TMUX"):
+    os.environ.pop(_k, None)
+sys.path.insert(0, str(ROOT))
 
 
 def ok(cond, what):
@@ -204,6 +222,7 @@ eq(rows.get("h-worktree"), [str(h), "h-worktree", "0", "wt", "1", "0"],
    "(h) a worktree two levels down: found, 1 ahead")
 eq(len(rows), 7, "and nothing else is listed")
 ok(not (STATE / "repos.tsv.tmp").exists(), "the .tmp was moved into place, not left")
+SWEPT = REPOS.read_text()
 
 # The clock: inside REPO_EVERY the file is not rewritten.
 REPOS.write_text("sentinel\n")
@@ -217,6 +236,65 @@ git(b, "push", "-qf", "origin", "main")
 sweep()
 names = [l.split("\t")[1] for l in REPOS.read_text().splitlines()]
 ok("b-ahead" not in names, "(b) pushed: clean and level, so no longer listed")
+
+
+# ---- the reader ------------------------------------------------------------
+from dashboard import data as dd                              # noqa: E402
+from dashboard.data import Repo                               # noqa: E402
+from dashboard.views.main import files_cell, uncommitted_title  # noqa: E402
+
+TSV = tmp / "read.tsv"
+dd.WATCHDOG_REPOS = TSV
+
+
+def read(text):
+    TSV.write_text(text)
+    return dd.dirty_repos()
+
+
+got = {r.name: r for r in read(SWEPT)}
+eq(set(got), set(rows), "the reader keeps every row the sweep wrote")
+eq(got["b-ahead"], Repo(str(b), "b-ahead", 0, "main", "2", "0"),
+   "(b) read back: 0 files, 2 ahead")
+eq(got["d2-detached-dirty"].ahead_n, None, "(d') read back: `-` is None, not 0")
+eq(got["f-both"].behind, "1", "(f) read back: behind 1")
+
+eq(read("/p/old\told\t7\n"), [Repo("/p/old", "old", 7, "-", "-", "-")],
+   "an OLDER daemon's 3-column row: every new field `-`")
+eq(read("/p/new\tnew\t3\tmain\t2\t1\n"), [Repo("/p/new", "new", 3, "main", "2", "1")],
+   "a 6-column row: all six fields")
+eq(read("/p/x\tx\t3\t\tbad\t-1\n"), [Repo("/p/x", "x", 3, "-", "-", "-")],
+   "an empty branch and counts that are not counts read as `-`, never a number")
+eq(read("/p/y\ty\tmany\tmain\t2\t0\nshort\t1\n"), [],
+   "a row whose changed is not a number, or with fewer than three fields, is skipped")
+eq(read("/p/w\tw\t3\tmain\t2\t0\textra\n")[0].ahead, "2",
+   "a NEWER writer's seventh column does not move the six this reader knows")
+order = [r.name for r in read("/p/a\tclean-ahead-1\t0\tm\t1\t0\n"
+                              "/p/b\tdirty-2\t2\n"
+                              "/p/c\tclean-ahead-5\t0\tm\t5\t0\n"
+                              "/p/d\tdirty-9\t9\tm\t-\t-\n")]
+eq(order, ["dirty-9", "dirty-2", "clean-ahead-5", "clean-ahead-1"],
+   "most files first, as before; clean-but-ahead trees below them, most ahead first")
+eq(dd.dirty_for("/p/c/sub", read("/p/c\tc\t0\tm\t5\t0\n/p\tp\t4\n")), 0,
+   "a session in a clean-but-ahead worktree has 0 dirty files, not its parent's 4")
+
+# ---- the panel -------------------------------------------------------------
+eq(files_cell(Repo("/p", "p", 3, "main", "2", "0")).plain, "3 ↑2",
+   "dirty and ahead: the count, then ↑n")
+eq(files_cell(Repo("/p", "p", 0, "main", "2", "0")).plain, "0 ↑2",
+   "clean and ahead: a true 0, then ↑n")
+eq(files_cell(Repo("/p", "p", 3, "main", "0", "4")).plain, "3",
+   "level with the upstream (behind or not): no arrow")
+eq(files_cell(Repo("/p", "p", 3, "-", "-", "-")).plain, "3",
+   "unknown: nothing drawn, not ↑0")
+eq(files_cell(Repo("/p", "p", 3)).plain, "3", "an old 3-column row: the cell it always was")
+old = [Repo("/a", "a", 7), Repo("/b", "b", 3)]
+eq(uncommitted_title(old),
+   "[bold]uncommitted[/] [grey42]· 2 tree(s) · 10 file(s)",
+   "nothing ahead: the title it always had")
+eq(uncommitted_title(old + [Repo("/c", "c", 0, "m", "2", "0"), Repo("/d", "d", 1, "-", "-", "-")]),
+   "[bold]uncommitted[/] [grey42]· 4 tree(s) · 11 file(s) · 2 commit(s) unpushed",
+   "something ahead: the unpushed commits are counted, the unknown one is not")
 
 print(f"\n{'FAILED' if fails else 'passed'}: {fails} failure(s)")
 sys.exit(1 if fails else 0)
