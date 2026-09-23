@@ -12,6 +12,7 @@ claude-watchdog.sh --status            # the table it publishes
 claude-watchdog.sh --dry-run           # one pass, act on nothing
 claude-watchdog.sh --once              # one pass, for real
 claude-watchdog.sh --check [name]      # resolve schedule entries, launch nothing
+claude-watchdog.sh --check <slug>-     # ...every entry of a wave (a prefix ending in -)
 claude-watchdog.sh --tree              # the window tree it keeps
 claude-watchdog.sh --profile work ...  # any account
 claude-watchdog.sh --on | --off        # arm / disarm (or `w` on the dashboard)

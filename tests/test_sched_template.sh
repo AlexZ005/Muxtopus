@@ -14,6 +14,8 @@
 #     flight. Now: the template, then the body, then the handover footer, in
 #     that order; a plan entry is unchanged; a work entry whose body is empty
 #     is NOT "empty" when its template carries the prompt.
+#   - `--check <prefix>-`, the whole wave of an orchestrator, and that an
+#     exact match still wins over it.
 #   - {{HANDOVERS}} and {{STATE}}, the two folders an orchestrator reads,
 #     resolved beside {{HANDOVER}} in one body. sched_subst replaces
 #     {{HANDOVER}} FIRST -- the order that would break if its pattern could
@@ -97,6 +99,38 @@ check "--check lists all three as used" \
 entry lane-unk work "" "{{HANDOVERSX}} {{STATES}}"
 check "a near miss is still unknown, and said" \
   grep -q 'contains {{HANDOVERSX}} {{STATES}}, which this scheduler does not resolve' <<<"$("$W" --check lane-unk 2>&1)"
+
+echo "== --check <prefix>-: every entry of a wave"
+# orchestrate.md's step 5 runs `--check <slug>-` over a wave of <slug>-<lane>
+# entries; resolving ONE entry, it answered "no schedule entry matching" for
+# every wave (measured 2026-09-24 on orch-impl-, seven entries in the folder).
+entry w-a work "" "BODY-LINE: a"; entry w-b work "" "BODY-LINE: b"; entry x work "" "BODY-LINE: x"
+chk="$("$W" --check w- 2>&1)"; rc=$?
+check "w- reports w-a.md" grep -qx 'w-a.md' <<<"$chk"
+check "..and w-b.md" grep -qx 'w-b.md' <<<"$chk"
+check "..and not x.md" bash -c '! grep -qx "x.md" <<<"$1"' _ "$chk"
+check "..nor anything else" bash -c '[ "$(grep -c "^  slug " <<<"$1")" = 2 ]' _ "$chk"
+check "..exit 0, both runnable" [ "$rc" = 0 ]
+chk="$("$W" --check w-a 2>&1)"
+check "w-a is the one entry" bash -c '[ "$(grep -c "^  slug " <<<"$1")" = 1 ] && grep -qx w-a.md <<<"$1"' _ "$chk"
+chk="$("$W" --check nope- 2>&1)"; rc=$?
+check "nope- matches nothing: exit 2" [ "$rc" = 2 ]
+check "..and says so" grep -q "no schedule entry matching 'nope-'" <<<"$chk"
+# The slug counts as well as the file name: the name a lane is known by.
+{ printf 'type: work\nat: 2099-01-01 00:00\nslug: w-by-slug\ncwd: %s\nstatus: pending\n---\nhi\n' "$HOME"; } > "$SC/zz.md"
+check "an entry whose SLUG starts with it is in the wave" grep -qx 'zz.md' <<<"$("$W" --check w- 2>&1)"
+# Worst of them: one lane that can never run makes the wave exit 1.
+{ printf 'type: work\nat: 2099-01-01 00:00\nslug: w-broken\ncwd: %s/nosuch\nstatus: pending\n---\nhi\n' "$HOME"; } > "$SC/w-broken.md"
+"$W" --check w- >/dev/null 2>&1; rc=$?
+check "a wave with one unrunnable entry exits 1" [ "$rc" = 1 ]
+# An exact match wins, even when the name itself ends in '-'.
+entry w- work "" "BODY-LINE: the entry named w-"
+chk="$("$W" --check w- 2>&1)"
+check "an entry named w- is checked alone" \
+  bash -c '[ "$(grep -c "^  slug " <<<"$1")" = 1 ] && grep -qx w-.md <<<"$1"' _ "$chk"
+check "a glob character in the prefix is literal" \
+  bash -c '"$1" --check "*-" >/dev/null 2>&1; [ $? = 2 ]' _ "$W"
+rm -f "$SC"/w-*.md "$SC/x.md" "$SC/zz.md"
 
 echo "== launched for real: the keys the window received"
 # --check shares the composer with the launcher; this is the launcher itself,

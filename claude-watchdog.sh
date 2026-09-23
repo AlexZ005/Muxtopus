@@ -11,6 +11,8 @@
 #                                    (windows.last.tsv, or F) in the session
 #   claude-watchdog.sh --check [NAME] resolve schedule entries; launch nothing
 #                                    (NAME is a file, a basename or a slug;
+#                                     one ending in '-' that is none of
+#                                     those checks every entry it prefixes;
 #                                     add --body to see the exact paste)
 #   claude-watchdog.sh --on|--off    enable/disable acting (the dashboard's 'w')
 #   claude-watchdog.sh --optout ID   never prompt that session (dashboard: space)
@@ -2311,12 +2313,41 @@ sched_check_one() {
   return "$rcout"
 }
 
+# A NAME ENDING IN '-' THAT IS NO ONE ENTRY IS A WAVE: every entry whose
+# basename or slug starts with it, each checked in full, and the exit code the
+# worst of them. An orchestrator names its lanes <slug>-<lane> and its
+# integrate entry <slug>-integrate, and orchestrate.md's step 5 tells it to run
+# `--check <slug>-` before it ends its turn. Resolving ONE entry, that step
+# failed for every wave: measured 2026-09-24, `--check orch-impl-` printed "no
+# schedule entry matching" and exited 2 with seven orch-impl-*.md in the folder. An
+# exact match is tried first and wins, so every name that resolved before
+# still resolves to the same one entry. A prefix that matches nothing is still
+# "no schedule entry matching", exit 2: an orchestrator that typos its own
+# slug must not read an empty report as a clean one.
 sched_check() {
-  local a="${1:-}" body="${2:-}" f rc=0 one
+  local a="${1:-}" body="${2:-}" f rc=0 one n=0
   if [ -n "$a" ]; then
-    f="$(sched_resolve_file "$a")" || {
+    if f="$(sched_resolve_file "$a")"; then
+      sched_check_one "$f" "$body"; return $?
+    fi
+    case "$a" in
+      *-)
+        for f in "$SCHEDULES"/*.md; do
+          [ -f "$f" ] || continue
+          case "$f" in */README.md) continue ;; esac
+          # Quoted, so a '*' or '[' in the argument is a character, not a glob.
+          case "$(basename "$f")" in
+            "$a"*) ;;
+            *) case "$(sched_slug "$f")" in "$a"*) ;; *) continue ;; esac ;;
+          esac
+          sched_check_one "$f" "$body"; one=$?; n=$((n + 1))
+          [ "$one" -gt "$rc" ] && rc="$one"
+          echo
+        done ;;
+    esac
+    [ "$n" -gt 0 ] || {
       echo "no schedule entry matching '$a' in $SCHEDULES" >&2; return 2; }
-    sched_check_one "$f" "$body"; return $?
+    return "$rc"
   fi
   for f in "$SCHEDULES"/*.md; do
     [ -f "$f" ] || continue

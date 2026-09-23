@@ -118,9 +118,12 @@ The watchdog writes a verdict per pending entry every pass, to `sched-why.tsv` i
 claude-watchdog.sh --check                    # every entry
 claude-watchdog.sh --check 27-storage         # one, by file, basename or slug
 claude-watchdog.sh --check 27-storage --body  # ...and the exact paste
+claude-watchdog.sh --check orch-impl-         # a wave: every entry the name prefixes
 ```
 
 `--check` resolves an entry without launching anything: the parsed fields, the slug and where it came from, the window name, the handover path, the insert target resolved against the live session, the size of the paste, and the due verdict with its reason.
+
+A name ending in `-` that is not itself an entry checks **every entry whose basename or slug starts with it**, each reported in full, and exits with the worst of their codes (0 all runnable, 1 one can never run, 2 one cannot be judged). That is how an orchestrator checks its whole wave, `<slug>-<lane>` entries and `<slug>-integrate` together, before it ends its turn. An exact match still wins: a name that resolves to one entry today (a file, a basename or a slug) resolves to that one entry, even when it ends in `-`. A prefix that matches nothing prints `no schedule entry matching` and exits 2, like any other unknown name.
 
 ## `after: <slug>[, <slug>…]`
 
