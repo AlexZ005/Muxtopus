@@ -97,4 +97,24 @@ check "--check lists all three as used" \
 entry lane-unk work "" "{{HANDOVERSX}} {{STATES}}"
 check "a near miss is still unknown, and said" \
   grep -q 'contains {{HANDOVERSX}} {{STATES}}, which this scheduler does not resolve' <<<"$("$W" --check lane-unk 2>&1)"
+
+echo "== launched for real: the keys the window received"
+# --check shares the composer with the launcher; this is the launcher itself,
+# into a fake claude that records every key typed at it.
+printf '● ready\n❯ \n' > "$HOME/fake-screen"
+tmux new-session -d -s claude -n home -x 120 -y 40 "sleep 600"
+"$W" --on >/dev/null
+rm -f "$SC"/*.md "$HOME/fake-claude.keys"
+entry lane-go work brief "BODY-LINE: launched {{HANDOVERS}}"
+sed -i 's/^at: .*/at: 2020-01-01 00:00/' "$SC/lane-go.md"
+"$W" --once >/dev/null 2>&1
+for i in $(seq 40); do grep -q '^status: launched' "$SC/lane-go.md" && break; sleep 0.25; done
+# The fake drains the paste one key per loop; wait for the footer to arrive.
+for i in $(seq 120); do tr -d '\n' < "$HOME/fake-claude.keys" 2>/dev/null | grep -q 'donelane-go\|done\\ lane-go' && break; sleep 0.25; done
+k="$(tr -d '\n' < "$HOME/fake-claude.keys" 2>/dev/null | sed 's/\\ / /g')"
+check "launched" grep -q '^status: launched' "$SC/lane-go.md"
+check "the template reached the window" grep -qF 'TEMPLATE-LINE' <<<"$k"
+check "..before the body, and the footer last" \
+  bash -c '[[ "$1" == *TEMPLATE-LINE*BODY-LINE*"handover.sh done lane-go"* ]]' _ "$k"
+check "..with {{HANDOVERS}} resolved in it" grep -qF "launched $HO" <<<"$k"
 sb_done
