@@ -20,7 +20,7 @@
 # below; context windows from Anthropic's model table. Update the date when you
 # update a number. This file is yours; install.sh never rewrites it.
 
-as of: 2026-09-17
+as of: 2026-09-23
 source: https://platform.claude.com/docs/en/about-claude/pricing
 
 model:          claude-fable-5-1
@@ -53,6 +53,14 @@ output:         50
 cache_read:     1
 cache_write_5m: 12.50
 cache_write_1h: 20
+window:         1M
+
+model:          claude-opus-5-5
+input:          4
+output:         20
+cache_read:     0.20
+cache_write_5m: 5
+cache_write_1h: 8
 window:         1M
 
 model:          claude-opus-5
