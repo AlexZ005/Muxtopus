@@ -39,17 +39,55 @@ from dashboard.app import View
 from dashboard.menulayout import (PAGE_KEYS, TABLE_MIN, fit_columns,
                                   make_table, page_jump, page_land,
                                   rendered_height, share_rows)
-from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, HOME, PROFILE,
-                            QUESTIONS_DIR, RED, SCHEDULES_DIR, SCHED_TEMPLATES,
-                            SCRIPTS, YELLOW, human_age, options_paths,
-                            read_options)
+from dashboard.core import (DIM, FRAME, GREEN, HANDOVERS_DIR, HOME,
+                            ORCH_TEMPLATES, PROFILE, QUESTIONS_DIR, RED,
+                            SCHEDULES_DIR, SCHED_TEMPLATES, SCRIPTS, YELLOW,
+                            human_age, options_paths, read_options)
 from dashboard.data import (handover_state, lane_slug_of, live_windows,
                             read_tree, sched_why, usage_limits)
-from dashboard.schedules import (asked_value, options_fields, options_line,
+from dashboard.schedules import (asked_value, option_offered,
+                                 options_fields, options_line,
                                  options_section, parse_options_line,
                                  read_schedules, rewrite_options,
                                  sanitise_slug)
 from dashboard.naming import MAX_SLUG
+
+
+# THE ORCHESTRATE PICK'S TWO SHAPES (plan §1, §2): shape -> (the template
+# copied into the body, options ticked beyond the seed's defaults, options
+# unticked from them). The seed's orchestrate defaults are a wave's; these
+# are only the differences, so a default an account changes in its own
+# options.md is still honoured for everything not named here.
+#   wave:  `orchestrate` on -- it spawns lanes and ends its turn.
+#   sweep: owns nothing and never releases, so `subwindows`, `preview-gate`
+#          and `rules-file` are off; it pushes, so `nopush` is off.
+# `nopush` is off for a WAVE too, which the plan did not say: `automate` (on
+# for both) tells the window to push, open PRs and merge them, and `nopush`
+# (on for every work entry) tells it not to -- a paste carrying both is a
+# contradiction the model has to resolve on its own, every run. The
+# orch-templates handover measured the clash; a lane the wave spawns still
+# gets `nopush` from its own entry.
+ORCH_SHAPES = {
+    "wave": ("orchestrate", ("orchestrate",), ("nopush",)),
+    "sweep": ("sweep", (), ("nopush", "subwindows", "preview-gate", "rules-file")),
+}
+
+
+def sweep_slug(day: str, taken) -> str:
+    """sweep-<MMDD>, or -b, -c ... when that one is taken (plan §4). Date-
+    stamped on purpose: the sweep's closure rule closes any window whose
+    STATUS is in done/, keyed by slug, so a sweep named plain `sweep` would
+    find its predecessor's done/STATUS-sweep.md and close ITSELF -- and tree
+    rows are keyed by slug too, so a second launch would replace the first's
+    row. sweep.md step 7 names its next entry by the same rule; this is the
+    first link of that chain."""
+    base = "sweep-" + day
+    if not taken(base):
+        return base
+    for c in "bcdefghijklmnopqrstuvwxyz":
+        if not taken(base + "-" + c):
+            return base + "-" + c
+    return base + "-" + time.strftime("%H%M%S")
 
 
 class ScheduleView(View):
@@ -163,7 +201,13 @@ class ScheduleView(View):
         for o in opts:
             if o["set"] and o["key"] not in on and have.get(o["set"]):
                 on[o["key"]] = have[o["set"]]
-        self.open_options(r["file"].name[:-3], r["type"], opts, on,
+        # THE KIND IS READ FROM `kind:`, not `type:`. An orchestrator is
+        # `type: work` (the executor knows no third type), so the header type
+        # alone would reopen a wave or a sweep on the plain work table and
+        # lose its orchestrate rows. A kind: the form never writes is not
+        # trusted -- the entry reopens as its type, as before kind: existed.
+        kind = "orchestrate" if have.get("kind") in ORCH_SHAPES else r["type"]
+        self.open_options(r["file"].name[:-3], kind, opts, on,
                           lambda st, f=r["file"]: self._write_options(f, st),
                           mode="reopen")
         return ""
@@ -186,12 +230,21 @@ class ScheduleView(View):
 
     def start_create(self) -> None:
         self.app.picker = {"title": "schedule what?", "i": 0,
-                       "options": ["plan", "work"], "fn": self._create_type}
+                       "options": ["plan", "work", "orchestrate"],
+                       "fn": self._create_type}
 
 
     def _create_type(self, choice: str) -> str:
+        if choice == "orchestrate":
+            self.app.picker = {"title": "orchestrate what?", "i": 0,
+                               "options": [self._shape_label(s) for s in ORCH_SHAPES],
+                               "fn": self._create_shape}
+            return ""
         if choice == "plan":
-            tpls = sorted(t.stem for t in SCHED_TEMPLATES.glob("*.md"))
+            # The four orchestrator templates are work bodies; see
+            # ORCH_TEMPLATES for why they are left out by name.
+            tpls = sorted(t.stem for t in SCHED_TEMPLATES.glob("*.md")
+                          if t.stem not in ORCH_TEMPLATES)
             if tpls:
                 self.app.picker = {"title": "from which template?", "i": 0,
                                "options": tpls, "fn": self._create_tpl}
@@ -203,27 +256,109 @@ class ScheduleView(View):
         return self._create_options("plan", choice)
 
 
-    def _create_options(self, typ: str, tpl: str) -> str:
+    def _orch_missing(self, shape: str) -> str:
+        """Why this shape cannot be created, or "". An account whose
+        setup-schedules.py has not run since the orchestrator templates were
+        added has none of them, and an orchestrator with an empty body would
+        launch a window with nothing but the options to go on."""
+        tpl = ORCH_SHAPES[shape][0]
+        if (SCHED_TEMPLATES / (tpl + ".md")).is_file():
+            return ""
+        return ("templates/%s.md is missing — run setup-schedules.py%s to "
+                "seed it" % (tpl, (" " + PROFILE) if PROFILE else ""))
+
+
+    def _shape_label(self, shape: str) -> str:
+        # SAID IN THE PICKER, not only after enter: a row that looks fine and
+        # then refuses is the "scheduled but nothing will open" lie in small.
+        why = self._orch_missing(shape)
+        return shape + ("   (%s)" % why if why else "")
+
+
+    def _create_shape(self, choice: str) -> str:
+        shape = choice.split()[0]
+        why = self._orch_missing(shape)
+        if why:
+            return "cannot create a %s: %s; nothing written" % (shape, why)
+        return self._create_options("work", ORCH_SHAPES[shape][0], shape)
+
+
+    def _sweep_taken(self, slug: str) -> bool:
+        """A slug is taken when an entry is already called it (by file name
+        or by its resolved slug) or a handover already carries it, open or
+        done -- the same test sweep.md step 7 gives the sweep itself."""
+        if (SCHEDULES_DIR / (slug + ".md")).exists():
+            return True
+        if any(r.get("resolved") == slug for r in read_schedules()):
+            return True
+        return any((d / ("STATUS-%s.md" % slug)).exists()
+                   for d in (HANDOVERS_DIR, HANDOVERS_DIR / "done"))
+
+
+    def _create_options(self, typ: str, tpl: str, shape: str = "") -> str:
         """The step the plan added between the template and the editor.
 
         The FILENAME is settled here rather than in _create_write, so the
-        table can name the entry it is about to write in its own title."""
-        name = "%s-%s.md" % (typ, time.strftime("%Y%m%d-%H%M%S"))
+        table can name the entry it is about to write in its own title.
+
+        `shape` is set for the orchestrate pick: the entry is still `typ`
+        (work), but the table is offered the orchestrate KIND's options with
+        that shape's defaults."""
+        kind = "orchestrate" if shape else typ
+        if shape == "sweep":
+            name = sweep_slug(time.strftime("%m%d"), self._sweep_taken) + ".md"
+        else:
+            name = "%s-%s.md" % (shape or typ, time.strftime("%Y%m%d-%H%M%S"))
         opts = read_options(PROFILE)
         on = {o["key"]: True for o in opts
-              if o["default"] and not o["bad"] and o["types"] in ("both", typ)}
-        self.open_options(name[:-3], typ, opts, on,
-                          lambda st: self._create_write(typ, tpl, name, st))
-        return ""
+              if o["default"] and not o["bad"] and option_offered(o, kind)}
+        note = ""
+        if shape:
+            _, add, drop = ORCH_SHAPES[shape]
+            for o in opts:
+                if o["bad"] or not option_offered(o, kind):
+                    continue
+                if o["key"] in add and not (o["set"] or o["ask"]):
+                    on[o["key"]] = True
+                if o["key"] in drop:
+                    on.pop(o["key"], None)
+            if not any(o["types"] == "orchestrate" for o in opts):
+                # install.sh copies options.md ONCE and never rewrites it, so
+                # an account set up before the orchestrate blocks existed has
+                # none. The table still works -- it is the work set -- but
+                # the reason the automate/preview rows are absent is said.
+                note = ("no orchestrate options in your options.md — copy the "
+                        "orchestrate group from %s" % (SCRIPTS / "seeds" / "options.md"))
+        self.open_options(name[:-3], kind, opts, on,
+                          lambda st: self._create_write(typ, tpl, name, st, shape))
+        return note
 
 
-    def _create_write(self, typ: str, tpl: str, name: str, st: dict) -> str:
+    def _create_write(self, typ: str, tpl: str, name: str, st: dict,
+                      shape: str = "") -> str:
         """Write a pre-filled item and drop straight into the editor on it.
 
         The chosen template is COPIED into the body rather than referenced, so
         what you edit is exactly what gets pasted -- a referenced template
-        would be prepended again by the executor."""
+        would be prepended again by the executor.
+
+        An orchestrator is written `type: work` with an informational
+        `kind: wave|sweep` line: the executor ignores it (it knows plan and
+        work only), and `o` reads it back to offer the orchestrate options
+        again. A sweep also pins `slug:` to its date-stamped name, because a
+        title typed in the editor would otherwise become the slug."""
         try:
+            body = ""
+            if tpl:
+                try:
+                    body = (SCHED_TEMPLATES / (tpl + ".md")).read_text()
+                except OSError as exc:
+                    if shape:
+                        # Never an empty orchestrator: the file vanished
+                        # between the picker and the table.
+                        return ("cannot create a %s: %s; nothing written"
+                                % (shape, self._orch_missing(shape) or exc))
+                    body = ""
             SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
             f = SCHEDULES_DIR / name
             cwd = self.app.view_of("main").cursor_cwd()
@@ -231,12 +366,6 @@ class ScheduleView(View):
                 # The setting, not a constant: this used to name one project
                 # on one machine.
                 cwd = muxsettings.get("DASHBOARD_NEW_CWD", PROFILE) or str(HOME)
-            body = ""
-            if tpl:
-                try:
-                    body = (SCHED_TEMPLATES / (tpl + ".md")).read_text()
-                except OSError:
-                    body = ""
             opts, on = st["all"], st["on"]
             # The set: fields and options: sit with cwd -- what the entry IS --
             # and ahead of status/created/launched, which are bookkeeping.
@@ -250,8 +379,10 @@ class ScheduleView(View):
                 # with the task, as every brief does, and the contract follows.
                 body = (body.rstrip() + "\n\n" if body.strip() else "") + section
             f.write_text("type: %s\n" % typ
+                         + ("kind: %s\n" % shape if shape else "")
                          + "at: reset\n"
                          + "title: \n"
+                         + ("slug: %s\n" % name[:-3] if shape == "sweep" else "")
                          + "window: \n"
                          + "cwd: %s\n" % cwd
                          + extra
@@ -261,6 +392,10 @@ class ScheduleView(View):
                          + "---\n" + body)
             self.app.pending_edit = str(f)
             n = len(parse_options_line(line))
+            if shape:
+                return ("created %s (%s) with %d option(s) — set the title "
+                        "and time; the body is templates/%s.md"
+                        % (f.name, shape, n, tpl))
             return ("created %s with %d option(s) — set the title and time, "
                     "paste the prompt" % (f.name, n))
         except OSError as exc:
@@ -311,7 +446,7 @@ class ScheduleView(View):
             # A TICKED OPTION IS ALWAYS SHOWN, even where types: would hide it:
             # a hand-edited entry can carry one, and a tick nobody can see is a
             # tick nobody can take off.
-            if (not o["bad"] and o["types"] not in ("both", st["typ"])
+            if (not o["bad"] and not option_offered(o, st["typ"])
                     and o["key"] not in st["on"]):
                 continue
             if o["group"] != group:

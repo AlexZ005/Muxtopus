@@ -6,9 +6,10 @@
 #   group:    table section (contract | windows | model | output | project)
 #   label:    the checkbox text        hint: the dim text beside it
 #   default:  on | off                 types: plan | work | orchestrate
-#                                      (optional filter; orchestrate = the
-#                                      form's orchestrate pick, which still
-#                                      writes type: work)
+#                                      (optional filter, absent = both.
+#                                      orchestrate = the form's third pick,
+#                                      which still writes type: work; it is
+#                                      offered the work blocks too)
 #   line:     ONE sentence appended to the prompt body, under "## Options"
 #   set:      a header field instead of a line (needs choices:)
 #   ask:      number | text -- collects {{VALUE}} when ticked
@@ -115,8 +116,8 @@ line: You are the orchestrator, and you do no lane work yourself: split the plan
 # work set, nopush -- a sweep pushes -- and subwindows -- it opens nothing).
 # cadence is read only by sweep.md; a wave does not recur.
 #
-# Until the form accepts `types: orchestrate`, a reader that does not know the
-# word shows these greyed with the reason -- never dropped, never offered.
+# A dashboard from before the form's orchestrate pick does not know the word
+# and shows these greyed with the reason -- never dropped, never offered.
 # The line texts are the owner's own asks from the tp-games round, made general.
 
 key: cadence

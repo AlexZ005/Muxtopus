@@ -45,7 +45,7 @@ A lane's slug starts with the orchestrator's (`<orch>-<lane>`), so two orchestra
 
 **Round 2 is a new wave, not a resume.** When the owner answers a preview with fixes, the orchestrator writes a new wave whose rules file names that feedback as its acceptance test, rather than waking the old lanes.
 
-The dashboard's create form offers these through a third pick, `orchestrate ▸ wave / sweep`, which copies the chosen template into the body and records the shape in an informational `kind:` header line. The templates use two placeholders beyond the lane's own — `{{HANDOVERS}}` (the handovers folder) and `{{STATE}}` (this account's watchdog state directory) — and a work entry may name a template with `template:`, which is how a sweep's next entry stays a ten-line header.
+The dashboard's create form offers these through a third pick, `orchestrate ▸ wave / sweep`, which copies the chosen template into the body and records the shape in an informational `kind:` header line. A wave starts with `orchestrate` ticked; a sweep starts with `subwindows`, `preview-gate` and `rules-file` off; neither has `nopush`, which would contradict `automate` — [the options table](schedules.md#the-options-table) has the rules. The templates use two placeholders beyond the lane's own — `{{HANDOVERS}}` (the handovers folder) and `{{STATE}}` (this account's watchdog state directory) — and a work entry may name a template with `template:`, which is how a sweep's next entry stays a ten-line header.
 
 ### Options only an orchestrator is offered
 

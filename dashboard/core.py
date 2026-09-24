@@ -143,6 +143,19 @@ def read(path: str, default: str = "") -> str:
 # where they are unsuffixed; muxconfig applies the same rule profile.sh does.
 SCHEDULES_DIR = mux_dir("schedules", PROFILE)
 SCHED_TEMPLATES = SCHEDULES_DIR / "templates"
+# The orchestrator's templates. They live in templates/ beside the plan ones
+# -- setup-schedules.py seeds all eight there, and a wave's lane entries name
+# `template: lane` / `template: integrate` from there -- but they are bodies
+# for `type: work` entries, so the plan picker must not offer them: a plan
+# made from sweep.md would paste the sweep with the PLAN footer and no `done`.
+# LISTED BY NAME rather than marked inside the file, for two reasons: the form
+# copies a template into the body verbatim, so a marker line would be pasted
+# into every orchestrator's prompt; and setup-schedules.py never overwrites a
+# template once written, so a marker added later would never reach an
+# account's existing copies. The names are fixed by setup-schedules.py and by
+# the entries a wave writes, so the list cannot drift silently -- the
+# create-form test checks it against setup-schedules.py's own.
+ORCH_TEMPLATES = ("orchestrate", "lane", "integrate", "sweep")
 # Handoffs live here rather than in the working tree: scratch state does not
 # belong under version control, and two accounts working one repo would
 # otherwise overwrite each other's STATUS file without a word. handover.sh

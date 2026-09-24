@@ -146,6 +146,25 @@ def validate_schedule(row: dict) -> str:
 # lie: it would show boxes that no longer match the text underneath.
 OPTIONS_HEADING = "## Options"
 
+# WHICH `types:` EACH KIND OF ENTRY IS OFFERED. The kind is what the form was
+# asked to make: plan, work, or orchestrate (a wave or a sweep, still written
+# `type: work`). An orchestrator is a work entry with extra sentences, so it
+# is offered the work blocks as well as its own -- the questions, phases,
+# lowpri and verify lines apply to it exactly as to a lane (plan §6). A plain
+# work entry is never offered an orchestrate block: `automate` on a lane is a
+# lane merging its own PR.
+OPTION_KINDS = {
+    "plan": ("both", "plan"),
+    "work": ("both", "work"),
+    "orchestrate": ("both", "work", "orchestrate"),
+}
+
+
+def option_offered(o: dict, kind: str) -> bool:
+    """True when the table offers option `o` to an entry of this kind. An
+    unknown kind is offered the `both` blocks only, never everything."""
+    return o["types"] in OPTION_KINDS.get(kind, ("both",))
+
 
 def options_line(opts: list[dict], on: dict) -> str:
     """The `options:` header value, keys in FILE order.

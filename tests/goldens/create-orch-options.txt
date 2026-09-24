@@ -1,0 +1,34 @@
+╭─ ▸schedules 6 │ handovers 3 open · 2 ? ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                              │
+│        STATUS       TYPE     FOR                  AT                  TITLE                                                      SLUG                        │
+│  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+│  ▸     pending      plan     reset (08:50)        <stamp>    a pending plan  ⚠ title is not a slug; it becomes 'a-pe…   a-pending-plan <pad>│
+│        blocked      work     reset (08:50)        <stamp>    blocked behind a lane  ⚠ title is not a slug; it become…   blocked-behind-a-lane <pad>│
+│        corrupted    nonse…   whenever             <stamp>    a corrupted entry — type must be plan or work (got 'non…   a-corrupted-entry <pad>│
+│        launched     work     <stamp>     <stamp>    already launched — launched <stamp>               launched-lane <pad>│
+│        pending      plan     reset (08:50)        <stamp>    a title that is not a slug                                 pinned-one <pad>│
+│        due          work     <stamp>     <stamp>    with options and a model  ⚠ title is not a slug; it bec…   with-options-and-a-model <pad>│
+│                                                                                                                                                              │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ←→ tab ─╯
+╭─ options · sweep-<newname> ─<pad>╮
+│       CONTRACT                                                                                                                                               │
+│ ▸ [x] questions go to a file                 nobody is watching: QUESTIONS-{{SLUG}}.md, recommended answer, proceed                                          │
+│   [x] one commit per phase                   [feat] <phase>: summary, body bullets, attribution trailer                                                      │
+│   [ ] no push, no PR                         the orchestrator integrates                                                                                     │
+│       WINDOWS                                                                                                                                                │
+│   [ ] parallel lanes                         a number; {{VALUE}} in the sentence                                                                             │
+│       ORCHESTRATE                                                                                                                                            │
+│   [x] full automation, end to end            commit, push, PRs, merge when green; never stop to ask                                                          │
+│       MODEL                                                                                                                                                  │
+│   [ ] model                                  a CLI alias, written as a header field                                                                          │
+│   [ ] effort                                 passed as claude --effort                                                                                       │
+│       PROJECT                                                                                                                                                │
+│       a block nobody can parse               key 'Broken_Key' is not [a-z0-9-]+                                                                              │
+│       ACTIONS                                                                                                                                                │
+│       check all                                                                                                                                              │
+│       uncheck all                                                                                                                                            │
+│       continue  save what is ticked, then t…                                                                                                                 │
+│       skip  continue with nothing ticked                                                                                                                     │
+│    cancelled — nothing written                                                                                                                               │
+│    ↑↓ pick · space/enter toggle · enter on a row below does it · esc cancel                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

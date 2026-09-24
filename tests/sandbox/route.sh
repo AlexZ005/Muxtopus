@@ -283,6 +283,13 @@ $K Enter;  shot "create-options-checked" "need a value"
 $K Down
 $K Enter;  shot "create-options-unchecked" "[ ] questions go to a file"
 $K Escape; shot "create-cancelled" "cancelled — nothing written"
+# c ▸ orchestrate ▸ sweep: the third pick, and its table -- the orchestrate
+# kind, with a sweep's defaults (automate on, nopush off). Esc writes nothing.
+$K c;      pick "orchestrate"
+$K Enter;  shot "create-orchestrate" "orchestrate what?"
+$K Down
+$K Enter;  shot "create-orch-options" "ORCHESTRATE"
+$K Escape
 # d: the delete confirm, refused.
 $K d;      shot "sched-delete-confirm" "Delete a-pending.md?"
 $K n;      shot "sched-delete-cancelled" "cancelled"
