@@ -51,6 +51,7 @@ FAILFLAG="$SB/make-muxstats-fail"
 
 cleanup() {
   [ -n "${SLEEPER:-}" ] && kill "$SLEEPER" 2>/dev/null
+  [ -n "${SLEEPER2:-}" ] && kill "$SLEEPER2" 2>/dev/null
   command tmux -L mxstats kill-server 2>/dev/null
   [ -n "${KEEP_SANDBOX:-}" ] || rm -rf "$SB"
 }
@@ -195,6 +196,40 @@ check "the daemon tried to collect"           [ "$(ncollect)" -ge 1 ]
 check "the daemon did not collect every pass" [ "$(ncollect)" -le 1 ]
 kill "$DAEMON" 2>/dev/null; wait "$DAEMON" 2>/dev/null
 rm -f "$FAILFLAG"
+
+echo "== status.tsv's last column: what each session last said"
+# A REAL PASS, not the function alone (tests/test_muxjson.py runs last_turn
+# through all three mux_json tiers). Two live sessions: the one above, which
+# has no transcript at all, and one whose transcript is the SAID fixture --
+# a text block, then a tool call and a user turn after it, a tab, a newline,
+# multi-byte characters and more than eighty of them.
+sleep 300 & SLEEPER2=$!
+SID2="5a1d0000-0000-4000-8000-00000000said"
+mkdir -p "$HOME/.claude/projects/-home-user-said"
+cp "$REPO/tests/fixtures/said/transcript.jsonl" "$HOME/.claude/projects/-home-user-said/$SID2.jsonl"
+printf '{"pid":%s,"sessionId":"%s","cwd":"%s","version":"0.0.0","status":"idle","kind":"interactive","tmux":""}\n' \
+  "$SLEEPER2" "$SID2" "$HOME" > "$HOME/.claude/sessions/$SLEEPER2.json"
+t0=$(date +%s); "$W" --once >/dev/null 2>&1; t1=$(date +%s)
+said_of() { awk -F'\t' -v s="$1" '$1==s{print $20}' "$ST/status.tsv"; }
+nf_of()   { awk -F'\t' -v s="$1" '$1==s{print NF}' "$ST/status.tsv"; }
+check "every row has twenty columns"          [ "$(nf_of "$SID2")" = 20 ] && [ "$(nf_of deadbeef-0000-4000-8000-00000000dead)" = 20 ]
+check "no transcript: SAID is '-', not empty" [ "$(said_of deadbeef-0000-4000-8000-00000000dead)" = "-" ]
+got="$(said_of "$SID2")"
+check "the digest is the last TEXT, folded and cut: $got" \
+  [ "$got" = 'P1 is in: the digest folds a tab, a newline and keeps éèç — ✓ whole; a back\slas' ]
+check "...and nothing leaked into another row" [ "$(grep -c '' "$ST/status.tsv")" = 2 ]
+# The fixture's last TURN is the user record at 10:00:12, after the text at
+# 10:00:10: IDLE counts from it, bracketed by the clock either side of the pass.
+idle="$(awk -F'\t' -v s="$SID2" '$1==s{print $14}' "$ST/status.tsv")"
+E="$(date -d 2026-09-23T10:00:12Z +%s)"
+check "the idle column is still the last TURN's ($idle s)" \
+  [ "$idle" -ge $(( t0 - E )) ] && [ "$idle" -le $(( t1 - E )) ]
+out="$("$W" --status)"
+check "--status names the column, last"       grep -q $'\tPID\tSAID$' <<<"$out"
+check "--status prints the digest"            grep -qF 'P1 is in: the digest' <<<"$out"
+out="$("$W" --dry-run 2>/dev/null)"
+check "--dry-run's table has it too"          grep -qE 'PID +SAID$' <<<"$out"
+kill "$SLEEPER2" 2>/dev/null; SLEEPER2=""
 
 echo "== nothing outside the sandbox was touched"
 check "no real state dir was created" [ ! -e "/home/$(id -un)/.local/state/muxtopus/stats/.mxstats-marker" ]

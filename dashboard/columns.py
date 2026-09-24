@@ -8,6 +8,8 @@ lives here and both sides ask it.
 
   DASHBOARD_COLUMNS_HIDDEN   "<table>:<COLUMN>", comma-separated
   DASHBOARD_COLUMNS_PINNED   the same shape; UNSET means DEFAULT_PINNED
+  DASHBOARD_COLUMNS_SHOWN    the same shape: which of DEFAULT_HIDDEN the
+                             user asked for
   DASHBOARD_PANELS_HIDDEN    of deck,lanes,uncommitted,system
 
 BY NAME, WITH THE TABLE IN FRONT, never by index. Three separate reasons,
@@ -29,6 +31,17 @@ locked, and for the same reason: a column that is pinned and invisible is a
 heading with no cell under it. menulayout.column_window enforces it too --
 this module just never writes a config that needs the rescue.
 
+SOME COLUMNS ARE HIDDEN UNTIL ASKED FOR -- DEFAULT_HIDDEN, today only SAID,
+the last thing each session said, which is eighty characters wide and read
+by a sweep far more than by a person. They are not a default of the hidden
+key, and that is deliberate: unset-means-default works for the pinned key
+because nobody had set it when the default appeared, but anybody who has
+hidden a column already HAS a hidden key, and a default that only applies
+while it is unset would show them SAID the day it shipped. So the hidden
+set a frame draws is what the user hid PLUS the hidden-until-asked columns
+they have not asked for (DASHBOARD_COLUMNS_SHOWN), and every existing
+config, set or not, starts with SAID hidden.
+
 UNSET IS NOT EMPTY for the pinned key. Unset is a user who has never opened
 the menu, and they get DEFAULT_PINNED: the column that NAMES each row in
 each table. A table scrolled sideways with its name column gone is a grid
@@ -49,6 +62,7 @@ from dashboard.core import knob
 HIDDEN_KEY = "DASHBOARD_COLUMNS_HIDDEN"
 PINNED_KEY = "DASHBOARD_COLUMNS_PINNED"
 PANELS_KEY = "DASHBOARD_PANELS_HIDDEN"
+SHOWN_KEY = "DASHBOARD_COLUMNS_SHOWN"
 
 # The two tables of the main view that scroll sideways. The schedules table
 # keeps fit_columns and its ranks, so it is not here.
@@ -62,6 +76,11 @@ PANELS = ("deck", "lanes", "uncommitted", "system")
 
 # Unset pinned means these: the flexible, row-naming column of each table.
 DEFAULT_PINNED = "lanes:LANE,claude:WINDOW"
+
+# Hidden until asked for; see the module docstring. Asked for, a column in
+# here is an ordinary one -- pinned, scrolled, hidden again -- and hiding it
+# again puts it back to its default rather than into the hidden key.
+DEFAULT_HIDDEN = "claude:SAID"
 
 # "NOTHING PINNED", SPELLED OUT. muxsettings.put DELETES a key written with
 # an empty value -- which is right for every other setting, where absent and
@@ -167,7 +186,28 @@ def _cached(key: str, fn, profile: str):
 
 
 def hidden_columns(profile: str = "") -> dict[str, set[str]]:
+    """What a frame leaves out: the columns the user hid, and the
+    hidden-until-asked ones they have not asked for. A fresh dict of fresh
+    sets every call, so a caller may change what it was given."""
+    chosen = chosen_hidden(profile)
+    shown = shown_columns(profile)
+    default = parse(DEFAULT_HIDDEN)
+    return {t: chosen[t] | (default[t] - shown[t]) for t in TABLES}
+
+
+def chosen_hidden(profile: str = "") -> dict[str, set[str]]:
+    """The hidden key alone -- what the menu writes back. Not a frame's
+    answer: hidden_columns is."""
     return _cached(HIDDEN_KEY, parse, profile)
+
+
+def shown_columns(profile: str = "") -> dict[str, set[str]]:
+    """Which hidden-until-asked columns the user asked for."""
+    return _cached(SHOWN_KEY, parse, profile)
+
+
+def hidden_by_default(table: str, name: str) -> bool:
+    return name in parse(DEFAULT_HIDDEN).get(table, set())
 
 
 def pinned_columns(profile: str = "") -> dict[str, set[str]]:
@@ -208,7 +248,7 @@ def for_table(table: str, profile: str = "") -> tuple[set[str], set[str]]:
 
 
 def register_keys() -> None:
-    """Declare the three keys, once per process.
+    """Declare the four keys, once per process.
 
     Guarded by spec_of the way tabs.py's is: the settings store is
     module-level and the tests build several Apps in one process, so a
@@ -226,6 +266,11 @@ def register_keys() -> None:
             "check": validate_columns,
             "hint": "never scrolled off; unset means %s, %r means none"
                     % (DEFAULT_PINNED, NONE)},
+        SHOWN_KEY: {
+            "label": "Shown columns", "kind": "text",
+            "check": validate_columns,
+            "hint": "of the hidden-until-asked %s, the ones shown "
+                    "(Settings ▸ Columns)" % DEFAULT_HIDDEN},
         PANELS_KEY: {
             "label": "Hidden panels", "kind": "text",
             "check": validate_panels,

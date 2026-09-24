@@ -86,6 +86,11 @@ ARMED_ONCE="$STATE_DIR/armed.once"
 # migrate_window_names.
 NAMES_MIGRATED="$STATE_DIR/names.migrated"
 STATUS="$STATE_DIR/status.tsv"
+# ITS COLUMNS, NAMED ONCE for the two things that print them: --status, whose
+# raw rows had no names at all until SAID made twenty of them, and --dry-run's
+# table. SAID is last in the file and so last here: it is the widest and the
+# least needed, and the end of the line is what a narrow terminal loses first.
+STATUS_COLS=$'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\tMONOPTOUT\tPID\tSAID'
 PROMPTED="$STATE_DIR/prompted"
 LOG="$STATE_DIR/log"
 MSGFILE="$STATE_DIR/message"
@@ -343,6 +348,9 @@ case "${1:---once}" in
                hb="$(awk -F'\t' -v n="$(date +%s)" '{printf "%ds ago", n-$1}' "$STATE_DIR/heartbeat")"
              fi
              echo "# account=$MUX_LABEL restart=$r monitor=$m soft=$SOFT_PCT% hard=$HARD_PCT% interval=${INTERVAL}s usage-every=${USAGE_EVERY}m scanned=$hb"
+             # A comment line, like the one above, so a reader that skips
+             # `#` lines still gets exactly the rows the file holds.
+             echo "# $STATUS_COLS"
              [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
   # ARM AND DISARM ARE DECISIONS, and they are now RECORDED as such
   # (ARMED_ONCE). Whether this install has ever had one made is what tells a
@@ -569,7 +577,7 @@ token_totals() {
   printf '%s %s' "$spent" "$rd"
 }
 
-# WHEN THIS SESSION LAST TOOK A TURN, as an epoch.
+# WHEN THIS SESSION LAST TOOK A TURN, as an epoch -- and what it last said.
 #
 # NOT the transcript mtime, which this used to read and which is wrong by
 # hours: Claude Code keeps appending bookkeeping records long after the work
@@ -582,13 +590,121 @@ token_totals() {
 # So read the last record that IS a turn. The tail is bounded because these
 # files reach tens of MB, and 200 lines is far more than the handful of
 # trailing metadata records.
-last_turn_epoch() {
-  local f="$1" ts
-  ts="$(tail -n 200 "$f" 2>/dev/null |
-        mux_json -r 'select(.type=="assistant" or .type=="user") | .timestamp // empty' 2>/dev/null |
-        tail -1)"
+#
+# AND, FROM THE SAME READ, THE LAST THING IT SAID: the last assistant text
+# block in those 200 lines, folded to one line of at most 80 characters, for
+# status.tsv's last column (SAID in --status, and a hidden-by-default column
+# on the dashboard). It is here rather than in a function of its own because
+# this read already runs for every session on every pass, and the text is in
+# the same lines: ONE mux_json process per session per pass, as before, never
+# two. The filter emits one @tsv row per turn -- its timestamp, then any text
+# blocks an assistant turn carries -- and awk keeps the last of each.
+#
+# THE FILTER'S ODD CORNERS ARE ALL MEASURED, across the three tiers mux_json
+# can be (the real jq, jq.py, muxjson.py -- tests/test_muxjson.py runs this
+# exact string through each against tests/fixtures/said/):
+#   * `.message.content | .[]?`, not `.message.content[]`. muxjson refuses
+#     the postfix form, and without the `?` an assistant record whose content
+#     is a string made the tiers disagree: jq dropped that record, muxjson
+#     skipped it, and jq.py raised -- which ended the whole read and blanked
+#     the idle column along with the digest. (11713 assistant records in
+#     this box's 40 newest transcripts: every one an array of objects. The
+#     guard is for the record nobody has seen yet.)
+#   * `select(.type=="assistant")` INSIDE the array, so a user turn -- whose
+#     content IS often a string -- contributes its timestamp and nothing else.
+#   * `.timestamp // ""` rather than `// empty`: every turn is a row, and a
+#     turn with no timestamp is skipped by awk exactly as `// empty` skipped
+#     it before. The epoch is byte-for-byte what it was.
+#
+# FOLDED IN AWK, BECAUSE IT IS THE LAST COLUMN: a tab in it would add a
+# column and a newline would add a row. @tsv has already written a tab,
+# newline and carriage return as the two characters \t \n \r and a backslash
+# as \\, so awk splits on the \\ pairs first (a literal backslash-n in the
+# text is a backslash and an n, not a newline), turns the escapes and any
+# other control character into a space, and squeezes the runs. awk replaces
+# the `tail -1` that was here: the process count is unchanged.
+#
+# HONEST WHEN IT HAS NOTHING: TURN_SAID stays `-` when there is no text
+# block in the window (or no transcript at all -- the caller's default),
+# never an empty field that would read as "said nothing". A session whose
+# last record is a tool call shows its last TEXT, which is older; the IDLE
+# column beside it already says how old the turn is.
+TURN_FILTER='select(.type=="assistant" or .type=="user") | [.timestamp // "", (select(.type=="assistant") | .message.content | .[]? | select(.type? == "text") | .text // empty)] | @tsv'
+last_turn() {
+  local f="$1" out ts said
+  TURN_AT=""; TURN_SAID="-"
+  out="$(tail -n 200 "$f" 2>/dev/null |
+         mux_json -r "$TURN_FILTER" 2>/dev/null |
+         awk -F'\t' '
+           function fold(s,   n, p, i, o) {
+             n = split(s, p, /\\\\/)
+             for (i = 1; i <= n; i++) {
+               gsub(/\\[tnr]/, " ", p[i])
+               o = o (i > 1 ? "\\" : "") p[i]
+             }
+             gsub(/[\001-\037\177]/, " ", o)
+             gsub(/  +/, " ", o); sub(/^ /, "", o); sub(/ $/, "", o)
+             return o
+           }
+           { if ($1 != "") ts = $1
+             for (i = NF; i >= 2; i--) { t = fold($i); if (t != "") { said = t; break } } }
+           END { printf "%s\t%s", ts, said }')"
+  ts="${out%%$'\t'*}"; said="${out#*$'\t'}"
+  [ -n "$said" ] && said_cut "$said"
   [ -n "$ts" ] || return 1
-  date -d "$ts" +%s 2>/dev/null
+  TURN_AT="$(date -d "$ts" +%s 2>/dev/null)"
+}
+
+# EIGHTY CHARACTERS, NOT EIGHTY BYTES. The text is often not ASCII -- an em
+# dash, a tick, anything in another script -- and a cut through the middle
+# of a UTF-8 sequence is a column the dashboard decodes as garbage. `cut -c`
+# is no help: MEASURED on this box's coreutils under en_US.UTF-8, `cut -c1-2`
+# of "héllo" is "h" and half of the é. Bash's own ${s:0:80} counts
+# characters in a UTF-8 locale and bytes in C, and a daemon started on a
+# fresh box can easily have no LANG at all -- so the locale is set here, for
+# this function only (a `local LC_ALL` is put back on return, measured), to
+# the first UTF-8 one the machine has. Probed once, on first use.
+#
+# With none at all (a libc with no UTF-8 locale installed), the cut is in
+# bytes and said_whole takes back a character it split: shorter, never
+# broken.
+SAID_LOCALE="?"
+said_cut() {
+  local s="$1" probe='é' l
+  if [ "$SAID_LOCALE" = "?" ]; then
+    SAID_LOCALE=""
+    for l in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+      if ( LC_ALL="$l"; p='é'; [ "${#p}" = 1 ] ) 2>/dev/null; then
+        SAID_LOCALE="$l"; break
+      fi
+    done
+  fi
+  [ -n "$SAID_LOCALE" ] && local LC_ALL="$SAID_LOCALE"
+  s="${s:0:80}"
+  [ "${#probe}" = 1 ] || s="$(said_whole "$s")"
+  s="${s% }"
+  TURN_SAID="${s:--}"
+}
+
+# A cut made in BYTES, with a character it split taken off the end. Walks
+# back over at most three continuation bytes to the lead byte and drops the
+# lot if the lead byte promised more than is there. Only reached on a
+# machine with no UTF-8 locale at all.
+said_whole() {
+  local s="$1" LC_ALL=C k=1 b need
+  while [ "$k" -le 4 ] && [ "$k" -le "${#s}" ]; do
+    printf -v b '%d' "'${s:${#s}-k:1}"
+    [ "$b" -lt 0 ] && b=$(( b + 256 ))
+    if [ "$b" -lt 128 ]; then
+      break                                         # ASCII: nothing split
+    elif [ "$b" -ge 192 ]; then                     # the lead byte
+      if [ "$b" -ge 240 ]; then need=4; elif [ "$b" -ge 224 ]; then need=3; else need=2; fi
+      [ "$need" -gt "$k" ] && s="${s:0:${#s}-k}"
+      break
+    fi
+    k=$(( k + 1 ))
+  done
+  printf '%s' "$s"
 }
 
 # One field out of the usage cache. Cheap -- eight lines, and the watchdog
@@ -3249,7 +3365,7 @@ pass() {
   local tmp="$STATUS.tmp"; : > "$tmp"
 
   local f pid sid pane paneid ver st kind cwd tr ctx name text reset epoch state acted
-  local spent rd resumed model optout idle jobid cwd turn_at wound moptout
+  local spent rd resumed model optout idle jobid cwd turn_at said wound moptout
   local prev lane stranded pprev since hkey
   # Rebuilt lazily, once per pass at most, by the stranded test below.
   SCHED_NAMED=""; SCHED_UNDER=""
@@ -3291,9 +3407,12 @@ pass() {
     # Seconds since this session last wrote a turn. The transcript's mtime is
     # the cheapest honest answer, and it separates "quiet because it finished"
     # from "quiet because it stalled" at a glance.
-    idle=-1
+    # The same read gives SAID, the last thing it said: `-` with no
+    # transcript (a background job, a plain shell) -- never an empty field.
+    idle=-1; said="-"
     if [ -n "${tr:-}" ] && [ -f "${tr:-}" ]; then
-      turn_at="$(last_turn_epoch "$tr")"
+      last_turn "$tr"
+      turn_at="$TURN_AT"; said="$TURN_SAID"
       [ -n "$turn_at" ] && idle=$(( now - turn_at ))
     fi
     resumed="$(last_resumed "$sid")"
@@ -3521,10 +3640,16 @@ pass() {
     # most of the interval. Publishing the pid lets a reader check liveness
     # itself, against a /proc walk it is doing anyway, and drop the row on its
     # own frame. Appended, so an older reader keeps parsing the row it knows.
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    #
+    # SAID COMES AFTER IT, index 19, for the same reason: the dashboard's
+    # reader is positional with a length guard on every field past the sixth
+    # and muxstats.py reads only columns 0 and 2, so an old dashboard on a new
+    # file, or a new one on an old file, loses nothing. Being the last column
+    # is also why last_turn folds every tab and newline out of it.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$sid" "$name" "$paneid" "$ver" "$ctx" "$state" "$reset" "$acted" \
       "$resumed" "$spent" "$rd" "$optout" "$model" "$idle" "$jobid" \
-      "${cwd:--}" "${wound:--}" "$moptout" "$pid" >> "$tmp"
+      "${cwd:--}" "${wound:--}" "$moptout" "$pid" "${said:--}" >> "$tmp"
   done
 
   mv "$tmp" "$STATUS"
@@ -3569,7 +3694,7 @@ pass() {
   # `muxtopus stats` read, accruing whether or not anybody is looking.
   stats_collect "$now"
   if [ "$DRY" = 1 ]; then
-    { printf 'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\tMONOPTOUT\tPID\n'
+    { printf '%s\n' "$STATUS_COLS"
       awk -F'\t' 'BEGIN{OFS="\t"} {$1=substr($1,1,8);
         if ($9!="-" && $9!="") $9=strftime("%m-%d %H:%M",$9); print}' "$STATUS"
     } | column -t -s $'\t'

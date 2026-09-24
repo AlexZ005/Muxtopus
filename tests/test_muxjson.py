@@ -68,6 +68,14 @@ def refuses(label, args, stdin_text=""):
     ok(rc != 0 and out == "" and "muxjson:" in err, label)
 
 
+# THE WATCHDOG'S OWN STRING, read out of the script rather than copied: this
+# filter is the one whose every odd corner the tier tests below exist for,
+# and a copy here would go on passing after the script's had changed.
+WATCHDOG = os.path.join(ROOT, "claude-watchdog.sh")
+with open(WATCHDOG, encoding="utf-8") as _fh:
+    TURN_FILTER = next(line.split("=", 1)[1].strip().strip("'")
+                       for line in _fh if line.startswith("TURN_FILTER="))
+
 # ---------------------------------------------------------------- fixtures
 # A transcript line, as claude-watchdog.sh's token_totals sees it.
 USAGE_LINE = json.dumps({
@@ -101,10 +109,9 @@ same("token_totals: the @tsv pair of spent and read",
       " + (.message.usage.output_tokens // 0),"
       " (.message.usage.cache_read_input_tokens // 0) ] | @tsv"], TRANSCRIPT)
 
-print("== the last real turn (claude-watchdog.sh:514)")
-same("last_turn_epoch: assistant or user, its timestamp",
-     ["-r", 'select(.type=="assistant" or .type=="user") | .timestamp // empty'],
-     TRANSCRIPT)
+print("== the last real turn, and what it said (claude-watchdog.sh, last_turn)")
+same("last_turn: every turn a row, its timestamp and any text blocks",
+     ["-r", TURN_FILTER], TRANSCRIPT)
 
 print("== session discovery (claude-watchdog.sh:1507, :1690, :2851-2858)")
 for field, filt in (("tmux", ".tmux // empty"),
@@ -195,6 +202,22 @@ same("the --json object, built with -n and --arg",
       "model:{name:$m,pct:$mp},age_minutes:($age|tonumber)}"], "")
 same("to_entries over an object", ["-c", ".projects | to_entries"], CLAUDE_JSON)
 
+print("== the optional steps, .[]? and .name?")
+# What the SAID filter leans on. Each is a value jq would have RAISED on
+# without the `?` -- and jq.py raising ends the whole read (see the jq.py
+# tier block below, and last_turn's comment).
+ODD = "\n".join(json.dumps(x) for x in (
+    {"c": "a string"}, {"c": [1, "s", {"type": "text"}]}, {"c": None},
+    {"c": {"k": "v"}}, {"nope": 1})) + "\n"
+same(".[]? over a string, a list, null, an object and a missing key",
+     ["-c", ".c | .[]?"], ODD)
+same(".name? over the elements, whatever they are",
+     ["-c", ".c | .[]? | .type?"], ODD)
+same("select on .type? drops a bare string element rather than erroring",
+     ["-c", '.c | .[]? | select(.type? == "text")'], ODD)
+same(".[0]? of a string is nothing, of null is null",
+     ["-c", ".c | .[0]?"], ODD)
+
 print("== REFUSALS -- a filter it cannot do must never be guessed at")
 refuses("if/then/else", ["-r", "if .a then .b else .c end"], "{}\n")
 refuses("split()", ["-r", '.a | split("||")'], "{}\n")
@@ -238,6 +261,103 @@ else:
             print("      jq    -> %r" % theirs[1])
             print("      jq.py -> %r / %r" % (mine[1], mine[2][:120]))
         ok(mine[1] == theirs[1], "jq.py matches jq: %s" % label)
+
+# ------------------------------------------ SAID: one filter, three tiers
+# The whole of last_turn -- the filter, the awk fold and the bash cut -- run
+# against tests/fixtures/said/transcript.jsonl with mux_json pinned to each
+# tier in turn. The fixture is built to hit every corner at once: a text
+# block that is NOT the last turn (a tool_use-only record and a user turn
+# with string content come after it), a tab, a CRLF, a newline, multi-byte
+# characters that land on the cut, a backslash and a literal backslash-n
+# (which must survive as two characters, not become a space), and more than
+# eighty characters. Every tier must give the SAME epoch and digest, and the
+# digest is also asserted outright, so "all three agree on something wrong"
+# is not a pass.
+print("== SAID: last_turn through all three tiers")
+FIXTURE = os.path.join(ROOT, "tests", "fixtures", "said", "transcript.jsonl")
+WANT_AT = "1790157612"          # 2026-09-23T10:00:12Z, the last user turn
+WANT_SAID = ("P1 is in: the digest folds a tab, a newline and keeps "
+             "\u00e9\u00e8\u00e7 \u2014 \u2713 whole; a back\\slas")
+
+
+def last_turn_via(mux_json_body, path, lc_all=None):
+    """(rc, TURN_AT, TURN_SAID) from the script's own last_turn, with
+    mux_json replaced by the given body. The functions are cut out of the
+    script by their comment fences, so this runs the shipped text."""
+    with open(WATCHDOG, encoding="utf-8") as fh:
+        src = fh.read()
+    start = src.index("TURN_FILTER=")
+    end = src.index("# One field out of the usage cache.")
+    script = ("mux_json() { %s; }\n%s\nlast_turn %s; rc=$?\n"
+              "printf '%%s\\t%%s\\t%%s' \"$rc\" \"$TURN_AT\" \"$TURN_SAID\"\n"
+              % (mux_json_body, src[start:end], _sh(path)))
+    env = dict(os.environ)
+    if lc_all is not None:
+        env["LC_ALL"] = lc_all
+        env.pop("LANG", None)
+    p = subprocess.run(["bash", "-c", script], capture_output=True, env=env)
+    out = p.stdout.decode("utf-8", "replace").split("\t")
+    return tuple(out) if len(out) == 3 else (p.stderr.decode()[:200], "", "")
+
+
+def _sh(x):
+    return "'" + x.replace("'", "'\\''") + "'"
+
+
+TIERS = []
+if JQ:
+    TIERS.append(("jq", 'command jq "$@"'))
+else:
+    skipped += 1
+    print("skip  SAID via the real jq: jq is not installed")
+if HAVE_JQPY:
+    TIERS.append(("jq.py", '%s %s --via-jq-py "$@"' % (_sh(sys.executable), _sh(MUXJSON))))
+else:
+    skipped += 1
+    print("skip  SAID via jq.py: the jq wheel is not installed for %s"
+          % os.path.basename(sys.executable))
+TIERS.append(("muxjson.py", '%s %s "$@"' % (_sh(sys.executable), _sh(MUXJSON))))
+
+for name, body in TIERS:
+    rc, at, said = last_turn_via(body, FIXTURE)
+    ok(rc == "0" and at == WANT_AT,
+       "%s: the epoch is the last TURN's, past the tool call and the metadata (%r)" % (name, at))
+    ok(said == WANT_SAID,
+       "%s: the digest is the last TEXT, folded, cut to 80 characters (%r)" % (name, said))
+    ok(len(said) == 80, "%s: ...eighty characters, not eighty bytes (%d)" % (name, len(said)))
+
+# The daemon's locale is not ours to choose: on a fresh box it may have no
+# LANG at all. The cut is still by character.
+rc, at, said = last_turn_via(TIERS[-1][1], FIXTURE, lc_all="C")
+ok(said == WANT_SAID, "under LC_ALL=C the cut is still by character (%d chars)" % len(said))
+
+# Nothing to say is `-`, never an empty field: a transcript whose window
+# holds no text block at all, and an empty file.
+_tmp = os.path.join(os.path.dirname(FIXTURE), ".no-text.jsonl.tmp")
+try:
+    with open(_tmp, "w") as fh:
+        fh.write(json.dumps({"type": "assistant", "timestamp": "2026-09-23T10:00:00Z",
+                             "message": {"content": [{"type": "tool_use", "id": "x"}]}}) + "\n")
+    rc, at, said = last_turn_via(TIERS[-1][1], _tmp)
+    ok(at == "1790157600" and said == "-",
+       "a window with no text block: the epoch, and SAID is '-' (%r)" % said)
+    # A literal backslash-n is two characters of text and stays two: @tsv
+    # writes it as \\n, and only the fold's split on \\ pairs keeps it from
+    # being read as the escape of a newline.
+    with open(_tmp, "w") as fh:
+        fh.write(json.dumps({"type": "assistant", "timestamp": "2026-09-23T10:00:00Z",
+                             "message": {"content": [{"type": "text",
+                                                      "text": "C:\\new\\\tdir\n\nok"}]}}) + "\n")
+    rc, at, said = last_turn_via(TIERS[-1][1], _tmp)
+    ok(said == "C:\\new\\ dir ok",
+       "a literal backslash-n survives; a real tab and newlines fold, runs squeezed (%r)" % said)
+    with open(_tmp, "w") as fh:
+        pass
+    rc, at, said = last_turn_via(TIERS[-1][1], _tmp)
+    ok(rc == "1" and at == "" and said == "-",
+       "an empty transcript: no epoch (rc 1, as before) and SAID is '-'")
+finally:
+    os.unlink(_tmp)
 
 print("\n%d checks, %d failed, %d skipped%s"
       % (ran, fails, skipped, "" if JQ else " (jq not installed here)"))

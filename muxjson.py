@@ -3,8 +3,8 @@
 
 NOT A jq CLONE, and the difference is the whole design. jq is a real
 language; this understands the handful of filter shapes muxtopus actually
-writes -- a dotted path, a default, some arithmetic, `select`, `@tsv` and an
-array -- and REFUSES anything else with a message naming the filter. That
+writes -- a dotted path (and its `?` form), a default, some arithmetic,
+`select`, `@tsv` and an array -- and REFUSES anything else with a message naming the filter. That
 refusal is the point. A fallback that guessed at a filter it did not
 understand would hand the watchdog a plausible wrong number (an empty token
 count, a session id that is not there) and nothing anywhere would say so,
@@ -78,7 +78,7 @@ class Unsupported(Exception):
 # tokens to the parser ('.' then the name) but `//` is one, so the two-char
 # operators are tried before the one-char ones.
 _PUNCT2 = ("//", "==", "!=")
-_PUNCT1 = ".|+[],(){}:"
+_PUNCT1 = ".|+[],(){}:?"
 
 
 def tokenise(src: str) -> list:
@@ -291,6 +291,19 @@ class Parser:
                 self.take("op", "]")
             else:
                 break                      # a lone '.', the identity
+            # `.[]?` and `.name?` -- jq's "no error here": a step that would
+            # have failed on this value yields NOTHING instead. The watchdog's
+            # SAID filter needs it on `.message.content | .[]?`, and the reason
+            # is a measured difference between the tiers, not taste: fed an
+            # assistant record whose content is a string, the real jq drops
+            # that one record with an error, THIS parser yields nothing for it
+            # -- and jq.py raises, which ends the whole read, so the idle
+            # column and the digest both went blank for a single odd record.
+            # With the `?` all three agree (tests/test_muxjson.py pins it).
+            if self.at("op", "?"):
+                self.take()
+                kind, name = steps[-1]
+                steps[-1] = (kind + "?", name)
         return _path(steps)
 
     # select's argument: comparisons joined by and/or. Deliberately flat --
@@ -344,13 +357,34 @@ def _path(steps):
         for kind, name in steps:
             nxt = []
             for item in cur:
-                if kind == "iter":
+                if kind.endswith("?"):
+                    # The optional forms: what the plain step does where it
+                    # works, and NOTHING -- not null, not an error -- where
+                    # jq would have raised. A null is not an error in jq for
+                    # any of the three (null | .a, .[0] are null; .[] on null
+                    # IS one, and `?` makes it empty), so null falls through
+                    # to the plain step for .a and .[0].
+                    base = kind[:-1]
+                    if base == "iter" and not isinstance(item, (list, dict)):
+                        continue
+                    if base == "field" and not (
+                            isinstance(item, dict) or item is None
+                            or item is MISSING):
+                        continue
+                    if base == "index" and not (
+                            isinstance(item, list) or item is None
+                            or item is MISSING):
+                        continue
+                    kind_now = base
+                else:
+                    kind_now = kind
+                if kind_now == "iter":
                     if isinstance(item, list):
                         nxt.extend(item)
                     elif isinstance(item, dict):
                         nxt.extend(item.values())
                     continue
-                if kind == "index":
+                if kind_now == "index":
                     # jq's three answers, measured against jq 1.8: an index
                     # off either end of an ARRAY is null, an index of null is
                     # null, and an index of anything else is an ERROR. The
