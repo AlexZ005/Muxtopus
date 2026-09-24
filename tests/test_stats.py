@@ -460,7 +460,7 @@ def test_budget_and_lanes(tmp):
     check(state_files(st) == before, "a log rotated away loses nothing already counted")
 
     lanes = {l["slug"]: l for l in muxstats.load(st).lanes}
-    check(sorted(lanes) == ["a-title-that-is-far-to", "lane-a", "lane-b", "lane-c", "lane-d"],
+    check(sorted(lanes) == ["a-title-that-is-far-too-long-for", "lane-a", "lane-b", "lane-c", "lane-d"],
           "lanes from tree + entries (slug rule of the watchdog); adopted and unlaunched skipped")
     la, lb = lanes["lane-a"], lanes["lane-b"]
     check((la["parent"], la["launched"], la["done"]) ==

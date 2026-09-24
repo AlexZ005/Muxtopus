@@ -9,11 +9,12 @@ WHAT THIS HAS TO GUARANTEE, because the form presses enter on it:
                     entry is worse than no offer -- the prompt would refuse
                     its own suggestion, in front of somebody who pressed
                     enter to avoid thinking about it.
-  it fits           the slug is cut to 22 characters by the executor's own
-                    rule, and a name cut there is a name that stops being
-                    unique: `some-long-folder-otter` and `...-heron` both
-                    become `some-long-folder-nam`. The FOLDER is what gets
-                    cut instead.
+  it fits           the slug is cut to MAX_SLUG (32) characters by the
+                    executor's own rule, and a name cut there is a name that
+                    stops being unique: a long folder plus `-otter` and the
+                    same folder plus `-heron` both lose the word and become
+                    the same 32 characters. The FOLDER is what gets cut
+                    instead.
   it is a slug      only the characters sanitise_slug keeps, so what is
                     offered is what is used, unchanged.
 """

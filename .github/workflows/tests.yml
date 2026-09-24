@@ -56,6 +56,8 @@ jobs:
         run: python3 tests/test_newsession.py
       - name: the words a new window is named from
         run: python3 tests/test_naming.py
+      - name: the slug limit is one number in the shell, the dashboard and muxstats
+        run: python3 tests/test_slug_limit.py
       - name: muxjson -- the jq stand-in, checked against the real jq
         run: python3 tests/test_muxjson.py
       - name: a window asked for with c is launched, and quickly

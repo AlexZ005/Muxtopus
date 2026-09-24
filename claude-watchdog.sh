@@ -121,6 +121,13 @@ MON_OPTOUT="$STATE_DIR/monitor-optout"
 # open; templates/ holds prompt bodies. The dashboard renders the folder and
 # marks what it cannot parse as corrupted; this side simply skips those.
 SCHEDULES="$MUX_SCHEDULES"
+# THE LONGEST A SLUG MAY BE -- the lane's name as a window, a handover file and
+# a tree row. Must match dashboard/naming.py MAX_SLUG (and muxstats.py's copy);
+# tests/test_slug_limit.py greps all three and fails if they disagree. It was
+# 22 until a wave's `<orchestrator>-<lane>` names ran out of room: the live
+# tree.tsv held three slugs at exactly 22, one of them cut in silence from
+# dash-menus-layout-engine.md. Read by sched_sanitise and sched_slug_warn only.
+MAX_SLUG=32
 # HANDOFFS LIVE OUTSIDE THE REPO, one folder per account. They used to be
 # written as STATUS-<window>.md into the working tree, which put a scratch file
 # under version control and -- once a second account works the same tree --
@@ -881,7 +888,7 @@ lane_slug_of() {
 sched_sanitise() {
   local s
   s="$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-')"
-  printf '%s' "${s:0:22}"
+  printf '%s' "${s:0:MAX_SLUG}"
 }
 
 sched_slug() {
@@ -904,7 +911,7 @@ sched_slug_warn() {
   [ -n "$raw" ] || return 0
   slug="$(sched_sanitise "$raw")"
   [ "$slug" = "$raw" ] && return 0
-  if [ "${#raw}" -gt 22 ] && [ "${raw:0:22}" = "$slug" ]; then
+  if [ "${#raw}" -gt "$MAX_SLUG" ] && [ "${raw:0:MAX_SLUG}" = "$slug" ]; then
     printf 'the %s is %s characters, so the slug is TRUNCATED to "%s" -- set slug: to pin it' \
       "$src" "${#raw}" "$slug"
   else
@@ -1141,8 +1148,9 @@ sched_after_ok() {
 # Three ways an entry names a lane: it IS that lane (its slug), it is the
 # `resume-<lane>.md` the dashboard's "Schedule ➥resume" writes, or its `after:`
 # is waiting for it. The basename goes in as well as the slug because a resume
-# entry's SLUG is truncated to 22 characters while its filename is not --
-# `resume-sched-options-core` keeps its name and loses its slug.
+# entry's SLUG is truncated to MAX_SLUG (32) characters while its filename is
+# not -- `resume-` takes seven of them, so a lane whose own name is over 25
+# keeps its name in the file and loses the tail of it in the slug.
 #
 # SCHED_UNDER, BUILT IN THE SAME LOOP, IS A FOURTH WAY -- AND KEPT APART. A
 # pending entry's `window:` and `parent:` name the window it will open UNDER.

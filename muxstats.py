@@ -891,10 +891,19 @@ _FORK_RE = r"^\s*(\d+\.|##\s)"
 _ANSWER_RE = r"^\s*\*\*Answer"
 
 
+# claude-watchdog.sh MAX_SLUG, copied rather than imported: this module stands
+# alone (it imports nothing of the dashboard's). tests/test_slug_limit.py
+# asserts it agrees with the shell and with dashboard.naming.MAX_SLUG -- a
+# stale copy here would count a 30-character lane under a name that no window
+# and no handover file carries.
+_MAX_SLUG = 32
+
+
 def _sched_slug(raw: str) -> str:
-    """claude-watchdog.sh sched_sanitise: [A-Za-z0-9._-], the rest '-', 22 max."""
+    """claude-watchdog.sh sched_sanitise: [A-Za-z0-9._-], the rest '-', cut
+    to _MAX_SLUG."""
     import re
-    return re.sub(r"[^A-Za-z0-9._-]", "-", raw)[:22]
+    return re.sub(r"[^A-Za-z0-9._-]", "-", raw)[:_MAX_SLUG]
 
 
 def _sched_header(path: pathlib.Path) -> dict:

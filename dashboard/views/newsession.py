@@ -331,7 +331,7 @@ class NewSession:
     # box and the whole form twitched sideways under the cursor. Padded to
     # MAX_SLUG the row is the same width empty, full, and at every keystroke
     # in between -- and the blank space is the budget, which is worth seeing
-    # on a field that is silently cut at 22.
+    # on a field that is silently cut at MAX_SLUG.
     def _name_field(self) -> str:
         return self.app.ns["slug"].ljust(naming.MAX_SLUG)
 
