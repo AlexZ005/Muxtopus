@@ -4,6 +4,77 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.4.0 — 2026-09-24
+
+The release that lets muxtopus run an orchestrator: a window that splits a plan
+into lanes, schedules one entry per lane and an integrate entry, and waits. There
+are four new templates (`orchestrate`, `lane`, `integrate`, `sweep`), and
+`c ▸ orchestrate ▸ wave / sweep` writes the entry. A work entry may now name a
+`template:`; `{{HANDOVERS}}` and `{{STATE}}` are resolved; and a window that is
+waiting on its own pending entries is no longer reported `stranded`. A lane's
+name may now be 32 characters instead of 22, so `<orchestrator>-<lane>` names
+fit. The watchdog also records what each session last said, and the uncommitted
+panel shows commits that are not pushed yet.
+
+A minor: new entry headers (`template:` on work entries, `kind:`), new
+placeholders, a new setting (`DASHBOARD_COLUMNS_SHOWN`), and new columns at the
+end of `status.tsv` and `repos.tsv`. Nothing a user's own files name is renamed
+or moved.
+
+One thing to check when you upgrade: a lane that is **still running** and was
+named from a `title:` or a file name longer than 22 characters, with no
+`slug:`, had that name cut to 22. It is now cut at 32. Its window, handover and
+tree row keep the short name, so pin `slug:` to those 22 characters in its
+entry until it finishes. Lanes that have finished, and any lane with a `slug:`,
+are not affected.
+
+### Orchestrators
+
+#### schedules: templates for an orchestrator — a wave and a recurring sweep
+
+- The next `setup-schedules.py` run adds four templates to the account's `schedules/templates/`: `orchestrate.md` (a wave: splits a plan into lanes, writes one entry per lane and one integrate entry, then ends its turn), `lane.md`, `integrate.md`, and `sweep.md` (reads the watchdog's state files, acts on what has finished, reports, and schedules its own next run: at the next reset unless you give it a cadence, never sooner, and not at all once nothing is open). They are `type: work` templates. Templates you already have, edited or not, are left exactly as they are.
+- The shipped options table (`seeds/options.md`) has an `orchestrate` group: full automation, a preview gate before anything irreversible, a separate plan window, one shared rules file, a role per lane, a shared external budget, and the sweep's cadence. An existing `~/.config/muxtopus/options.md` is never rewritten; copy the blocks across if you want them.
+- A new manual page, [Orchestrators](https://alexz005.github.io/Muxtopus/orchestration.html), explains the two shapes, when a wave is worth it, how a sweep recurs and stops, which windows it closes and why, and what an orchestrator never does: release, tag or touch `VERSION`.
+
+#### schedules: `c ▸ orchestrate ▸ wave / sweep` creates an orchestrator
+
+- `c` in the schedules view offers a third pick, **orchestrate**, and then **wave** or **sweep**. The entry it writes is an ordinary `type: work` entry whose body is `templates/orchestrate.md` or `templates/sweep.md`, copied so what you edit is what gets pasted, with a `kind: wave` or `kind: sweep` line the executor ignores.
+- The options table for an orchestrator offers the `orchestrate` group (full automation, the preview gate, a rules file, the sweep's cadence …) on top of the usual work options. A wave starts with *orchestrate, don't babysit* ticked. A sweep starts with *spawn sub-windows*, the preview gate and the rules file off. Neither starts with *no push*, because full automation pushes. A plain `plan` or `work` entry never sees the orchestrate rows, and the plan template picker no longer lists the four orchestrator templates.
+- A sweep is named `sweep-<MMDD>` (`-b`, `-c` … for a second one that day) and pins that as its `slug:`.
+- `o` on an orchestrator entry reopens it with the orchestrate rows, read from `kind:`.
+- If the template is missing, the picker says so on that row and points you at `setup-schedules.py`. An `options.md` from before the orchestrate group existed gets a notice naming `seeds/options.md` to copy it from.
+- `claude-watchdog.sh --check` no longer reports a long entry's body as "empty" now and then.
+
+#### schedules: templates on work entries, two folder placeholders, and a waiting orchestrator is not stranded
+
+- A `type: work` entry may now name a `template:`. The template is pasted first, then the body, then the usual handover footer, and it is read when the window opens, so an edit to a template reaches every entry that names it, including ones already scheduled. A work entry whose template carries the whole prompt can leave its body empty. `claude-watchdog.sh --check` says what will be pasted, and still warns when the template has no file. `resume-status` is still a plan template in practice: the dashboard fills in its `{{STATUS_FILE}}`, the executor does not.
+- Two new placeholders are resolved when a prompt is pasted: `{{HANDOVERS}}`, the account's handovers folder, and `{{STATE}}`, the watchdog's state folder (`status.tsv`, `repos.tsv`, `tree.tsv`, `sched-why.tsv`). Before, a body using either was pasted as literal text, with a yellow warning.
+- A window that has pending schedule entries set to open under it (their `window:` or `parent:` names it) is no longer reported `stranded`, so there is no red row and no phone alert. Before, an orchestrator that ended its turn to wait for its lanes and its integrate entry turned red after two hours idle.
+- `claude-watchdog.sh --check <prefix>-` checks a whole wave: a name ending in `-` that is not itself an entry checks every entry whose file name or slug starts with it, and exits with the worst result. Before, `--check orch-impl-` said "no schedule entry matching" even with seven `orch-impl-*` entries in the folder. A name that matched one entry still does.
+
+### Schedules
+
+#### schedules: a lane's name may be 32 characters
+
+- A slug, the name a lane carries as its window, its handover file and its row in the window tree, may now be 32 characters instead of 22. A longer `title:` is no longer cut short. An orchestrator's `<orchestrator>-<lane>` names fit: `orchestrate-plan-` alone was 17 of the old 22.
+- A title over 32 characters is still cut, and `--check`, the log and the dashboard still say so and name the slug it became.
+- The schedules table's SLUG column grows to fit the longest slug on screen, up to 32 characters, so a long name is drawn whole instead of with an ellipsis. With only short slugs it is the width it always was.
+- The name field on the `c` form is padded to the new limit, so that row is ten columns wider.
+
+### Watchdog and dashboard
+
+#### watchdog: the last thing each session said
+
+- `claude-watchdog.sh --status` has a `SAID` column: the first 80 characters of each session's last text, on one line — what it last told you, without switching to its window. A session with nothing to read (a background job, a plain shell) says `-`. `--status` also names its columns now, in a `#` line above the rows.
+- The dashboard's claude table has a `SAID` column too, **hidden until you ask for it**: esc ▸ Settings ▸ Columns, `enter` on `claude · SAID`. At 80 columns it is one `shift-→` away and cut with an ellipsis; from about 113 columns it shows all 80 characters.
+- It is the session's last *text*: a window that has since run a tool shows what it said before that, and IDLE beside it says how old the turn is. It never leaves the machine — no phone notification carries it.
+
+#### dashboard: unpushed commits show up beside uncommitted files
+
+- The uncommitted panel on the main view now lists a tree that is ahead of its upstream even when nothing in it is modified, with `↑n` beside the file count for n commits not yet pushed (`0 ↑2` is a clean tree two commits ahead), and the panel's title adds how many commits are unpushed in all. An unpushed commit lives only on this disk, which is what the panel is there to warn about.
+- The count is against the last `git fetch`: the watchdog never fetches and never touches the network. A branch with no upstream, or a detached HEAD, shows no arrow rather than a `↑0` nobody measured.
+- `repos.tsv` in the watchdog's state folder gains three columns after the three it had: branch, ahead and behind (`-` when they cannot be known).
+
 ## v5.3.3 — 2026-09-23
 
 The release that prices Opus 5.5. Sessions on `claude-opus-5-5` showed `no price`
