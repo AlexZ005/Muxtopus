@@ -16,6 +16,10 @@ import time
 from pathlib import Path
 
 from dashboard.core import SCHEDULES_DIR, SCHED_TEMPLATES
+# The limit lives in dashboard.naming, which is pure and imports nothing of
+# ours, so there is no cycle; one number for both is what keeps the Create
+# row's padding and the rule that cuts the name from drifting apart.
+from dashboard.naming import MAX_SLUG
 
 
 SLUG_OK = frozenset(string.ascii_letters + string.digits + "._-")
@@ -23,11 +27,11 @@ SLUG_OK = frozenset(string.ascii_letters + string.digits + "._-")
 
 def sanitise_slug(raw: str) -> str:
     """The executor's rule, character for character: tr -c 'A-Za-z0-9._-' '-'
-    then cut to 22. Mirrored here rather than shelled out to, for the same
+    then cut to MAX_SLUG (32). Mirrored here rather than shelled out to, for the same
     reason validate_schedule mirrors the executor's other rules -- this side is
     a linter, and a linter that disagrees with the thing it lints is worse than
     none."""
-    return "".join(c if c in SLUG_OK else "-" for c in raw)[:22]
+    return "".join(c if c in SLUG_OK else "-" for c in raw)[:MAX_SLUG]
 
 
 def resolve_slug(row: dict) -> str:
@@ -51,7 +55,7 @@ def slug_warning(row: dict) -> str:
     slug = sanitise_slug(raw)
     if slug == raw:
         return ""
-    if len(raw) > 22 and raw[:22] == slug:
+    if len(raw) > MAX_SLUG and raw[:MAX_SLUG] == slug:
         return "%s truncated to %r — set slug: to pin it" % (src, slug)
     return "%s is not a slug; it becomes %r — set slug: to pin it" % (src, slug)
 

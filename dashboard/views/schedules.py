@@ -49,6 +49,7 @@ from dashboard.schedules import (asked_value, options_fields, options_line,
                                  options_section, parse_options_line,
                                  read_schedules, rewrite_options,
                                  sanitise_slug)
+from dashboard.naming import MAX_SLUG
 
 
 class ScheduleView(View):
@@ -782,6 +783,22 @@ class ScheduleView(View):
         # knows its size (menulayout.fit_columns / make_table, the ones the
         # main view uses): the number is the order a narrow terminal gives a
         # column up in, and TITLE carries the "▼ N more" marker.
+        #
+        # SLUG IS AS WIDE AS THE LONGEST SLUG ON SCREEN, never less than the 24
+        # it always was and never more than MAX_SLUG + 2. It is the column that
+        # shows the RESOLVED name -- the one the window, the handover and
+        # `handover.sh done` will all use -- so an ellipsis in it hides the
+        # exact characters it is there to show: at a literal 24, once the limit
+        # rose from 22 to 32, a 30-character `<orchestrator>-<lane>` slug was
+        # drawn cut. But a fixed MAX_SLUG + 2 cost everybody ten columns for
+        # names almost nobody has: MEASURED with tests/sandbox/prove.sh, at
+        # 100 columns fit_columns then gave SLUG up entirely, where the 24
+        # had kept it. Sized to the rows, a machine with short slugs draws
+        # exactly the table it drew before, and one with a long slug pays for
+        # it out of TITLE (the ratio column), or on a narrow terminal loses AT
+        # (rank 1) and then SLUG (rank 2) whole -- never drawn short.
+        slug_w = min(MAX_SLUG, max([22] + [len(r["resolved"] or r["file"].name)
+                                           for r in rows])) + 2
         st_cols = [
             ("", {"width": 3}, None),
             ("STATUS", {"width": 10}, None),
@@ -789,7 +806,7 @@ class ScheduleView(View):
             ("FOR", {"width": 18}, 4),
             ("AT", {"width": 17}, 1),
             ("TITLE", {"ratio": 1, "min_width": 12}, None),
-            ("SLUG", {"width": 24}, 2),
+            ("SLUG", {"width": slug_w}, 2),
         ]
         st_rows: list[list] = []
         why = sched_why()

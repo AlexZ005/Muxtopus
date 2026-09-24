@@ -20,8 +20,8 @@ what is taken, so it never lands on a name that already exists.
 NO DEPENDENCY. coolname, petname and haikunator all do this well, and none of
 them is worth a package on a machine whose dashboard has to keep working when
 the venv is broken: it is two lists and a shuffle. The lists are short words
-(six letters at most) for the same reason the slug is cut to 22 -- both ends
-of it are read in a tmux window name and in a table column.
+(six letters at most) for the same reason the slug has a limit at all -- both
+ends of it are read in a tmux window name and in a table column.
 
     suggest(base, taken, rng=None, nonce=0) -> str   the name to offer
     words()                                 -> (adjectives, nouns)
@@ -48,10 +48,22 @@ from __future__ import annotations
 import hashlib
 import random
 
-# The slug rule's own limit (dashboard.schedules.sanitise_slug cuts to 22),
-# repeated as a number rather than imported, because this module is pure and
-# the only thing it wants from that rule is how much room there is.
-MAX_SLUG = 22
+# THE SLUG RULE'S OWN LIMIT, and the one Python home of it: sanitise_slug and
+# slug_warning (dashboard.schedules) import it from here rather than the other
+# way round, because this module is pure and must stay importable without the
+# schedules folder. The shell half is MAX_SLUG in claude-watchdog.sh, and
+# muxstats.py keeps a copy of its own; tests/test_slug_limit.py fails the day
+# any of the three disagree.
+#
+# 32, NOT THE 22 IT WAS. Measured on the live tree.tsv (2026-09-22): three
+# slugs sat at exactly 22 -- `integrate-dash-columns`, `muxtopus-improvements3`
+# and `dash-menus-layout-engi`, whose entry was dash-menus-layout-engine.md and
+# which was cut in the tree in silence and only reported at launch. A wave
+# names its lanes `<orchestrator>-<lane>`, and `orchestrate-plan-` alone is
+# 17, which left five characters for the lane. 32 is still a window name that
+# fits in the status bar (tmux never cuts one) and a filename with room to
+# spare (`resume-` + 32 is 39).
+MAX_SLUG = 32
 
 # Short, plain, and nothing that reads as a judgement on the work: a window
 # called `failed-otter` would be a bad joke on the day it is true.

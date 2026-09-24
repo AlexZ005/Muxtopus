@@ -1,4 +1,4 @@
-title: a title that is far too long
+title: a title that is far too long for any lane name
 type: work
 status: done
 launched: 2026-09-16 09:00

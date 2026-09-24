@@ -17,7 +17,7 @@
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ new session · <SB>/work/repo-b ─<pad>╮
-│  ▸ Create [repo-b-quail          ]                                                                                                                           │
+│  ▸ Create [repo-b-quail                    ]                                                                                                                 │
 │    ····················································                                                                                                      │
 │    Sub-window repo-b-quail under root-lane: empty                                                                                                            │
 │      Sub-window repo-b-quail under root-lane: from its handover  (root-lane has not written STATUS-root-lane.md)                                             │

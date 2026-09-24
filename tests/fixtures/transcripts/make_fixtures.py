@@ -357,7 +357,7 @@ def build_query() -> dict:
         "muxhome/schedules/lane-a.md": entry("lane a", "2026-09-14 08:30", slug="lane-a", parent="root"),
         "muxhome/schedules/lane-d.md": entry("lane d", "2026-09-16 08:00", slug="lane-d", parent="lane-c"),
         "muxhome/schedules/never.md": entry("never launched", None, slug="never"),
-        "muxhome/schedules/long.md": entry("a title that is far too long", "2026-09-16 09:00"),
+        "muxhome/schedules/long.md": entry("a title that is far too long for any lane name", "2026-09-16 09:00"),
         "muxhome/handovers/done/STATUS-lane-a.md": "# lane-a\nsynthetic handover\n",
         "muxhome/handovers/done/STATUS-lane-b-20260916-120000.md": "# lane-b\nsynthetic handover\n",
         "muxhome/handovers/done/QUESTIONS-lane-a.md": QUESTIONS_A,

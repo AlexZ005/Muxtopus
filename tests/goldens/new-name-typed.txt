@@ -17,7 +17,7 @@
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ new session · <SB>/work/repo-b ─<pad>╮
-│  ▸ Create [route-lane            ]                                                                                                                           │
+│  ▸ Create [route-lane                      ]                                                                                                                 │
 │    ····················································                                                                                                      │
 │    Sub-window route-lane under root-lane: empty                                                                                                              │
 │      Sub-window route-lane under root-lane: from its handover  (root-lane has not written STATUS-root-lane.md)                                               │

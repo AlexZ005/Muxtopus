@@ -17,7 +17,7 @@
 │                                                                                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ new session · <SB>/work/repo-b ─<pad>╮
-│    Create [repo-b-vale           ]                                                                                                                           │
+│    Create [repo-b-vale                     ]                                                                                                                 │
 │    ····················································                                                                                                      │
 │    Sub-window repo-b-vale under stranded-lane: empty                                                                                                         │
 │  ▸ Sub-window repo-b-vale under stranded-lane: from its handover                                                                                             │

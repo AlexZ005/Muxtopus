@@ -40,7 +40,7 @@ The new window opens right after its `window:` target, named for its slug, and t
 | `type` | yes | `plan` · `work` | a `work` entry pastes its prompt and must have one — a body, a `template:`, or both — and gets the handover footer after it; a `plan` entry may have neither — nothing is then pasted and the window opens at a blank prompt |
 | `at` | yes | `reset` · `YYYY-MM-DD HH:MM` | when it is due. `reset` is [two gates](#at-reset-is-two-gates); an absolute time (anything `date -d` accepts, but the dashboard's linter wants `YYYY-MM-DD HH:MM[:SS]`) fires when it passes |
 | `title` | yes | free text | what the row says; the slug is derived from it unless `slug:` is set |
-| `slug` | no | `[A-Za-z0-9._-]`, ≤ 22 | pins [the lane's name](#the-slug-is-the-lanes-name-in-four-places) and wins over the title |
+| `slug` | no | `[A-Za-z0-9._-]`, ≤ 32 | pins [the lane's name](#the-slug-is-the-lanes-name-in-four-places) and wins over the title |
 | `window` | no | a tmux window name | insert the new window after this one. When it names a live window it also becomes the parent |
 | `after` | no | slugs, comma or space separated | hold until [every named lane is done](#after-slug-slug) |
 | `parent` | no | a slug | [draw this window under that one](#parent-slug--draw-this-window-under-that-one); usually derived from `window:` |
@@ -85,9 +85,11 @@ Unlike the opt-outs, both values mean something, because there is a default: **`
 
 ## The slug is the lane's name in four places
 
-It names the window, the handover file, the `handover.sh done <slug>` the worker is told to run, and the entry in the window tree. It is derived from the title by replacing everything outside `A-Za-z0-9._-` with `-` and cutting to 22 characters, which is how `title: 27-storage wave 2` once became the slug `27-storage-wave-2` while the lane's own brief said `27-storage` — two handover files for one lane, nothing watching the one that was written, and no warning anywhere.
+It names the window, the handover file, the `handover.sh done <slug>` the worker is told to run, and the entry in the window tree. It is derived from the title by replacing everything outside `A-Za-z0-9._-` with `-` and cutting to 32 characters, which is how `title: 27-storage wave 2` once became the slug `27-storage-wave-2` while the lane's own brief said `27-storage` — two handover files for one lane, nothing watching the one that was written, and no warning anywhere.
 
 So `slug:` pins it and wins over the title; a title that does not survive the derivation unchanged is **warned about** in the log, in `--check` and on the dashboard row (the SLUG column shows the resolved answer); and the resolved slug and full handover path are rendered **into the pasted body**, above everything else, saying they win over anything the brief names. A brief and the tooling can no longer disagree.
+
+The limit is 32 because 22, the limit it replaced, ran out: a wave names its lanes `<orchestrator>-<lane>`, and `orchestrate-plan-` alone is 17 characters. The old limit cut `dash-menus-layout-engine` to `dash-menus-layout-engi` in the tree and reported it only at launch. A 32-character slug is still whole in the tmux status bar, since tmux never cuts a window name, and in `resume-<slug>.md`.
 
 ## `at: reset` is two gates
 

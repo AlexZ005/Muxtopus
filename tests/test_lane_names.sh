@@ -130,4 +130,42 @@ check "both windows still exist -- neither was clobbered" no_clobber
 logged() { grep -q "$1" "$ST/log"; }
 check "..and the refusal is in the log" logged REFUSED
 
+echo "== a name of up to MAX_SLUG (32) characters is whole, everywhere it is shown"
+# 30 characters: the kind of `<orchestrator>-<lane>` name the old limit of 22
+# cut in silence. --check shows it pinned and whole; the launched window, the
+# tree row and the footer's handover path all carry all 30 -- tmux itself
+# never cuts a window name, so nothing between the rule and the status bar may.
+long=orchestrate-plan-orch-executor
+[ "${#long}" -eq 30 ] || { echo "fixture slug is ${#long}, not 30"; exit 1; }
+printf 'type: work\nat: 2099-01-01 00:00\nslug: %s\ncwd: %s\nstatus: pending\n---\nlater\n' \
+  "$long" "$HOME" > "$SC/long-lane.md"
+chk="$("$W" --check long-lane 2>&1)"
+check "--check shows a 30-character slug: whole" grep -qF " $long   (pinned by slug:)" <<<"$chk"
+check "..with no TRUNCATED warning" bash -c '! grep -q TRUNCATED <<<"$1"' _ "$chk"
+check "..and the pasted footer names its whole handover" \
+  grep -qF "handover.sh done $long" <<<"$("$W" --check long-lane --body 2>&1)"
+sed -i 's/^at: 2099-01-01 00:00$/at: 2020-01-01 00:00/' "$SC/long-lane.md"
+"$W" --once >/dev/null 2>&1
+for i in $(seq 40); do grep -q '^status: launched' "$SC/long-lane.md" && break; sleep 0.25; done
+check "the window is called all 30 characters" has_window "$long"
+check "..and so is its tree row" tree_has "$long"
+
+# A TITLE over the limit is still cut -- at 32 now, not 22 -- and SAID so.
+# 23 characters, the first length the old rule truncated, is left alone.
+t23=twenty-three-characters
+[ "${#t23}" -eq 23 ] || { echo "fixture title is ${#t23}, not 23"; exit 1; }
+printf 'type: work\nat: 2099-01-01 00:00\ntitle: %s\ncwd: %s\nstatus: pending\n---\nlater\n' \
+  "$t23" "$HOME" > "$SC/t23.md"
+chk="$("$W" --check t23 2>&1)"
+check "a 23-character title is its own slug" grep -qF " $t23   (derived from title:" <<<"$chk"
+check "..and draws no warning (the old rule cut it to 22)" bash -c '! grep -q TRUNCATED <<<"$1"' _ "$chk"
+t33=this-title-is-thirty-three-chars-
+[ "${#t33}" -eq 33 ] || { echo "fixture title is ${#t33}, not 33"; exit 1; }
+printf 'type: work\nat: 2099-01-01 00:00\ntitle: %s\ncwd: %s\nstatus: pending\n---\nlater\n' \
+  "$t33" "$HOME" > "$SC/t33.md"
+chk="$("$W" --check t33 2>&1)"
+check "a 33-character title is cut to 32" grep -qF " ${t33:0:32}   (derived" <<<"$chk"
+check "..and the cut is said" grep -qF "the title is 33 characters, so the slug is TRUNCATED to \"${t33:0:32}\"" <<<"$chk"
+rm -f "$SC/t23.md" "$SC/t33.md"
+
 sb_done
