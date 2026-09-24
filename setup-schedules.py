@@ -600,7 +600,7 @@ Delete one to get the shipped text back on the next run.
 The slug names the tmux window, the handover file, the `handover.sh done <slug>`
 the worker is told to run, and the entry in the scheduler's tree. It is derived
 from `title:` by replacing everything outside `A-Za-z0-9._-` with `-` and cutting
-to 22 characters -- so a title that reads like a sentence becomes a slug that
+to 32 characters -- so a title that reads like a sentence becomes a slug that
 does not look like the lane you had in mind:
 
     title: 27-storage wave 2   ->   slug 27-storage-wave-2
