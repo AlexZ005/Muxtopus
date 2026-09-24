@@ -31,6 +31,7 @@ The second half of the problem is accounts. A personal and a work account on one
 | understand what `--profile` does and where files go | [Accounts](accounts.md) |
 | know every key on the screen | [The dashboard](dashboard.md) |
 | open a window later, or under another one, or after another lane finishes | [Scheduled windows](schedules.md) |
+| split a plan into parallel lanes, or sweep up what has finished | [Orchestrators](orchestration.md) |
 | hand work from one window to the next, and answer a lane's questions | [Handovers and questions](handovers.md) |
 | know what the daemon does and when it types into a pane | [The watchdog](watchdog.md) |
 | get the windows back after the tmux server died | [Restore after a lost server](restore.md) |

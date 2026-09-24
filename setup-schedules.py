@@ -121,6 +121,163 @@ so the next session can resume the same way. If a fork genuinely needs the
 user, record it in {{QUESTIONS}} with your recommended answer, in the format
 the Questions contract describes, and proceed with the recommendation.
 """,
+    # THE FOUR ORCHESTRATOR TEMPLATES are `type: work` templates, unlike every
+    # one above: a work entry gets the footer that runs `handover.sh done`, and
+    # an orchestrator is finished only when that runs. They are TWO SHAPES, not
+    # one text with a fork -- a wave owns lanes, a sweep owns nothing -- because
+    # a fork in a paste is a sentence the model evaluates on every run at full
+    # price, and a sweep that reads "if you are a wave, write one entry per
+    # lane" is one bad turn from spawning lanes it does not own.
+    #
+    # EXECUTOR PLACEHOLDERS ONLY. Every {{NAME}} here is resolved by
+    # sched_subst when the paste happens -- including {{HANDOVERS}} and
+    # {{STATE}}, the two added beside these templates. resume-status.md above
+    # carries {{STATUS_FILE}}, which only the Python writers fill; a template
+    # used from a hand-written or self-written entry must never lean on that.
+    #
+    # WHAT RESOLVES WHEN. A {{NAME}} in orchestrate.md resolves in the
+    # ORCHESTRATOR's paste, to the orchestrator's values -- so a lane's brief
+    # cannot carry a {{SLUG}} meaning the lane. That is why step 3 has the
+    # orchestrator spell the lane's own slug and paths out, built from
+    # {{SLUG}}-<lane> and {{HANDOVERS}}, which ARE right in its paste. lane.md
+    # and integrate.md are pasted into the lane's own window (`template: lane`),
+    # so there {{SLUG}} and {{PARENT}} mean the lane and its orchestrator.
+    "orchestrate.md": """\
+You are a wave orchestrator: {{SLUG}}. You do no lane work in this window. You
+work on this account only: its tmux session, its windows, {{SCHEDULES}} and
+{{HANDOVERS}}.
+
+1. Read the task below and the plan files it names. Decide the lanes: each an
+   independent unit a fresh window can finish from its brief alone.
+2. FIRST write {{HANDOVER}}: the lane list, each lane's slug, what it owns,
+   what it depends on, and how to resume this plan if this window is gone.
+   This file is the plan; the window is not.
+3. One entry per lane, {{SCHEDULES}}/{{SLUG}}-<lane>.md: type: work, a past
+   at:, slug: {{SLUG}}-<lane>, window: {{WINDOW}}, parent: {{SLUG}}, cwd:,
+   permission-mode:, after: <the full slugs of the lanes it needs>,
+   template: lane, and a brief that stands alone. Slugs start with {{SLUG}}-
+   so no other orchestrator's lane can share a file or a handover. Every brief:
+   - OPENS with its identity, spelled out, because a placeholder you write here
+     resolves to YOUR values, not the lane's: "Read this brief and execute it
+     end to end. Your slug is {{SLUG}}-<lane>; your handover is
+     {{HANDOVERS}}/STATUS-{{SLUG}}-<lane>.md; your questions file is
+     {{HANDOVERS}}/QUESTIONS-{{SLUG}}-<lane>.md."
+   - carries a "Facts measured by the planner" section: what you already read,
+     each with its receipt (a count, a file, a date), so no lane re-derives it.
+   - cuts the work into phases sized S/M/L, each with the test that proves it.
+   - ends with a Finish line that says exactly what done is for that lane:
+     which tests are green, whether it pushes, a PR to which base, and whether
+     it merges or never merges.
+4. ONE more entry, {{SCHEDULES}}/{{SLUG}}-integrate.md: type: work, a past at:,
+   slug: {{SLUG}}-integrate, after: <every lane>, window: {{WINDOW}},
+   parent: {{SLUG}}, template: integrate.
+5. `claude-watchdog.sh --check {{SLUG}}-` and fix every warning. Then END
+   YOUR TURN. Do not wait, poll or monitor. The footer below says to run
+   `handover.sh done {{SLUG}}` when the whole item is finished: the whole
+   item is finished when the integrate window says so, and it runs that.
+
+ROUND 2 IS A NEW WAVE, NOT A RESUME. When the owner answers a preview with
+fixes, write a new wave -- new lane slugs, new entries -- whose rules file
+names the owner's feedback as its acceptance test, and every brief names it.
+Do not resume the old lanes.
+
+## Task
+""",
+    "lane.md": """\
+You are lane {{SLUG}} under orchestrator {{PARENT}}. The brief below is the
+whole of your job; nothing outside it is yours. Do not push, do not open a
+PR, do not touch another lane's files. Keep {{HANDOVER}} current with a
+"For the orchestrator" section: what the docs and changelog should say.
+Where the brief below says otherwise -- a wave whose lanes push and open
+PRs -- the brief wins.
+
+""",
+    "integrate.md": """\
+You are the integrate step of orchestrator {{PARENT}}. If an earlier
+integrate window worked this wave -- {{HANDOVER}} exists, or the plan names
+one -- read its handover first and take over its worktree rather than
+starting a second one. Then read {{HANDOVERS}}/STATUS-{{PARENT}}.md for the
+plan, then every lane handover it lists (done/ first, then open). Merge in the plan's order, run the
+verification each lane says it ran, and write what CLAUDE.md, CHANGELOG.md
+and the docs should say from each lane's "For the orchestrator" section. A
+lane that is open and stranded is not resumed: say so, and mark this item
+done with that lane listed as OWED. Never type into an idle window that is
+holding a gate (waiting for the owner's word): its wait is the point. When
+done, also run `handover.sh done {{PARENT}}`.
+
+""",
+    "sweep.md": """\
+You are a sweep: {{SLUG}}. You own no lanes and implement nothing. Every fact
+you act on comes from a file; you never read a pane and never type into one.
+You work on this account only: every path below is its own.
+
+1. CENSUS, from files only, in this order, before deciding anything:
+   - `handover.sh list` (the script the footer below names): what is owed.
+   - {{STATE}}/status.tsv: every session's window, state, idle time and SAID
+     (the last thing it said).
+   - {{STATE}}/repos.tsv: checkouts that are dirty or ahead of their upstream.
+   - {{STATE}}/tree.tsv and every pending entry in {{SCHEDULES}}: what is
+     scheduled, and under which window.
+   - {{STATE}}/sched-why.tsv: why each pending entry has not fired.
+   If all of that says nothing is finished, nothing is unpushed, nothing is
+   stranded and no question is unanswered, skip to step 6.
+
+2. THE TRAP. Text after a `❯` in a window is Claude Code's dimmed placeholder
+   hint, not a message someone typed. On 2026-09-20 twelve such lines each
+   looked like pending input; one read "close the PR and delete the remote
+   branch" for a PR that had been merged. Judge what a window owes from its
+   handover and its repo, never from its prompt line, and never re-send one.
+
+3. ACT on what is finished, in this order, and only this:
+   - a checkout that is ahead: push it. Then `gh pr list` in THAT repo only;
+     if the branch has no PR and its lane's handover says it is done, open one
+     with the handover's summary as the body and say so in the table.
+   - a PR whose checks are green and whose lane is done: merge it, unless it
+     is a release PR (release/*, or one that bumps VERSION) -- those are the
+     owner's. Never run release.sh, never tag, never publish.
+   - a lane whose handover is open and whose window is gone, or is `stranded`:
+     do not resume it. List it under "for you" with its handover's next step.
+   - an unanswered QUESTIONS file: list its first fork under "for you".
+     Do not answer it.
+   repos.tsv only sees this machine: a PR opened from another machine on a
+   branch this box has not fetched is missed. If the owner asked for it, run
+   `gh pr list` over every repo with a remote (about ten seconds) as well.
+
+4. CONTINUE what asked to be continued: a handover whose "next" section names
+   a resumable step, and whose worktree and branch still exist, gets ONE entry
+   in {{SCHEDULES}} (type: work, at: a past time, window: {{WINDOW}}, cwd: that
+   worktree, template: resume-status is NOT usable from here -- write the two
+   sentences yourself). A handover naming a worktree or branch that no longer
+   exists is not resumable: say so under "for you" and do not guess.
+
+5. CLOSE a window only when ALL of these hold:
+   - its slug's STATUS-<slug>.md is in {{HANDOVERS}}/done/;
+   - it is not the window holding an unreleased release;
+   - it is not a dashboard, a plain shell, or {{WINDOW}};
+   - no pending entry names it in window:, parent: or after:.
+   Close by window id from tree.tsv (`tmux kill-window -t @N`), never by name:
+   names repeat. An unanswered QUESTIONS file does not block closing; the
+   file outlives the window and `handover.sh list` keeps showing it.
+
+6. REPORT. One table -- window | state | owes | done here | for you -- then
+   `claude-notify.sh "sweep {{SLUG}}" "<three lines: acted / for you / next>"`.
+   If changes/ in the muxtopus checkout has unreleased fragments, say how many
+   and stop there: the owner decides releases.
+
+7. NEXT. If nothing is open anywhere -- no open handover, no pending entry,
+   repos.tsv empty -- write NO next entry: say so in the table, in the phone
+   line and in {{HANDOVER}}, and end the chain; the owner starts the next one
+   with `c`. Otherwise write {{SCHEDULES}}/sweep-<MMDD>.md, today's date, with
+   -b, -c ... added when that slug is {{SLUG}} or already has an entry or a
+   handover: type: work, template: sweep, slug: the same name, cwd: {{CWD}},
+   at: the cadence an option below gives, or `reset` when none does -- NEVER
+   sooner -- and the model:, effort:, permission-mode: and options: lines of
+   the entry that launched you. Its body is that entry FILE's `## Options` section,
+   copied from the file, not from this paste: the file still holds its
+   placeholders, and this paste has your own paths in their place. Then end
+   your turn.
+
+""",
 }
 
 made = []
@@ -410,6 +567,33 @@ Check one entry, or all of them, without launching anything:
 
     claude-watchdog.sh --check                 every entry
     claude-watchdog.sh --check lane-27-storage one entry, resolved in full
+
+## templates/ -- prompt bodies, seeded once and then yours
+
+    roadmap-plan.md     plan  an autonomous roadmap, forks to the questions file
+    hardening-audit.md  plan  an audit that writes findings and a roadmap
+    blank-plan.md       plan  the two contracts and nothing else
+    resume-status.md    plan  continue from a STATUS file
+    orchestrate.md      work  a wave: plan, one entry per lane, one integrate
+                              entry, then end the turn
+    lane.md             work  a lane a wave spawned (the wave names it with
+                              `template: lane`)
+    integrate.md        work  the wave's integrate step: every lane handover,
+                              merged in order, then the orchestrator marked done
+    sweep.md            work  the recurring sweep: a census from state files,
+                              act on what is finished, report, write its own
+                              next entry
+
+THE LAST FOUR ARE `type: work` TEMPLATES. An orchestrator is finished only
+when `handover.sh done` runs, and only a work entry carries the footer that
+says so. They use the executor's placeholders only -- `{{HANDOVERS}}` (the
+handovers folder) and `{{STATE}}` (this account's watchdog state directory)
+among them -- never resume-status.md's `{{STATUS_FILE}}`, which only the
+dashboard fills. The dashboard's create form copies a template into the body;
+a work entry can also name one with `template:` (the sweep's next entry does).
+
+This script writes a template only when its file is ABSENT: edit them freely.
+Delete one to get the shipped text back on the next run.
 
 ## The slug is the lane's name, in four places at once
 

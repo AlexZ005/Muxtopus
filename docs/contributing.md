@@ -51,6 +51,7 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | what a ticked box does to an entry | `tests/test_entry_options.py` | yes |
 | the menu layout engine | `tests/test_menulayout.py` | yes |
 | the options file parser | `tests/test_options.py` | yes |
+| the templates `setup-schedules.py` seeds: all eight written, an edited one kept, executor placeholders only | `tests/test_templates.py` | yes |
 | the ledger and every figure | `tests/test_stats.py` | yes |
 | the handover reader, the states and the fork parser | `tests/test_handovers.py` | yes |
 | `handover.sh`: the marker, and what `done` carries with it | `tests/test_handover_sh.sh` | yes |
