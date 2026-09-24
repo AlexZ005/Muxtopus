@@ -76,6 +76,17 @@ py = (ROOT / "dashboard" / "schedules.py").read_text()
 ok(not re.search(r"\[:\d+\]|> \d+ and", py),
    "dashboard/schedules.py has no literal slug length left")
 
+# The schedules table's SLUG column shows the resolved name; one narrower
+# than the limit draws a legal slug with an ellipsis. It was a literal 24
+# (the old 22 + 2) when the limit rose, found by reading the goldens. It is
+# sized to the rows, capped at MAX_SLUG + 2 (tests/sandbox proves the width).
+sv = (ROOT / "dashboard" / "views" / "schedules.py").read_text()
+col = re.search(r'\("SLUG", \{"width": ([^}]+)\}', sv)
+cap = re.search(r"^\s*slug_w = min\(MAX_SLUG,", sv, re.M)
+ok(col is not None and col.group(1) == "slug_w" and cap is not None,
+   "the schedules SLUG column is sized to the rows, up to MAX_SLUG: %r"
+   % (col.group(1) if col else None))
+
 # ---- what the rule does at the new limit -----------------------------------
 t40 = "a-title-of-exactly-forty-characters-long"
 ok(len(t40) == 40, "fixture is 40 characters (%d)" % len(t40))
