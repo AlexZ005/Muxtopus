@@ -54,6 +54,7 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | the templates `setup-schedules.py` seeds: all eight written, an edited one kept, executor placeholders only | `tests/test_templates.py` | yes |
 | the ledger and every figure | `tests/test_stats.py` | yes |
 | the handover reader, the states and the fork parser | `tests/test_handovers.py` | yes |
+| the repo sweep: dirty-or-ahead rows, `-` when unknowable, and the dashboard's reader and `↑n` | `tests/test_repos_sweep.py` | yes |
 | `handover.sh`: the marker, and what `done` carries with it | `tests/test_handover_sh.sh` | yes |
 | this manual: front matter, links, Liquid-safe bodies, nothing lost from the README | `tests/test_manual.py` | yes |
 | the self-updater, installed and rolled back for real | `tests/test_update.sh` | no — local |

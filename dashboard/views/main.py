@@ -43,7 +43,7 @@ from dashboard.core import (CONTEXT_WINDOW, DIM, EXTRAS_SENTINEL, EXTRA_HINTS,
                             WATCHDOG_MON_OPTOUT, WATCHDOG_MSG, WATCHDOG_OPTOUT,
                             YELLOW, gauge, human_age, human_mb, human_tokens,
                             pressure, read, sparkline, when)
-from dashboard.data import (Cpu, claude_sessions, dirty_for, dirty_repos,
+from dashboard.data import (Cpu, Repo, claude_sessions, dirty_for, dirty_repos,
                             drop_dead, first_glob, heartbeat_age, hooray,
                             hottest_c, lane_account, lane_name, lane_slug_of,
                             listening_inodes, meminfo, monitor_on,
@@ -710,7 +710,7 @@ class MainView(View):
         # carried no cwd -- but it does now, so a window sitting in a worktree
         # can say how much uncommitted work it is holding before you close it.
         dirty_list = dirty_repos()
-        dirty = {name: n for _path, name, n in dirty_list}
+        dirty = {r.name: r.changed for r in dirty_list}
 
         total_mb = sum(g["rss"] for g in shown.values())
         self.lane_keys = []
@@ -1016,19 +1016,22 @@ class MainView(View):
         if dirty_list:
             dt = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False,
                        header_style=DIM, border_style=FRAME)
-            dt.add_column("FILES", justify="right", width=6)
+            cells = [files_cell(r) for r in dirty_list]
+            # The column is as wide as it always was until something is
+            # ahead, so a machine with nothing unpushed draws the panel it
+            # drew before this column learnt about commits.
+            dt.add_column("FILES", justify="right",
+                          width=max([6] + [c.cell_len for c in cells]))
             dt.add_column("TREE", width=26, overflow="ellipsis", no_wrap=True)
             dt.add_column("PATH", overflow="ellipsis", no_wrap=True, ratio=1)
             dt.add_column("", width=10)
-            for path, name, n in dirty_list:
-                here = name in lane_names
-                dt.add_row(Text(str(n), style=YELLOW),
-                           Text(name),
-                           Text(path.replace(str(HOME), "~"), style=DIM),
+            for r, cell in zip(dirty_list, cells):
+                here = r.name in lane_names
+                dt.add_row(cell,
+                           Text(r.name),
+                           Text(r.path.replace(str(HOME), "~"), style=DIM),
                            Text("has a lane" if here else "", style=DIM))
-            panels.append(Panel(dt, title="[bold]uncommitted[/] "
-                                f"[{DIM}]· {len(dirty_list)} tree(s) · "
-                                f"{sum(n for _p, _n, n in dirty_list)} file(s)",
+            panels.append(Panel(dt, title=uncommitted_title(dirty_list),
                                 title_align="left", border_style=FRAME, box=box.ROUNDED))
 
         deck_panel = Panel(head, title="[bold]deck", subtitle=f"[{DIM}]{subtitle}",
@@ -1446,7 +1449,36 @@ HELP_UNCOMMITTED = f"""
     line up: a repo can be dirty with no session and no dev server anywhere
     near it, and that is the copy most likely to be lost. The DIRTY column on a
     session row is a hint for the tree that window is sitting in.
+    [bold]↑2[/] beside the file count is two commits not yet pushed, so a clean
+    tree that is ahead is listed too. It counts against the last fetch -- the
+    watchdog never fetches -- and says nothing at all for a branch with no
+    upstream or a detached HEAD, where the number cannot be known.
 """
+
+
+def files_cell(r: Repo) -> Text:
+    """The FILES cell: the changed-file count, and `↑n` for n unpushed commits.
+
+    ONLY UP. Behind is in repos.tsv too, but it is not work this machine could
+    lose, it is only as fresh as the last fetch, and a panel about losing work
+    is the wrong place for it. A `-` (no upstream, detached) draws nothing: an
+    unknown is not shown as a zero, and not guessed at either."""
+    t = Text(str(r.changed), style=YELLOW if r.changed else DIM)
+    n = r.ahead_n
+    if n:
+        t.append(f" ↑{n}", style=YELLOW)
+    return t
+
+
+def uncommitted_title(repos: list[Repo]) -> str:
+    """The panel's title: trees and files as before, and the unpushed commits
+    only when there are some -- a machine with none sees the title it did."""
+    title = (f"[bold]uncommitted[/] [{DIM}]· {len(repos)} tree(s) · "
+             f"{sum(r.changed for r in repos)} file(s)")
+    ahead = sum(r.ahead_n or 0 for r in repos)
+    if ahead:
+        title += f" · {ahead} commit(s) unpushed"
+    return title
 
 HELP_BACKGROUND = f"""
   [{DIM}]A session shown as (background) was started with `claude --bg`. It has no

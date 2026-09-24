@@ -122,7 +122,7 @@ All of it in `~/.local/state/claude-watchdog[-<account>]/`, read by the dashboar
 | `tree.tsv` | the window tree: slug, parent, window id, pane id, launched-at, entry file |
 | `windows.tsv` | the window snapshot, rewritten every pass the session is there; `windows.last.tsv` is the frozen one after a loss, `windows.restored.tsv` / `windows.declined.tsv` what became of it |
 | `usage.tsv` | the last usage reading and when it was taken |
-| `repos.tsv` | the dirty working trees it swept |
+| `repos.tsv` | the working trees under `~/.code` with something to lose — dirty, or ahead of their upstream: path, name, changed files, branch, ahead, behind. Ahead and behind are against the **last fetch** (the watchdog never fetches), and `-` — never `0` — for a branch with no upstream or a detached HEAD |
 | `heartbeat` | proof of life; the dashboard calls it "watchdog not running" past 75 s |
 | `enabled`, `monitor` | the two switches |
 | `optout`, `monitor-optout` | the session ids excluded from each |
