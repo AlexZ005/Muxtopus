@@ -151,7 +151,7 @@ Format:
     parent: 24-c1-schema            (optional: draw this window under that one)
     window: plan1-fixes            (optional: insert the new window after this one)
     cwd: /home/deck/.code/theprototype-app/core
-    template: resume-status        (plan only, optional; a file in templates/)
+    template: resume-status        (optional; a file in templates/, pasted before the body)
     model: opus                    (optional: fable | opus | sonnet | full id; default from settings.json)
     effort: high                   (optional: low | medium | high | xhigh | max -> claude --effort)
     permission-mode: bypassPermissions   (optional -> claude --permission-mode)
@@ -168,9 +168,15 @@ Format:
 The launched window is named with a leading arrow and appears right after
 `window:` when that window exists.
 
+A template is pasted first, then the body, then (for work) the handover
+footer -- for either type. resume-status is still a PLAN template in practice:
+its {{STATUS_FILE}} is filled in by the dashboard when it writes the entry, not
+by the executor, so an entry that names it by hand pastes that placeholder
+literally (and is warned about it).
+
 ## Placeholders, resolved when the body is PASTED
 
-The body is not a literal string. Seven names are substituted the moment the
+The body is not a literal string. Nine names are substituted the moment the
 window opens, over the template, the body and the work footer -- never over the
 `[muxtopus]` identity lines at the top, which are built from the resolved values
 already:
@@ -178,8 +184,10 @@ already:
     {{SLUG}}       27-storage
     {{WINDOW}}     the tmux window name: 27-storage
     {{HANDOVER}}   <handovers>/STATUS-27-storage.md
+    {{HANDOVERS}}  <handovers>, the folder every lane's handover is in
     {{QUESTIONS}}  <handovers>/QUESTIONS-27-storage.md
     {{SCHEDULES}}  this folder
+    {{STATE}}      the watchdog's state folder: status.tsv, repos.tsv, tree.tsv, sched-why.tsv
     {{CWD}}        the entry's cwd: field
     {{PARENT}}     the entry's parent slug, or empty for a root window
 

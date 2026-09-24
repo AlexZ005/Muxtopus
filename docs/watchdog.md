@@ -12,6 +12,7 @@ claude-watchdog.sh --status            # the table it publishes
 claude-watchdog.sh --dry-run           # one pass, act on nothing
 claude-watchdog.sh --once              # one pass, for real
 claude-watchdog.sh --check [name]      # resolve schedule entries, launch nothing
+claude-watchdog.sh --check <slug>-     # ...every entry of a wave (a prefix ending in -)
 claude-watchdog.sh --tree              # the window tree it keeps
 claude-watchdog.sh --profile work ...  # any account
 claude-watchdog.sh --on | --off        # arm / disarm (or `w` on the dashboard)
@@ -92,7 +93,7 @@ Not a field: a **state** the watchdog publishes for a window, beside `working`, 
 - it is idle — not mid-turn;
 - it has been idle for at least `WATCHDOG_STRANDED` minutes (default 120);
 - it has an **open** handover — `handovers/STATUS-<slug>.md`, not one in `done/`, so there is unfinished work;
-- and **no** pending entry in the schedules folder names it: not its slug, not the `resume-<slug>.md` the dashboard's "Schedule resume" writes, and not an `after:` waiting on it.
+- and **no** pending entry in the schedules folder names it: not its slug, not the `resume-<slug>.md` the dashboard's "Schedule resume" writes, not an `after:` waiting on it, nor a `window:` or `parent:` that will open under it. A wave orchestrator that has ended its turn with its lanes and its integrate entry still pending under it is waiting for them, not stranded.
 
 `idle` is a fact about the last turn — the same word for a lane that finished ten minutes ago and for one that stopped mid-phase three days ago with its handover half-written. Measured: four lanes sat at `idle 3d` with open handovers, nothing pending named any of them, and nothing anywhere said so.
 

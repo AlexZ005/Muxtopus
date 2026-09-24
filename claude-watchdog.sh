@@ -11,6 +11,8 @@
 #                                    (windows.last.tsv, or F) in the session
 #   claude-watchdog.sh --check [NAME] resolve schedule entries; launch nothing
 #                                    (NAME is a file, a basename or a slug;
+#                                     one ending in '-' that is none of
+#                                     those checks every entry it prefixes;
 #                                     add --body to see the exact paste)
 #   claude-watchdog.sh --on|--off    enable/disable acting (the dashboard's 'w')
 #   claude-watchdog.sh --optout ID   never prompt that session (dashboard: space)
@@ -1025,10 +1027,34 @@ sched_after_ok() {
 # is waiting for it. The basename goes in as well as the slug because a resume
 # entry's SLUG is truncated to 22 characters while its filename is not --
 # `resume-sched-options-core` keeps its name and loses its slug.
+#
+# SCHED_UNDER, BUILT IN THE SAME LOOP, IS A FOURTH WAY -- AND KEPT APART. A
+# pending entry's `window:` and `parent:` name the window it will open UNDER.
+# FOUND on the orch-impl wave, 2026-09-24: its root window ended its turn with
+# an open handover and eight entries written `window: orch-impl`, two still
+# pending -- the integrate one `after:` seven lanes. Not one of them names
+# orch-impl by slug, by resume- or by after:, so once it had sat idle for
+# WATCHDOG_STRANDED (120) minutes it would go red and page the phone, for a
+# window waiting exactly as designed. tests/test_notify_watchdog.sh drives
+# that case in the sandbox and sees `stranded` without this set. So the
+# stranded test asks both sets.
+#
+# It is not folded into SCHED_NAMED because tree_is_lane asks that set too, and
+# there "named by an entry" means "this window IS a lane". `window:` is the one
+# field that routinely names a window opened by hand (`window: status`, a
+# `claude` window, a planning window with no handover), and a hand-made window
+# must never be adopted into the tree for being somebody's insertion point.
+# The stranded test cannot have that problem: it only runs for a window with an
+# open handover, which is a lane already.
+#
+# `window:` is a tmux window name, which for a lane is its slug (tree_wname);
+# old entries still carry the ➥ markers, stripped the way lane_slug_of strips
+# a window's name, so the two sides compare the same string.
 SCHED_NAMED=""
+SCHED_UNDER=""
 sched_named_slugs() {
-  local f st b
-  SCHED_NAMED=" "
+  local f st b w p
+  SCHED_NAMED=" "; SCHED_UNDER=" "
   [ -d "$SCHEDULES" ] || return 0
   for f in "$SCHEDULES"/*.md; do
     [ -f "$f" ] || continue
@@ -1037,6 +1063,9 @@ sched_named_slugs() {
     [ "$st" = pending ] || continue
     b="$(basename "$f" .md)"
     SCHED_NAMED="$SCHED_NAMED$(sched_slug "$f") $b $(sched_after_deps "$(sched_field "$f" after)" | paste -sd' ' -) "
+    w="$(lane_slug_of "$(sched_field "$f" window)")"
+    p="$(sched_field "$f" parent)"
+    SCHED_UNDER="$SCHED_UNDER${w:+$w }${p:+$p }"
   done
   return 0
 }
@@ -1049,6 +1078,15 @@ sched_names_slug() {
   case "$SCHED_NAMED" in *" $slug "*|*" resume-$slug "*) return 0 ;; esac
   r="$(sched_sanitise "resume-$slug")"
   case "$SCHED_NAMED" in *" $r "*) return 0 ;; esac
+  return 1
+}
+
+# Is some pending entry going to open UNDER this window -- its window: or its
+# parent: -- so that the window is waiting for it rather than forgotten? Only
+# the stranded test asks this; see SCHED_UNDER above for why it is its own set.
+sched_under_slug() {
+  [ -n "$SCHED_NAMED" ] || sched_named_slugs
+  case "$SCHED_UNDER" in *" $1 "*) return 0 ;; esac
   return 1
 }
 
@@ -1463,20 +1501,43 @@ sched_perm_canon() {
 }
 
 # THE SUBSTITUTABLE PART OF THE PASTE, exactly as written and before any
-# placeholder is resolved: the template (plan only), the body, and the work
-# footer. Split out from sched_compose because two things need it -- the
+# placeholder is resolved: the template, the body, and the work footer. Split out from sched_compose because two things need it -- the
 # composer, which substitutes over it, and the placeholder report, which has to
 # see what was WRITTEN rather than what came out.
 #
 # The footer is itself written in placeholders. It says the same bytes it
 # always did, but it now says them through the same table the body uses, so
 # there is one definition of "the handover file" rather than two.
+# The template file an entry names, on stdout, if it names one that exists.
+# One test, used by the composer, the empty-prompt rule and --check, so the
+# three cannot disagree about whether a template goes into the paste.
+sched_template_file() {
+  local tmpl
+  tmpl="$(sched_field "$1" template)"
+  [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ] || return 1
+  printf '%s' "$SCHEDULES/templates/$tmpl.md"
+}
+
+# Does a work entry have anything to paste? Its body, or -- since a work entry
+# may name a template -- the template alone. An entry whose body is empty
+# because the template carries the whole brief is the shape a
+# self-rescheduling sweep writes, and skipping it as "empty" would end the
+# chain on its second link.
+sched_has_prompt() {
+  [ -n "$(sched_body "$1")" ] || sched_template_file "$1" >/dev/null
+}
+
 sched_raw() {
-  local f="$1" footer="${2:-1}" type tmpl
+  local f="$1" footer="${2:-1}" type tfile
   type="$(sched_field "$f" type)"
-  tmpl="$(sched_field "$f" template)"
-  if [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
-    cat "$SCHEDULES/templates/$tmpl.md"
+  # ANY TYPE, not only plan. It used to be plan-only, which made a work entry
+  # that wanted a shared brief carry a copy of it: a self-rescheduling sweep
+  # wrote its next entry with the whole 60-line template pasted into the body,
+  # so an edit to the template never reached a chain already in flight. Now a
+  # work entry names the template and the body is only what is particular to
+  # this run; the footer still comes last, after both.
+  if tfile="$(sched_template_file "$f")"; then
+    cat "$tfile"
     echo
   fi
   sched_body "$f"
@@ -1500,14 +1561,27 @@ sched_raw() {
 # Pattern quoted, replacement not: quoting the pattern is what stops bash
 # treating a placeholder as a glob, and the replacements are paths that must go
 # in verbatim.
-SCHED_PLACEHOLDERS="SLUG WINDOW HANDOVER QUESTIONS SCHEDULES CWD PARENT"
+#
+# {{HANDOVERS}} and {{STATE}} are the two folders an orchestrating window
+# reads, not writes: every lane's handover, and the watchdog's own tables
+# (status.tsv, repos.tsv, tree.tsv, sched-why.tsv). Without them a template
+# shared by every account had to spell ~/.code/handovers, which is the wrong
+# folder on any account whose MUXTOPUS_HOME is elsewhere.
+#
+# {{HANDOVER}} BEFORE OR AFTER {{HANDOVERS}} IS THE SAME: the pattern is the
+# whole token, closing braces included, and "{{HANDOVER}}" is not a substring
+# of "{{HANDOVERS}}" -- the S comes before the braces. tests/test_sched_template.sh
+# resolves both in one body rather than trust that.
+SCHED_PLACEHOLDERS="SLUG WINDOW HANDOVER HANDOVERS QUESTIONS SCHEDULES STATE CWD PARENT"
 sched_subst() {
   local txt="$1" slug="$2" wname="$3" cwd="$4" parent="$5"
   txt="${txt//"{{SLUG}}"/$slug}"
   txt="${txt//"{{WINDOW}}"/$wname}"
   txt="${txt//"{{HANDOVER}}"/$HANDOVERS/STATUS-$slug.md}"
+  txt="${txt//"{{HANDOVERS}}"/$HANDOVERS}"
   txt="${txt//"{{QUESTIONS}}"/$HANDOVERS/QUESTIONS-$slug.md}"
   txt="${txt//"{{SCHEDULES}}"/$SCHEDULES}"
+  txt="${txt//"{{STATE}}"/$STATE_DIR}"
   txt="${txt//"{{CWD}}"/$cwd}"
   txt="${txt//"{{PARENT}}"/$parent}"
   printf '%s' "$txt"
@@ -2135,9 +2209,14 @@ sched_check_one() {
   if [ -n "$cwd" ] && [ -d "$cwd" ]; then kv cwd "$cwd"
   else kv cwd "${cwd:-(missing)}   -- NOT A DIRECTORY"; rcout=1; fi
   if [ -n "$tmpl" ]; then
-    if [ -f "$SCHEDULES/templates/$tmpl.md" ]; then kv template "$tmpl   ($SCHEDULES/templates/$tmpl.md)"
-    else kv template "$tmpl   -- NOT IN templates/"; rcout=1; fi
-    [ "$type" = plan ] || kv "" "(a template is only prepended for type: plan)"
+    if [ -f "$SCHEDULES/templates/$tmpl.md" ]; then
+      kv template "$tmpl   ($SCHEDULES/templates/$tmpl.md)"
+      if [ "$type" = work ]; then kv "" "(pasted first, then the body, then the handover footer)"
+      else kv "" "(pasted first, then the body)"; fi
+    else
+      kv template "$tmpl   -- NOT IN templates/"; rcout=1
+      kv "" "(so nothing is prepended: the body is pasted on its own)"
+    fi
   fi
   kv status "${st:-(missing)}"
   after="$(sched_field "$f" after)"
@@ -2188,7 +2267,7 @@ sched_check_one() {
   nlines="$(sched_body "$f" | grep -c '' 2>/dev/null)"
   nbytes="$(sched_compose "$f" "$slug" "$wname" "$parent" | wc -c)"
   local parts=""
-  [ "$type" = plan ] && [ -n "$tmpl" ] && [ -f "$SCHEDULES/templates/$tmpl.md" ] && parts="template + "
+  sched_template_file "$f" >/dev/null && parts="template + "
   parts="${parts}body"
   [ "$type" = work ] && parts="$parts + handover footer"
   if sched_compose "$f" "$slug" "$wname" "$parent" | grep -q '[^[:space:]]'; then
@@ -2197,7 +2276,7 @@ sched_check_one() {
     kv body "empty -- nothing is pasted; the window opens at a blank prompt"
   fi
   kv identity "$STATE_DIR/identity/$slug.md, on claude's --append-system-prompt-file (pasted first instead if the CLI lacks it)"
-  if [ "$type" = work ] && [ -z "$(sched_body "$f")" ]; then
+  if [ "$type" = work ] && ! sched_has_prompt "$f"; then
     kv "" "-- EMPTY BODY: a work item with nothing to paste is skipped"; rcout=1
   fi
   case "$type" in plan|work) ;; *) kv "" "-- type must be plan or work"; rcout=1 ;; esac
@@ -2234,12 +2313,41 @@ sched_check_one() {
   return "$rcout"
 }
 
+# A NAME ENDING IN '-' THAT IS NO ONE ENTRY IS A WAVE: every entry whose
+# basename or slug starts with it, each checked in full, and the exit code the
+# worst of them. An orchestrator names its lanes <slug>-<lane> and its
+# integrate entry <slug>-integrate, and orchestrate.md's step 5 tells it to run
+# `--check <slug>-` before it ends its turn. Resolving ONE entry, that step
+# failed for every wave: measured 2026-09-24, `--check orch-impl-` printed "no
+# schedule entry matching" and exited 2 with seven orch-impl-*.md in the folder. An
+# exact match is tried first and wins, so every name that resolved before
+# still resolves to the same one entry. A prefix that matches nothing is still
+# "no schedule entry matching", exit 2: an orchestrator that typos its own
+# slug must not read an empty report as a clean one.
 sched_check() {
-  local a="${1:-}" body="${2:-}" f rc=0 one
+  local a="${1:-}" body="${2:-}" f rc=0 one n=0
   if [ -n "$a" ]; then
-    f="$(sched_resolve_file "$a")" || {
+    if f="$(sched_resolve_file "$a")"; then
+      sched_check_one "$f" "$body"; return $?
+    fi
+    case "$a" in
+      *-)
+        for f in "$SCHEDULES"/*.md; do
+          [ -f "$f" ] || continue
+          case "$f" in */README.md) continue ;; esac
+          # Quoted, so a '*' or '[' in the argument is a character, not a glob.
+          case "$(basename "$f")" in
+            "$a"*) ;;
+            *) case "$(sched_slug "$f")" in "$a"*) ;; *) continue ;; esac ;;
+          esac
+          sched_check_one "$f" "$body"; one=$?; n=$((n + 1))
+          [ "$one" -gt "$rc" ] && rc="$one"
+          echo
+        done ;;
+    esac
+    [ "$n" -gt 0 ] || {
       echo "no schedule entry matching '$a' in $SCHEDULES" >&2; return 2; }
-    sched_check_one "$f" "$body"; return $?
+    return "$rc"
   fi
   for f in "$SCHEDULES"/*.md; do
     [ -f "$f" ] || continue
@@ -2284,8 +2392,8 @@ check_schedules() {
     if [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
       sched_note "$f" stalled "STALLED: cwd \"${cwd:-}\" is not a directory"; continue
     fi
-    if [ "$type" = work ] && [ -z "$(sched_body "$f")" ]; then
-      sched_note "$f" stalled "STALLED: a work item with an empty prompt body has nothing to paste"; continue
+    if [ "$type" = work ] && ! sched_has_prompt "$f"; then
+      sched_note "$f" stalled "STALLED: a work item with an empty prompt body and no template has nothing to paste"; continue
     fi
 
     # THE DEPENDENCY IS ASKED FIRST. An entry held behind another lane is not
@@ -3097,7 +3205,7 @@ pass() {
   local spent rd resumed model optout idle jobid cwd turn_at wound moptout
   local prev lane stranded pprev since hkey
   # Rebuilt lazily, once per pass at most, by the stranded test below.
-  SCHED_NAMED=""
+  SCHED_NAMED=""; SCHED_UNDER=""
   SNAP_SID=(); SNAP_PID=(); SNAP_CWD=()
   notify_begin
   # Read once per pass, not once per session: every session is judged against
@@ -3346,7 +3454,7 @@ pass() {
       lane="$(lane_slug_of "$name")"
       if [ -n "$lane" ] && [ -f "$HANDOVERS/STATUS-$lane.md" ] \
          && [ ! -f "$HANDOVERS/done/STATUS-$lane.md" ] \
-         && ! sched_names_slug "$lane"; then
+         && ! sched_names_slug "$lane" && ! sched_under_slug "$lane"; then
         stranded=1
       fi
     fi

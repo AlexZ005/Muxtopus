@@ -170,7 +170,32 @@ check "status.tsv says stranded" [ "$(state_of '➥lane-a')" = stranded ]
 check "stranded is told" grep -q "stranded: ➥lane-a" <<<"$(texts)"
 check "a prompt beats stranded" bash -c 'cp "$1" "$HOME/fake-screen"; sleep 0.8; "$2" --once; "$2" --once; awk -F"\t" "\$2==\"➥lane-a\"{print \$6}" "$3" | grep -qx waiting' \
   _ "$FIX/trust-folder.txt" "$W" "$ST/status.tsv"
-screen; rm -f "$HO/STATUS-lane-a.md" "$HOME/.claude/projects/sb/$sid.jsonl"; pass
+screen; pass
+check "back at an idle prompt: stranded again" [ "$(state_of '➥lane-a')" = stranded ]
+
+# A WINDOW WITH ENTRIES PENDING UNDER IT IS WAITING, NOT STRANDED. The wave
+# orchestrator's shape: it ended its turn with an open handover, and what will
+# touch it next is an entry opening UNDER it -- `window:` or `parent:` -- not
+# one naming it by slug or after:. Far-future entries: pending, never launched.
+under() {  # under NAME FIELD VALUE -- one pending entry, NAME.md
+  printf 'type: work\nat: 2099-01-01 00:00\nslug: %s\n%s: %s\ncwd: %s\nstatus: pending\n---\nlater\n' \
+    "$1" "$2" "$3" "$HOME" > "$SC/$1.md"
+}
+nl="$(grep -c 'no longer stranded: ➥lane-a' "$ST/log")"
+under kid-w window lane-a; pass
+check "window: lane-a pending under it: not stranded" [ "$(state_of '➥lane-a')" = idle ]
+check "..and the log says it is no longer stranded" \
+  [ "$(grep -c 'no longer stranded: ➥lane-a' "$ST/log")" = $(( nl + 1 )) ]
+rm -f "$SC/kid-w.md"; under kid-p parent lane-a; pass
+check "parent: lane-a pending under it: not stranded" [ "$(state_of '➥lane-a')" = idle ]
+rm -f "$SC/kid-p.md"; under kid-m window '➥lane-a'; pass
+check "an old entry's window: ➥lane-a counts too" [ "$(state_of '➥lane-a')" = idle ]
+sed -i 's/^status: pending/status: launched/' "$SC/kid-m.md"; pass
+check "once that entry has launched, nothing is pending: stranded" [ "$(state_of '➥lane-a')" = stranded ]
+rm -f "$SC/kid-m.md"; under kid-o window lane-other; pass
+check "an entry under ANOTHER window does not hold it" [ "$(state_of '➥lane-a')" = stranded ]
+rm -f "$SC/kid-o.md"
+rm -f "$HO/STATUS-lane-a.md" "$HOME/.claude/projects/sb/$sid.jsonl"; pass
 
 echo "== restart re-sends nothing; unconfigured still publishes waiting"
 n="$(msgs)"; pass; pass

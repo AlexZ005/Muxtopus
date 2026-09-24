@@ -36,7 +36,7 @@ The new window opens right after its `window:` target, named for its slug, and t
 
 | field | required | values | |
 |---|---|---|---|
-| `type` | yes | `plan` · `work` | a `work` entry pastes its body as the prompt and must have one; a `plan` entry may have an empty body — nothing is then pasted and the window opens at a blank prompt — and may name a `template:` |
+| `type` | yes | `plan` · `work` | a `work` entry pastes its prompt and must have one — a body, a `template:`, or both — and gets the handover footer after it; a `plan` entry may have neither — nothing is then pasted and the window opens at a blank prompt |
 | `at` | yes | `reset` · `YYYY-MM-DD HH:MM` | when it is due. `reset` is [two gates](#at-reset-is-two-gates); an absolute time (anything `date -d` accepts, but the dashboard's linter wants `YYYY-MM-DD HH:MM[:SS]`) fires when it passes |
 | `title` | yes | free text | what the row says; the slug is derived from it unless `slug:` is set |
 | `slug` | no | `[A-Za-z0-9._-]`, ≤ 22 | pins [the lane's name](#the-slug-is-the-lanes-name-in-four-places) and wins over the title |
@@ -44,7 +44,7 @@ The new window opens right after its `window:` target, named for its slug, and t
 | `after` | no | slugs, comma or space separated | hold until [every named lane is done](#after-slug-slug) |
 | `parent` | no | a slug | [draw this window under that one](#parent-slug--draw-this-window-under-that-one); usually derived from `window:` |
 | `cwd` | yes | an existing directory | where the session starts |
-| `template` | no | a file in `templates/`, without `.md` | `plan` only: the body is built from it |
+| `template` | no | a file in `templates/`, without `.md` | pasted first, then the body (then, for `work`, the footer). Read at paste time, so an edit to the template reaches every entry that names it. A name with no file is a warning in `--check` and nothing is prepended. `resume-status` stays a `plan` template in practice: its `{{STATUS_FILE}}` is filled by the dashboard when it writes the entry, not by the executor |
 | `model` | no | `fable` · `opus` · `sonnet` · a full model id | [`claude --model`](#model-and-effort); absent is the account default |
 | `effort` | no | `low` · `medium` · `high` · `xhigh` · `max` | `claude --effort` |
 | `permission-mode` | no | `acceptEdits` · `auto` · `bypassPermissions` · `manual` · `dontAsk` · `plan` | [`claude --permission-mode`](#permission-mode-the-one-setting-that-cannot-be-fixed-after-launch); absent means absent |
@@ -118,9 +118,12 @@ The watchdog writes a verdict per pending entry every pass, to `sched-why.tsv` i
 claude-watchdog.sh --check                    # every entry
 claude-watchdog.sh --check 27-storage         # one, by file, basename or slug
 claude-watchdog.sh --check 27-storage --body  # ...and the exact paste
+claude-watchdog.sh --check orch-impl-         # a wave: every entry the name prefixes
 ```
 
 `--check` resolves an entry without launching anything: the parsed fields, the slug and where it came from, the window name, the handover path, the insert target resolved against the live session, the size of the paste, and the due verdict with its reason.
+
+A name ending in `-` that is not itself an entry checks **every entry whose basename or slug starts with it**, each reported in full, and exits with the worst of their codes (0 all runnable, 1 one can never run, 2 one cannot be judged). That is how an orchestrator checks its whole wave, `<slug>-<lane>` entries and `<slug>-integrate` together, before it ends its turn. An exact match still wins: a name that resolves to one entry today (a file, a basename or a slug) resolves to that one entry, even when it ends in `-`. A prefix that matches nothing prints `no schedule entry matching` and exits 2, like any other unknown name.
 
 ## `after: <slug>[, <slug>…]`
 
@@ -163,14 +166,16 @@ claude-watchdog.sh --tree     what the tree currently holds
 
 ## Placeholders in the body
 
-The body is not a literal string. Seven names are resolved when the body is *pasted*, over the template, the body and the work footer — never over the `[muxtopus]` identity lines, which are built from the resolved values already and go into the session's system prompt (`claude --append-system-prompt-file`) rather than the paste:
+The body is not a literal string. Nine names are resolved when the body is *pasted*, over the template, the body and the work footer — never over the `[muxtopus]` identity lines, which are built from the resolved values already and go into the session's system prompt (`claude --append-system-prompt-file`) rather than the paste:
 
 ```
 {{SLUG}}       27-storage
 {{WINDOW}}     the tmux window name: 27-storage
 {{HANDOVER}}   <handovers>/STATUS-27-storage.md
+{{HANDOVERS}}  <handovers>, the folder every lane's handover is in
 {{QUESTIONS}}  <handovers>/QUESTIONS-27-storage.md
 {{SCHEDULES}}  the schedules folder
+{{STATE}}      the watchdog's state folder: status.tsv, repos.tsv, tree.tsv, sched-why.tsv
 {{CWD}}        the entry's cwd: field
 {{PARENT}}     the entry's parent slug, or empty for a root window
 ```
@@ -224,7 +229,7 @@ The actions are **rows** at the bottom of the table: *check all*, *uncheck all*,
 
 The header also records `options: questions, phases, lanes=3`, and **that is the source of truth**. `o` reopens the table from it and regenerates the section, so a sentence edited by hand in that section is overwritten on the next save — move it above the heading (everything above is preserved byte for byte) or edit it in `options.md` where it came from. **The executor parses nothing from that line**: the sentences those options produce are ordinary body text by the time the folder is read, and the header fields they set are ordinary header fields. Deleting the line changes nothing about how the entry runs — only what the table shows when reopened.
 
-Every other placeholder — `{{SLUG}}`, `{{WINDOW}}`, `{{HANDOVER}}`, `{{QUESTIONS}}`, `{{SCHEDULES}}`, `{{CWD}}`, `{{PARENT}}` — is written out **literally** and resolved when the prompt is pasted, because the slug does not exist while the table is open. `{{VALUE}}` is the exception: it is what the prompt collected, and it is resolved in the table.
+Every other placeholder — `{{SLUG}}`, `{{WINDOW}}`, `{{HANDOVER}}`, `{{HANDOVERS}}`, `{{QUESTIONS}}`, `{{SCHEDULES}}`, `{{STATE}}`, `{{CWD}}`, `{{PARENT}}` — is written out **literally** and resolved when the prompt is pasted, because the slug does not exist while the table is open. `{{VALUE}}` is the exception: it is what the prompt collected, and it is resolved in the table.
 
 A block the reader cannot make sense of is shown greyed with its reason and cannot be ticked, exactly as a corrupted schedule entry is — it is never silently dropped. `python3 muxconfig.py --options` prints the same verdicts without a dashboard.
 
@@ -232,5 +237,5 @@ A block the reader cannot make sense of is shown greyed with its reason and cann
 
 An orchestrator doing two jobs at once — splitting a plan into lanes and writing their briefs, which needs a model, and noticing when a lane stops, which needs a clock — spends tokens on the second. Measured: four lanes settled into one state and stayed there for 3½ days, and the first change the watching loop saw woke the orchestrator to broadcast a pause to four windows, four turns for a message that said "do nothing". **So the liveness half belongs in the watchdog, a deterministic loop that costs nothing, and the judgment half belongs in a Claude window that stops between the two** — the window writes one entry per lane and one more with `after:` naming all of them, then ends its turn.
 
-That needs the scheduler to say when a lane has gone quiet for good, which is what [`stranded`](watchdog.md#stranded) is: a lane, idle past `WATCHDOG_STRANDED` minutes, with an **open** handover, and no pending entry naming it — not its slug, not its `resume-` entry, not an `after:` waiting on it. `idle` is a fact about the last turn; `stranded` is a fact about the future, and it is shown to a human rather than acted on. Nothing automatically resumes a stranded lane: an unrequested turn is still a turn. (A window the daemon itself wound down hard *is* resumed once its budget comes back — see [resuming a wind-down](watchdog.md#resuming-a-wind-down). That is a different case: there the turn was requested, by the directive that told the window to stop.)
+That needs the scheduler to say when a lane has gone quiet for good, which is what [`stranded`](watchdog.md#stranded) is: a lane, idle past `WATCHDOG_STRANDED` minutes, with an **open** handover, and no pending entry naming it — not its slug, not its `resume-` entry, not an `after:` waiting on it, nor a `window:` or `parent:` that will open under it. `idle` is a fact about the last turn; `stranded` is a fact about the future, and it is shown to a human rather than acted on. Nothing automatically resumes a stranded lane: an unrequested turn is still a turn. (A window the daemon itself wound down hard *is* resumed once its budget comes back — see [resuming a wind-down](watchdog.md#resuming-a-wind-down). That is a different case: there the turn was requested, by the directive that told the window to stop.)
 {% endraw %}

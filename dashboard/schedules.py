@@ -119,8 +119,11 @@ def validate_schedule(row: dict) -> str:
             return "at must be 'reset' or YYYY-MM-DD HH:MM (got %r)" % (row["at"] or "")
     if not row["cwd"] or not Path(row["cwd"]).is_dir():
         return "cwd missing or not a directory"
-    if row["type"] == "work" and not row["body"]:
-        return "work item has an empty prompt body"
+    # A work entry may name a template now, and one that does can leave its
+    # body empty -- the executor pastes the template alone (sched_has_prompt).
+    if row["type"] == "work" and not row["body"] and not (
+            row["template"] and (SCHED_TEMPLATES / (row["template"] + ".md")).exists()):
+        return "work item has an empty prompt body and no template"
     if row["template"] and not (SCHED_TEMPLATES / (row["template"] + ".md")).exists():
         return "template %r not in templates/" % row["template"]
     if row["status"] not in ("pending", "launched", "error", ""):
