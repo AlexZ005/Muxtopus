@@ -1933,7 +1933,7 @@ sched_pane_sid() {
 launch_schedule() {
   local f="$1" why="${2:-}"
   local type at title win cwd tmpl slug wname idx pane bodyf warn model effort
-  local parent depth wid wd_off mon_off sid rc_on idfile
+  local parent depth wid wd_off mon_off sid rc_on idfile pmode canon
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
   # (an enabled user unit) long before anyone has run muxtopus, and an item that
@@ -2046,6 +2046,22 @@ launch_schedule() {
     rm -f "$bodyf"; return 1
   fi
 
+  # THE TREE ROW GOES IN NOW, THE MOMENT THE WINDOW EXISTS -- not after the
+  # paste. The row is what the dashboard's `c` follows to move you into the
+  # window, so writing it last made you wait out claude's start, the trust
+  # answer and the paste's one-second settle on the dashboard row instead of
+  # watching them happen in the window. Measured on this box: claude is at
+  # its prompt about 1 s after new-window, and the follow used to fire
+  # 2-4 s after that. The row is also simply true from here on: the window
+  # is open, under its parent, whether or not the rest of the launch goes
+  # well -- a window that never reaches a prompt is still a window the tree
+  # should draw where it belongs rather than as a stray at the bottom.
+  #
+  # THE PASTE IS UNAFFECTED by anyone watching: it goes to the pane id, not
+  # to whichever window the client has selected, and the readiness wait reads
+  # the pane's own screen.
+  tree_record "$slug" "$parent" "$wid" "$pane" "$f"
+
   # Wait for a prompt, answering the trust dialog on the way (pane_ready).
   if ! pane_ready "$pane"; then
     sched_mark "$f" error
@@ -2087,7 +2103,6 @@ launch_schedule() {
   fi
   rm -f "$bodyf"
 
-  tree_record "$slug" "$parent" "$wid" "$pane" "$f"
   sched_mark "$f" launched
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
@@ -2551,6 +2566,36 @@ check_schedules() {
   mv "$SCHED_WHY.tmp" "$SCHED_WHY" 2>/dev/null
   [ "$probe" = 1 ] && sched_request_probe
   return 0
+}
+
+# A NUDGE IS ANSWERED HERE, NOT AFTER THE PASS. --nudge used to do nothing but
+# cut the sleep short, and the pass it woke then did everything it always
+# does -- read every session's transcript, capture every pane, sweep the
+# repos, snapshot the windows -- before it reached check_schedules. Measured
+# on this box with 19 sessions open: a pass is 5.5-9.5 s (heartbeat gaps of
+# 35.5-39.5 s against a 30 s sleep), so `c` sat on the dashboard for that
+# long before the launcher even started, and longer when the nudge landed
+# mid-pass just after its own check_schedules. That was the "several
+# seconds" the user saw; claude itself starts in about one.
+#
+# So the pass calls this at the top of every session it scans, once after the
+# scan, and the loop once after the pass and once on waking: a nudge waits
+# for one session's work at most, never for the scan. check_schedules is the
+# whole of the schedule side and stands on its own -- it reads the entries,
+# the tree and the PREVIOUS pass's status file (the one being written is
+# still $STATUS.tmp), and republishes sched-why whole -- so running it here
+# and again at the pass's usual place is the same work done twice, and an
+# entry launched here is no longer pending there. Every variable in it and
+# in launch_schedule is local, so it cannot disturb the session loop it runs
+# inside.
+#
+# A NO-OP OUTSIDE THE DAEMON: only the daemon traps SIGCONT, so --once and
+# the plain one-shot run never have _NUDGED set.
+_NUDGED=""
+nudge_point() {
+  [ -n "$_NUDGED" ] || return 0
+  _NUDGED=""
+  check_schedules
 }
 
 # Last time we prompted this session, as an epoch. The prompted file is the
@@ -3389,6 +3434,7 @@ pass() {
   spct="$(usage_val session_pct)"; wpct="$(usage_val week_pct)"
   rkey="$(usage_val session_reset_at)"
   for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
+    nudge_point   # one session's work is the most a `c` waits (see nudge_point)
     [ -f "$f" ] || continue
     pid="$(mux_json -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
     kill -0 "$pid" 2>/dev/null || continue          # stale record, process gone
@@ -3665,6 +3711,7 @@ pass() {
   done
 
   mv "$tmp" "$STATUS"
+  nudge_point
   sweep_repos
   tree_adopt
   tree_reparent
@@ -3793,10 +3840,11 @@ if [ "$MODE" = daemon ]; then
   trap 'reload SIGHUP' HUP
   # GO NOW (--nudge). The dashboard signals the moment it writes a schedule
   # entry, so `c` opens a window in about a second instead of waiting out the
-  # poll. Killing the sleep is enough when one is in flight; _NUDGED covers a
-  # signal that lands DURING a pass, which would otherwise be swallowed and
-  # cost the full interval after all. `pass` is idempotent, so running it once
-  # more than strictly needed is free.
+  # poll. The trap only records it and cuts a sleep short; what ANSWERS it is
+  # nudge_point, at the next safe place -- the top of the next session the
+  # pass scans, the end of the scan, or the loop below -- which runs
+  # check_schedules on its own rather than a whole pass first (see
+  # nudge_point for what that used to cost).
   #
   # SIGCONT because its default action is to do nothing to a running process
   # (see --nudge above): a daemon from an older release ignores the nudge
@@ -3811,9 +3859,8 @@ if [ "$MODE" = daemon ]; then
   printf '%s\n' "$$" > "$STATE_DIR/daemon.pid" 2>/dev/null || true
   CONF_SEEN="$STATE_DIR/config.seen"; : > "$CONF_SEEN"
   while :; do
-    # Cleared BEFORE the pass, so a nudge arriving at any point from here on
-    # is honoured rather than cleared by the pass it was meant to trigger.
-    _NUDGED=""
+    # NOT cleared here any more: a nudge that woke the sleep is answered by
+    # the pass's first nudge_point, before it scans anything.
     pass
     # An edit to either file takes effect within one interval, without anyone
     # remembering to restart anything. -nt is a builtin: no fork when quiet.
@@ -3821,11 +3868,18 @@ if [ "$MODE" = daemon ]; then
        { [ -n "${MUX_PROFILE_CONF:-}" ] && [ "$MUX_PROFILE_CONF" -nt "$CONF_SEEN" ]; }; then
       reload "config changed"
     fi
-    # A nudge that landed while the pass was running: go straight round.
-    [ -n "$_NUDGED" ] && continue
+    # A nudge that landed after the pass's last nudge_point -- during its own
+    # check_schedules, the notifications or the hourly usage probe. Answered
+    # here, and the sleep still follows: the pass itself has just run.
+    nudge_point
     # Sleep in the background and wait on it: a trap cannot interrupt a
     # foreground command, but it does return from `wait` at once.
     sleep "$INTERVAL" & _SLEEP=$!; wait "$_SLEEP"; _SLEEP=""
+    # Woken by a nudge: the schedules first, then the pass this wake was
+    # going to be anyway. With no session files the pass would reach its
+    # first nudge_point only after the scan; this one makes the order the
+    # same on an empty machine as on a busy one.
+    nudge_point
   done
 else
   pass
