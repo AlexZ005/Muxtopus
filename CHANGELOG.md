@@ -4,6 +4,25 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.4.1 — 2026-10-01
+
+The release that puts you in a new window when you press `c`, instead of on
+the dashboard for several seconds, and makes a lane window say which lane it
+is again. On a busy machine `c` used to take 7–13 seconds; it now takes about
+half a second, and claude starts in front of you. The `[muxtopus]` identity
+lines, invisible since they moved into the system prompt, are now shown under
+Claude Code's banner without spending a turn.
+
+A patch: these are fixes. No command, setting, entry header or file a user
+names is renamed or moved.
+
+### Windows
+
+#### `c` puts you in the new window at once, and the window says which lane it is
+
+- `c` → Create now moves you into the new window within about half a second, while claude is still starting. It used to keep you on the dashboard for 7–13 seconds on a busy machine: the watchdog finished scanning every open session before it opened the window, and the dashboard only followed once claude was ready and the first prompt pasted. You now watch the trust dialog get answered and the first prompt arrive in the window itself; the paste goes to that window whether or not you are looking at it.
+- A scheduled, `c`-made or restored lane window shows its identity again, under Claude Code's banner: `SessionStart:startup says: [muxtopus] This tmux window is …`, with its slug, its handover file, and one line saying what the first prompt is (or that there is none). Since the identity moved into the system prompt nothing on screen said which lane a window was. This costs no turn, and Claude Code's SessionStart also fires after `/clear`, a compaction and a restore, so the message comes back there too. It is passed with `claude --settings` and adds to your own hooks without replacing them. A `claude` without `--settings` shows nothing, and the watchdog log says so once.
+
 ## v5.4.0 — 2026-09-24
 
 The release that lets muxtopus run an orchestrator: a window that splits a plan
