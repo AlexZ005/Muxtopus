@@ -1788,16 +1788,98 @@ sched_identity_file() {   # sched_identity_file SLUG WNAME -> prints the path
 # The 10 s cap is for a claude that is not claude (a stub in a sandbox that
 # reads stdin forever), so a launch can never hang on the probe.
 CLAUDE_IDENTITY_FLAG=""   # "file" once probed and present, "paste" otherwise
-claude_identity_flag() {
-  if [ -z "$CLAUDE_IDENTITY_FLAG" ]; then
-    if timeout 10 "$HOME/.local/bin/claude" --help 2>/dev/null | grep -q -- '--append-system-prompt-file'; then
-      CLAUDE_IDENTITY_FLAG=file
-    else
-      CLAUDE_IDENTITY_FLAG=paste
-      log "claude --help does not list --append-system-prompt-file: the identity lines go at the top of the paste instead"
-    fi
+CLAUDE_SETTINGS_FLAG=""   # "yes" once probed and present, "no" otherwise
+# ONE --help, BOTH ANSWERS: the banner below needs --settings, and asking the
+# CLI twice for the same page would double the probe for nothing.
+claude_probe_flags() {
+  [ -n "$CLAUDE_IDENTITY_FLAG" ] && return 0
+  local help
+  help="$(timeout 10 "$HOME/.local/bin/claude" --help 2>/dev/null)"
+  if grep -q -- '--append-system-prompt-file' <<<"$help"; then
+    CLAUDE_IDENTITY_FLAG=file
+  else
+    CLAUDE_IDENTITY_FLAG=paste
+    log "claude --help does not list --append-system-prompt-file: the identity lines go at the top of the paste instead"
   fi
-  printf '%s' "$CLAUDE_IDENTITY_FLAG"
+  if grep -q -- '--settings' <<<"$help"; then
+    CLAUDE_SETTINGS_FLAG=yes
+  else
+    CLAUDE_SETTINGS_FLAG=no
+    log "claude --help does not list --settings: a new window will not show its identity on screen (the system prompt still carries it)"
+  fi
+}
+
+# THE IDENTITY, ON SCREEN AS WELL. Moving the identity into the system prompt
+# (sched_identity, above) cost the user something the changelog did not say:
+# the seven [muxtopus] lines used to be the top of the first message, so the
+# window SAID which lane it was, and now nothing in it does. A `c` with no
+# first prompt opens on a claude that is blank to the eye, and a lane's brief
+# arrives as "[Pasted text #1 +170 lines]" -- expanded once it is sent, then
+# scrolled away for good on a fullscreen TUI (`"tui": "fullscreen"` puts claude
+# on tmux's alternate screen, where there is no scrollback at all).
+#
+# PUTTING THEM BACK INTO THE PASTE WOULD UNDO THE FIX: an empty plan would get
+# a first message again and spend a turn answering it. So they are shown the
+# way Claude Code shows a hook's message to the USER and not to the model: a
+# SessionStart hook whose JSON carries `systemMessage`, handed to this one
+# session with `--settings <file>`. It draws under the banner as
+#
+#   ⎿  SessionStart:startup says: [muxtopus] This tmux window is ...
+#
+# before the first prompt, costs no turn, and -- SessionStart's documented
+# sources -- comes back on /clear, on a compaction and on a --resume (the
+# restore), which are exactly the moments a reader wonders which window this
+# is. Measured with Claude Code 2.1.286 (on startup):
+# the hook runs and draws; a --settings hook is ADDED to the hooks from the
+# other settings files rather than replacing them (a SessionStart hook in the
+# project's settings.local.json still ran beside it), so the account's own
+# PostToolUse wind-down hook is untouched; and output that is not valid JSON
+# is drawn as a "hook error", which is why the message is encoded here and the
+# hook only cats it.
+#
+# BELOW THE IDENTITY, ONE LINE SAYING WHAT THE FIRST PROMPT WILL BE: its first
+# line and length, or that there is none. The window is now on screen while
+# claude starts (`c` follows it at once), so the user sees the banner before
+# the paste lands and should not have to guess whether one is coming.
+#
+# WHAT IT CANNOT DO: a CLI without --settings gets no banner (said once in the
+# log, claude_probe_flags); the system prompt still carries the identity, so
+# the model loses nothing.
+json_str() {   # json_str TEXT -> a JSON string literal on stdout
+  local s="$1"
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"; s="${s//$'\r'/}"
+  printf '"%s"' "$(printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037')"
+}
+# sched_banner_settings SLUG WNAME FIRST -> prints the --settings file path.
+# FIRST is the "first prompt" line, already worded by the caller.
+sched_banner_settings() {
+  local slug="$1" wname="$2" first="$3" d="$STATE_DIR/identity" msg cmd q
+  mkdir -p "$d"
+  msg="$(sched_identity "$slug" "$wname")"
+  [ -n "$first" ] && msg="$msg"$'\n'"[muxtopus] $first"
+  printf '{"systemMessage": %s}\n' "$(json_str "$msg")" > "$d/$slug.banner.json"
+  # Single-quoted for the hook's shell; a quote in the path closes and
+  # reopens. `exit 0` so a file swept away months before a restore draws
+  # nothing rather than a hook error.
+  q="$d/$slug.banner.json"; q="'${q//\'/\'\\\'\'}'"
+  cmd="cat $q 2>/dev/null; exit 0"
+  printf '{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": %s}]}]}}\n' \
+    "$(json_str "$cmd")" > "$d/$slug.settings.json"
+  printf '%s' "$d/$slug.settings.json"
+}
+# The FIRST line for a body file: its first non-blank line, cut at 100
+# characters, and how long it is -- or that nothing will be pasted.
+sched_first_line() {
+  local bodyf="$1" first n
+  if ! grep -q '[^[:space:]]' "$bodyf" 2>/dev/null; then
+    printf 'No first prompt: this window opens at a blank prompt.'; return 0
+  fi
+  first="$(grep -m1 '[^[:space:]]' "$bodyf")"
+  first="${first#"${first%%[![:space:]]*}"}"
+  [ ${#first} -gt 100 ] && first="${first:0:99}…"
+  n="$(grep -c '' "$bodyf")"
+  printf 'First prompt (%s lines, pasted once claude is ready): %s' "$n" "$first"
 }
 
 # EXACTLY WHAT GETS PASTED, on stdout. One function, so --check reports the
@@ -2002,11 +2084,21 @@ launch_schedule() {
   bodyf="$STATE_DIR/sched-body.$$"
   sched_compose "$f" "$slug" "$wname" "$parent" > "$bodyf"
   # THE IDENTITY GOES WITH THE COMMAND LINE when the CLI can take it there,
-  # and at the top of the paste when it cannot (claude_identity_flag).
+  # and at the top of the paste when it cannot (claude_probe_flags).
   local -a idargs=()
   idfile="$(sched_identity_file "$slug" "$wname")"
-  if [ "$(claude_identity_flag)" = file ]; then
+  # IN THIS SHELL, not in $(...): the probe caches its answers in two
+  # variables, and a command substitution is a subshell that takes them with
+  # it -- so every launch used to run `claude --help` again, and the banner's
+  # flag would never be seen at all.
+  claude_probe_flags
+  if [ "$CLAUDE_IDENTITY_FLAG" = file ]; then
     idargs=(--append-system-prompt-file "$idfile")
+    # ...AND ON SCREEN, where the CLI can draw it (sched_banner_settings).
+    # Not with the pasted fallback: there the identity is the top of the
+    # first message, visible already.
+    [ "$CLAUDE_SETTINGS_FLAG" = yes ] && \
+      idargs+=(--settings "$(sched_banner_settings "$slug" "$wname" "$(sched_first_line "$bodyf")")")
   else
     { cat "$idfile"; echo; cat "$bodyf"; } > "$bodyf.id" && mv "$bodyf.id" "$bodyf"
   fi
@@ -2200,9 +2292,14 @@ restore_windows() {
       # transcript already holds the identity its launch pasted.
       idargs=""
       slug="$(lane_slug_of "$name")"
+      claude_probe_flags          # in this shell: see launch_schedule
       if [ -n "$slug" ] && { [ -n "$parent" ] || tree_is_lane "$slug" "$wid" "$pane"; } \
-         && [ "$(claude_identity_flag)" = file ]; then
+         && [ "$CLAUDE_IDENTITY_FLAG" = file ]; then
         idargs=" --append-system-prompt-file $(sched_identity_file "$slug" "$name")"
+        # The banner comes back on --resume too (SessionStart's "resume"),
+        # so a restored lane says which one it is as a launched one does.
+        [ "$CLAUDE_SETTINGS_FLAG" = yes ] && \
+          idargs="$idargs --settings $(sched_banner_settings "$slug" "$name" "Restored: resuming session ${sid:0:8}; nothing is pasted.")"
       fi
       cmd="$HOME/.local/bin/claude --resume $sid${model:+ --model $model}${effort:+ --effort $effort}${pmode:+ --permission-mode $pmode}$idargs; exec bash"
     elif [ -n "$sid" ]; then
@@ -2419,6 +2516,7 @@ sched_check_one() {
     kv body "empty -- nothing is pasted; the window opens at a blank prompt"
   fi
   kv identity "$STATE_DIR/identity/$slug.md, on claude's --append-system-prompt-file (pasted first instead if the CLI lacks it)"
+  kv "" "and shown in the window as a SessionStart message ($STATE_DIR/identity/$slug.settings.json, on --settings), no turn spent"
   if [ "$type" = work ] && ! sched_has_prompt "$f"; then
     kv "" "-- EMPTY BODY: a work item with nothing to paste is skipped"; rcout=1
   fi

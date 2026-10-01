@@ -24,7 +24,12 @@
 #   - a claude whose --help lacks the flag (FAKE_CLAUDE_OLD=1) gets the old
 #     shape: identity at the top of the paste, no flag on the command line,
 #     one log line saying so;
-#   - --check prints the identity and the paste as two blocks.
+#   - --check prints the identity and the paste as two blocks;
+#   - and the identity is SHOWN in the window without a turn: --settings
+#     names a file whose SessionStart hook prints {"systemMessage": ...} --
+#     the identity and a line saying what the first prompt is -- which
+#     Claude Code draws under its banner (the system prompt is invisible,
+#     and that was the whole of what a window used to say about itself).
 set -uo pipefail
 . "$(dirname "$0")/notify_sandbox.sh"
 sb_init
@@ -61,6 +66,23 @@ check "the body was pasted" grep -q carry <<<"$(keys)"
 check "the identity was NOT pasted" bash -c '! grep -q "This tmux window" <<<"$1"' _ "$(keys)"
 check "..nor the old header" bash -c '! grep -q "lane slug" <<<"$1"' _ "$(keys)"
 check "the footer still names the handover" grep -q 'STATUS-lane-work.md' <<<"$(keys)"
+# What Claude Code will run at SessionStart, run here the same way: the
+# command from the --settings file, through sh, and its stdout as JSON.
+banner() {  # banner SETTINGS-FILE -> the systemMessage its hook prints
+  python3 - "$1" <<'PY'
+import json, subprocess, sys
+st = json.load(open(sys.argv[1]))
+cmd = st["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+out = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True).stdout
+print(json.loads(out)["systemMessage"])
+PY
+}
+check "claude was given --settings with the banner hook" \
+  grep -q -- "--settings $ST/identity/lane-work.settings.json" <<<"$(argv_of)"
+msg="$(banner "$ST/identity/lane-work.settings.json" 2>&1)"
+check "the hook prints a systemMessage naming the slug" grep -q 'Its lane slug is: lane-work' <<<"$msg"
+check "..and the handover file" grep -q 'STATUS-lane-work.md' <<<"$msg"
+check "..and what the first prompt is" grep -q 'First prompt (.* lines, pasted once claude is ready): carry on' <<<"$msg"
 
 echo "== an empty plan: nothing pasted, nothing pressed"
 entry lane-empty plan
@@ -70,6 +92,9 @@ check "launched" grep -q '^status: launched' "$SC/lane-empty.md"
 check "the flag was still given" grep -q -- "--append-system-prompt-file $ST/identity/lane-empty.md" <<<"$(argv_of)"
 check "no key reached the window at all" test ! -s "$HOME/fake-claude.keys"
 check "the log says it opened at a blank prompt" grep -q 'lane-empty.md: empty body, nothing pasted' "$ST/log"
+msg="$(banner "$ST/identity/lane-empty.settings.json" 2>&1)"
+check "the banner still says which window it is" grep -q 'Its lane slug is: lane-empty' <<<"$msg"
+check "..and that there is no first prompt" grep -q 'No first prompt' <<<"$msg"
 
 echo "== --check: two blocks, and 'nothing is pasted' for the empty plan"
 out="$("$W" --check lane-work --body 2>&1)"
@@ -95,5 +120,7 @@ check "no --append-system-prompt-file on the command line" \
 check "the identity was pasted" grep -q 'Its lane slug is: lane-old' <<<"$(keys)"
 check "..BEFORE the body" bash -c '[[ "$1" == *"lane slug is: lane-old"*"carry"* ]]' _ "$(keys)"
 check "the log said why, once" test "$(grep -c 'does not list --append-system-prompt-file' "$ST/log")" = 1
+check "no --settings either: the paste already shows the identity" \
+  bash -c '! grep -q -- "--settings" <<<"$1"' _ "$(argv_of)"
 
 sb_done
