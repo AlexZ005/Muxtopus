@@ -445,6 +445,40 @@ ok(app5.newsession.follow_hint(app5) is None
    and app5.newsession.follow is None, "past its deadline it stops looking")
 ok(app5.newsession.follow_hint(app5) is None, "and costs nothing when idle")
 
+# ---- 8. the follow does not wait for a frame ------------------------------
+# THE JUMP USED TO HAPPEN ONLY IN follow_hint, once per two-second frame, so
+# the client moved up to two seconds after the window existed. Nothing below
+# draws a frame or calls follow_hint: the window is found by the follow's own
+# thread, within a tick or two of its row appearing.
+import dashboard.views.newsession as nsmod                   # noqa: E402
+from dashboard.core import WATCHDOG_TREE                     # noqa: E402
+jumps = []
+nsmod.live_windows = lambda: {"@901", "@902"}
+APP.newsession.goto_window = lambda wid: jumps.append(wid) or ""
+app8 = fresh("fastjump")
+press(app8, "Create")
+slug8 = APP.newsession.follow and APP.newsession.follow["slug"]
+ok(slug8 == "fastjump", "Create follows the slug it wrote: %r" % slug8)
+WATCHDOG_TREE.parent.mkdir(parents=True, exist_ok=True)
+# An EARLIER window of the same name, still open: its row predates the ask.
+WATCHDOG_TREE.write_text("fastjump\t\t@901\t%%901\t%d\tnew-fastjump.md\n"
+                         % (int(time.time()) - 600))
+time.sleep(0.4)
+ok(jumps == [], "a row older than the ask is not followed: %r" % jumps)
+# The launcher opens the window and writes its row the same moment.
+WATCHDOG_TREE.write_text("fastjump\t\t@902\t%%902\t%d\tnew-fastjump.md\n"
+                         % int(time.time()))
+t0 = time.time()
+while not jumps and time.time() - t0 < 3:
+    time.sleep(0.02)
+dt8 = time.time() - t0
+ok(jumps == ["@902"], "the client is moved to the new window: %r" % jumps)
+ok(dt8 < 0.5, "within half a second of its row, no frame drawn (%.2fs)" % dt8)
+ok(APP.newsession.follow is None, "and the follow is over")
+ok(APP.newsession.follow_hint(APP) is None, "so the key line says nothing more")
+time.sleep(0.3)
+ok(jumps == ["@902"], "it moved exactly once")
+
 print()
 print("%d assertions, %s (%s)" % (n, "all passed" if not fails else "%d FAILED" % fails, HOME))
 sys.exit(1 if fails else 0)

@@ -82,11 +82,30 @@ ok("trap 'nudge' CONT" in wd, "and the daemon traps SIGCONT")
 ok(re.search(r"nudge\(\) \{ _NUDGED=1; \[ -n \"\$_SLEEP\" \] && kill \"\$_SLEEP\"", wd)
    is not None,
    "a nudge kills the sleep in flight")
-ok(re.search(r'\[ -n "\$_NUDGED" \] && continue', wd) is not None,
-   "a nudge that lands DURING a pass is not swallowed")
-ok(re.search(r"while :; do\n\s*#.*\n\s*#.*\n\s*_NUDGED=\"\"", wd) is not None
-   or re.search(r"_NUDGED=\"\"\n\s*pass", wd) is not None,
-   "the flag is cleared before the pass, not after it")
+# A NUDGE IS ANSWERED BY check_schedules ON ITS OWN, NOT BY A WHOLE PASS.
+# The woken pass used to scan every session first -- 5.5-9.5 s with 19 open --
+# so `c` waited that long before the launcher started. tests/
+# test_create_latency.sh drives it; these pin where the answer happens.
+np = re.search(r"\nnudge_point\(\) \{\n(.*?)\n\}", wd, re.S)
+ok(np is not None, "there is a nudge_point")
+if np:
+    b = np.group(1)
+    ok(b.index('_NUDGED=""') < b.index("check_schedules"),
+       "it clears the flag BEFORE check_schedules, so a nudge during it is not swallowed")
+pb = re.search(r"\npass\(\) \{\n(.*?)\n\}\n", wd, re.S)
+ok(pb is not None and re.search(r'for f in "\$MUX_CONFIG_DIR"/sessions/\*\.json; do\n\s*nudge_point',
+                                pb.group(1)) is not None,
+   "the pass answers a nudge at the top of every session it scans")
+ok(pb is not None and pb.group(1).index("nudge_point", pb.group(1).index('mv "$tmp" "$STATUS"'))
+   < pb.group(1).index("sweep_repos"),
+   "..and once more after the scan, before the repo sweep")
+loop = wd[wd.index("  while :; do\n    # NOT cleared"):]
+loop = loop[:loop.index("\n  done")]
+calls = [m.start() for m in re.finditer(r"^\s*nudge_point$", loop, re.M)]
+ok(len(calls) == 2 and calls[0] < loop.index('sleep "$INTERVAL"') < calls[1],
+   "the loop answers one after the pass and one on waking, before the next pass")
+ok('_NUDGED=""' not in loop,
+   "and does not clear the flag itself: a nudge that woke the sleep is still answered")
 ok("daemon_pid()" in wd, "there is one place that finds the running daemon")
 ok(re.search(r'--nudge\).{0,200}daemon\.pid', wd, re.S) is not None,
    "a nudge is only sent to a daemon whose pid file says it will CATCH it")

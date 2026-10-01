@@ -105,8 +105,12 @@ argv="$(cat "$HOME/fake-claude.argv")"
 # A LANE GETS ITS IDENTITY BACK on the same flag the launcher used; a window
 # that is not a lane (plain) gets nothing but its resume.
 check "lane-a resumed with its model, effort, permission mode and identity" \
-  grep -qx -- "--resume $sid_a --model fable --effort high --permission-mode bypassPermissions --append-system-prompt-file $ST/identity/lane-a.md" <<<"$argv"
+  grep -qx -- "--resume $sid_a --model fable --effort high --permission-mode bypassPermissions --append-system-prompt-file $ST/identity/lane-a.md --settings $ST/identity/lane-a.settings.json" <<<"$argv"
 check "..and the identity file names it" grep -q 'Its lane slug is: lane-a' "$ST/identity/lane-a.md"
+# ...and SHOWS it: the same SessionStart banner a launch gets, which Claude
+# Code draws again on --resume (tests/test_identity.sh runs the hook).
+check "..and the banner it shows says so, and that it was restored" \
+  grep -q 'Its lane slug is: lane-a.*Restored: resuming session' "$ST/identity/lane-a.banner.json"
 check "plain resumed with no flags" grep -qx -- "--resume $sid_p" <<<"$argv"
 check "lane-b (no transcript) was not resumed" bash -c '! grep -q -- "$1" <<<"$2"' _ "$sid_b" "$argv"
 check "..the log says which" grep -q "restore: lane-b: no transcript for session $sid_b; a plain window" "$ST/log"

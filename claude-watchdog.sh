@@ -1788,16 +1788,98 @@ sched_identity_file() {   # sched_identity_file SLUG WNAME -> prints the path
 # The 10 s cap is for a claude that is not claude (a stub in a sandbox that
 # reads stdin forever), so a launch can never hang on the probe.
 CLAUDE_IDENTITY_FLAG=""   # "file" once probed and present, "paste" otherwise
-claude_identity_flag() {
-  if [ -z "$CLAUDE_IDENTITY_FLAG" ]; then
-    if timeout 10 "$HOME/.local/bin/claude" --help 2>/dev/null | grep -q -- '--append-system-prompt-file'; then
-      CLAUDE_IDENTITY_FLAG=file
-    else
-      CLAUDE_IDENTITY_FLAG=paste
-      log "claude --help does not list --append-system-prompt-file: the identity lines go at the top of the paste instead"
-    fi
+CLAUDE_SETTINGS_FLAG=""   # "yes" once probed and present, "no" otherwise
+# ONE --help, BOTH ANSWERS: the banner below needs --settings, and asking the
+# CLI twice for the same page would double the probe for nothing.
+claude_probe_flags() {
+  [ -n "$CLAUDE_IDENTITY_FLAG" ] && return 0
+  local help
+  help="$(timeout 10 "$HOME/.local/bin/claude" --help 2>/dev/null)"
+  if grep -q -- '--append-system-prompt-file' <<<"$help"; then
+    CLAUDE_IDENTITY_FLAG=file
+  else
+    CLAUDE_IDENTITY_FLAG=paste
+    log "claude --help does not list --append-system-prompt-file: the identity lines go at the top of the paste instead"
   fi
-  printf '%s' "$CLAUDE_IDENTITY_FLAG"
+  if grep -q -- '--settings' <<<"$help"; then
+    CLAUDE_SETTINGS_FLAG=yes
+  else
+    CLAUDE_SETTINGS_FLAG=no
+    log "claude --help does not list --settings: a new window will not show its identity on screen (the system prompt still carries it)"
+  fi
+}
+
+# THE IDENTITY, ON SCREEN AS WELL. Moving the identity into the system prompt
+# (sched_identity, above) cost the user something the changelog did not say:
+# the seven [muxtopus] lines used to be the top of the first message, so the
+# window SAID which lane it was, and now nothing in it does. A `c` with no
+# first prompt opens on a claude that is blank to the eye, and a lane's brief
+# arrives as "[Pasted text #1 +170 lines]" -- expanded once it is sent, then
+# scrolled away for good on a fullscreen TUI (`"tui": "fullscreen"` puts claude
+# on tmux's alternate screen, where there is no scrollback at all).
+#
+# PUTTING THEM BACK INTO THE PASTE WOULD UNDO THE FIX: an empty plan would get
+# a first message again and spend a turn answering it. So they are shown the
+# way Claude Code shows a hook's message to the USER and not to the model: a
+# SessionStart hook whose JSON carries `systemMessage`, handed to this one
+# session with `--settings <file>`. It draws under the banner as
+#
+#   ⎿  SessionStart:startup says: [muxtopus] This tmux window is ...
+#
+# before the first prompt, costs no turn, and -- SessionStart's documented
+# sources -- comes back on /clear, on a compaction and on a --resume (the
+# restore), which are exactly the moments a reader wonders which window this
+# is. Measured with Claude Code 2.1.286 (on startup):
+# the hook runs and draws; a --settings hook is ADDED to the hooks from the
+# other settings files rather than replacing them (a SessionStart hook in the
+# project's settings.local.json still ran beside it), so the account's own
+# PostToolUse wind-down hook is untouched; and output that is not valid JSON
+# is drawn as a "hook error", which is why the message is encoded here and the
+# hook only cats it.
+#
+# BELOW THE IDENTITY, ONE LINE SAYING WHAT THE FIRST PROMPT WILL BE: its first
+# line and length, or that there is none. The window is now on screen while
+# claude starts (`c` follows it at once), so the user sees the banner before
+# the paste lands and should not have to guess whether one is coming.
+#
+# WHAT IT CANNOT DO: a CLI without --settings gets no banner (said once in the
+# log, claude_probe_flags); the system prompt still carries the identity, so
+# the model loses nothing.
+json_str() {   # json_str TEXT -> a JSON string literal on stdout
+  local s="$1"
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"; s="${s//$'\r'/}"
+  printf '"%s"' "$(printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037')"
+}
+# sched_banner_settings SLUG WNAME FIRST -> prints the --settings file path.
+# FIRST is the "first prompt" line, already worded by the caller.
+sched_banner_settings() {
+  local slug="$1" wname="$2" first="$3" d="$STATE_DIR/identity" msg cmd q
+  mkdir -p "$d"
+  msg="$(sched_identity "$slug" "$wname")"
+  [ -n "$first" ] && msg="$msg"$'\n'"[muxtopus] $first"
+  printf '{"systemMessage": %s}\n' "$(json_str "$msg")" > "$d/$slug.banner.json"
+  # Single-quoted for the hook's shell; a quote in the path closes and
+  # reopens. `exit 0` so a file swept away months before a restore draws
+  # nothing rather than a hook error.
+  q="$d/$slug.banner.json"; q="'${q//\'/\'\\\'\'}'"
+  cmd="cat $q 2>/dev/null; exit 0"
+  printf '{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": %s}]}]}}\n' \
+    "$(json_str "$cmd")" > "$d/$slug.settings.json"
+  printf '%s' "$d/$slug.settings.json"
+}
+# The FIRST line for a body file: its first non-blank line, cut at 100
+# characters, and how long it is -- or that nothing will be pasted.
+sched_first_line() {
+  local bodyf="$1" first n
+  if ! grep -q '[^[:space:]]' "$bodyf" 2>/dev/null; then
+    printf 'No first prompt: this window opens at a blank prompt.'; return 0
+  fi
+  first="$(grep -m1 '[^[:space:]]' "$bodyf")"
+  first="${first#"${first%%[![:space:]]*}"}"
+  [ ${#first} -gt 100 ] && first="${first:0:99}…"
+  n="$(grep -c '' "$bodyf")"
+  printf 'First prompt (%s lines, pasted once claude is ready): %s' "$n" "$first"
 }
 
 # EXACTLY WHAT GETS PASTED, on stdout. One function, so --check reports the
@@ -1933,7 +2015,7 @@ sched_pane_sid() {
 launch_schedule() {
   local f="$1" why="${2:-}"
   local type at title win cwd tmpl slug wname idx pane bodyf warn model effort
-  local parent depth wid wd_off mon_off sid rc_on idfile
+  local parent depth wid wd_off mon_off sid rc_on idfile pmode canon
 
   # NO SESSION, NO LAUNCH -- AND NO ERROR. After a reboot this daemon is back
   # (an enabled user unit) long before anyone has run muxtopus, and an item that
@@ -2002,11 +2084,21 @@ launch_schedule() {
   bodyf="$STATE_DIR/sched-body.$$"
   sched_compose "$f" "$slug" "$wname" "$parent" > "$bodyf"
   # THE IDENTITY GOES WITH THE COMMAND LINE when the CLI can take it there,
-  # and at the top of the paste when it cannot (claude_identity_flag).
+  # and at the top of the paste when it cannot (claude_probe_flags).
   local -a idargs=()
   idfile="$(sched_identity_file "$slug" "$wname")"
-  if [ "$(claude_identity_flag)" = file ]; then
+  # IN THIS SHELL, not in $(...): the probe caches its answers in two
+  # variables, and a command substitution is a subshell that takes them with
+  # it -- so every launch used to run `claude --help` again, and the banner's
+  # flag would never be seen at all.
+  claude_probe_flags
+  if [ "$CLAUDE_IDENTITY_FLAG" = file ]; then
     idargs=(--append-system-prompt-file "$idfile")
+    # ...AND ON SCREEN, where the CLI can draw it (sched_banner_settings).
+    # Not with the pasted fallback: there the identity is the top of the
+    # first message, visible already.
+    [ "$CLAUDE_SETTINGS_FLAG" = yes ] && \
+      idargs+=(--settings "$(sched_banner_settings "$slug" "$wname" "$(sched_first_line "$bodyf")")")
   else
     { cat "$idfile"; echo; cat "$bodyf"; } > "$bodyf.id" && mv "$bodyf.id" "$bodyf"
   fi
@@ -2045,6 +2137,22 @@ launch_schedule() {
     log "schedule $(basename "$f"): could not open a tmux window"
     rm -f "$bodyf"; return 1
   fi
+
+  # THE TREE ROW GOES IN NOW, THE MOMENT THE WINDOW EXISTS -- not after the
+  # paste. The row is what the dashboard's `c` follows to move you into the
+  # window, so writing it last made you wait out claude's start, the trust
+  # answer and the paste's one-second settle on the dashboard row instead of
+  # watching them happen in the window. Measured on this box: claude is at
+  # its prompt about 1 s after new-window, and the follow used to fire
+  # 2-4 s after that. The row is also simply true from here on: the window
+  # is open, under its parent, whether or not the rest of the launch goes
+  # well -- a window that never reaches a prompt is still a window the tree
+  # should draw where it belongs rather than as a stray at the bottom.
+  #
+  # THE PASTE IS UNAFFECTED by anyone watching: it goes to the pane id, not
+  # to whichever window the client has selected, and the readiness wait reads
+  # the pane's own screen.
+  tree_record "$slug" "$parent" "$wid" "$pane" "$f"
 
   # Wait for a prompt, answering the trust dialog on the way (pane_ready).
   if ! pane_ready "$pane"; then
@@ -2087,7 +2195,6 @@ launch_schedule() {
   fi
   rm -f "$bodyf"
 
-  tree_record "$slug" "$parent" "$wid" "$pane" "$f"
   sched_mark "$f" launched
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
@@ -2185,9 +2292,14 @@ restore_windows() {
       # transcript already holds the identity its launch pasted.
       idargs=""
       slug="$(lane_slug_of "$name")"
+      claude_probe_flags          # in this shell: see launch_schedule
       if [ -n "$slug" ] && { [ -n "$parent" ] || tree_is_lane "$slug" "$wid" "$pane"; } \
-         && [ "$(claude_identity_flag)" = file ]; then
+         && [ "$CLAUDE_IDENTITY_FLAG" = file ]; then
         idargs=" --append-system-prompt-file $(sched_identity_file "$slug" "$name")"
+        # The banner comes back on --resume too (SessionStart's "resume"),
+        # so a restored lane says which one it is as a launched one does.
+        [ "$CLAUDE_SETTINGS_FLAG" = yes ] && \
+          idargs="$idargs --settings $(sched_banner_settings "$slug" "$name" "Restored: resuming session ${sid:0:8}; nothing is pasted.")"
       fi
       cmd="$HOME/.local/bin/claude --resume $sid${model:+ --model $model}${effort:+ --effort $effort}${pmode:+ --permission-mode $pmode}$idargs; exec bash"
     elif [ -n "$sid" ]; then
@@ -2404,6 +2516,7 @@ sched_check_one() {
     kv body "empty -- nothing is pasted; the window opens at a blank prompt"
   fi
   kv identity "$STATE_DIR/identity/$slug.md, on claude's --append-system-prompt-file (pasted first instead if the CLI lacks it)"
+  kv "" "and shown in the window as a SessionStart message ($STATE_DIR/identity/$slug.settings.json, on --settings), no turn spent"
   if [ "$type" = work ] && ! sched_has_prompt "$f"; then
     kv "" "-- EMPTY BODY: a work item with nothing to paste is skipped"; rcout=1
   fi
@@ -2551,6 +2664,36 @@ check_schedules() {
   mv "$SCHED_WHY.tmp" "$SCHED_WHY" 2>/dev/null
   [ "$probe" = 1 ] && sched_request_probe
   return 0
+}
+
+# A NUDGE IS ANSWERED HERE, NOT AFTER THE PASS. --nudge used to do nothing but
+# cut the sleep short, and the pass it woke then did everything it always
+# does -- read every session's transcript, capture every pane, sweep the
+# repos, snapshot the windows -- before it reached check_schedules. Measured
+# on this box with 19 sessions open: a pass is 5.5-9.5 s (heartbeat gaps of
+# 35.5-39.5 s against a 30 s sleep), so `c` sat on the dashboard for that
+# long before the launcher even started, and longer when the nudge landed
+# mid-pass just after its own check_schedules. That was the "several
+# seconds" the user saw; claude itself starts in about one.
+#
+# So the pass calls this at the top of every session it scans, once after the
+# scan, and the loop once after the pass and once on waking: a nudge waits
+# for one session's work at most, never for the scan. check_schedules is the
+# whole of the schedule side and stands on its own -- it reads the entries,
+# the tree and the PREVIOUS pass's status file (the one being written is
+# still $STATUS.tmp), and republishes sched-why whole -- so running it here
+# and again at the pass's usual place is the same work done twice, and an
+# entry launched here is no longer pending there. Every variable in it and
+# in launch_schedule is local, so it cannot disturb the session loop it runs
+# inside.
+#
+# A NO-OP OUTSIDE THE DAEMON: only the daemon traps SIGCONT, so --once and
+# the plain one-shot run never have _NUDGED set.
+_NUDGED=""
+nudge_point() {
+  [ -n "$_NUDGED" ] || return 0
+  _NUDGED=""
+  check_schedules
 }
 
 # Last time we prompted this session, as an epoch. The prompted file is the
@@ -3389,6 +3532,7 @@ pass() {
   spct="$(usage_val session_pct)"; wpct="$(usage_val week_pct)"
   rkey="$(usage_val session_reset_at)"
   for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
+    nudge_point   # one session's work is the most a `c` waits (see nudge_point)
     [ -f "$f" ] || continue
     pid="$(mux_json -r '.pid // empty' "$f" 2>/dev/null)"; [ -n "$pid" ] || continue
     kill -0 "$pid" 2>/dev/null || continue          # stale record, process gone
@@ -3665,6 +3809,7 @@ pass() {
   done
 
   mv "$tmp" "$STATUS"
+  nudge_point
   sweep_repos
   tree_adopt
   tree_reparent
@@ -3793,10 +3938,11 @@ if [ "$MODE" = daemon ]; then
   trap 'reload SIGHUP' HUP
   # GO NOW (--nudge). The dashboard signals the moment it writes a schedule
   # entry, so `c` opens a window in about a second instead of waiting out the
-  # poll. Killing the sleep is enough when one is in flight; _NUDGED covers a
-  # signal that lands DURING a pass, which would otherwise be swallowed and
-  # cost the full interval after all. `pass` is idempotent, so running it once
-  # more than strictly needed is free.
+  # poll. The trap only records it and cuts a sleep short; what ANSWERS it is
+  # nudge_point, at the next safe place -- the top of the next session the
+  # pass scans, the end of the scan, or the loop below -- which runs
+  # check_schedules on its own rather than a whole pass first (see
+  # nudge_point for what that used to cost).
   #
   # SIGCONT because its default action is to do nothing to a running process
   # (see --nudge above): a daemon from an older release ignores the nudge
@@ -3811,9 +3957,8 @@ if [ "$MODE" = daemon ]; then
   printf '%s\n' "$$" > "$STATE_DIR/daemon.pid" 2>/dev/null || true
   CONF_SEEN="$STATE_DIR/config.seen"; : > "$CONF_SEEN"
   while :; do
-    # Cleared BEFORE the pass, so a nudge arriving at any point from here on
-    # is honoured rather than cleared by the pass it was meant to trigger.
-    _NUDGED=""
+    # NOT cleared here any more: a nudge that woke the sleep is answered by
+    # the pass's first nudge_point, before it scans anything.
     pass
     # An edit to either file takes effect within one interval, without anyone
     # remembering to restart anything. -nt is a builtin: no fork when quiet.
@@ -3821,11 +3966,18 @@ if [ "$MODE" = daemon ]; then
        { [ -n "${MUX_PROFILE_CONF:-}" ] && [ "$MUX_PROFILE_CONF" -nt "$CONF_SEEN" ]; }; then
       reload "config changed"
     fi
-    # A nudge that landed while the pass was running: go straight round.
-    [ -n "$_NUDGED" ] && continue
+    # A nudge that landed after the pass's last nudge_point -- during its own
+    # check_schedules, the notifications or the hourly usage probe. Answered
+    # here, and the sleep still follows: the pass itself has just run.
+    nudge_point
     # Sleep in the background and wait on it: a trap cannot interrupt a
     # foreground command, but it does return from `wait` at once.
     sleep "$INTERVAL" & _SLEEP=$!; wait "$_SLEEP"; _SLEEP=""
+    # Woken by a nudge: the schedules first, then the pass this wake was
+    # going to be anyway. With no session files the pass would reach its
+    # first nudge_point only after the scan; this one makes the order the
+    # same on an empty machine as on a busy one.
+    nudge_point
   done
 else
   pass

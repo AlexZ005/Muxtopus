@@ -43,7 +43,7 @@ instead of ending it, because a submode can say what esc means for it
 (App._submode_cancel, `on_cancel`).
 
 Then ONE file: a schedule entry with `at:` already past. The dashboard opens
-no window itself. The watchdog's next pass does the trust dialog, the
+no window itself. The watchdog, nudged, does the trust dialog, the
 readiness wait, the bracketed paste, the tree row, the footer and the log
 line -- one launcher, whoever asked, and none of it reimplemented here. What
 this adds is the FOLLOW: it remembers the slug it just asked for and moves
@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 import time
 
 from rich.markup import escape
@@ -86,6 +87,19 @@ from dashboard.schedules import read_schedules, sanitise_slug
 # the window is simply there to be opened with enter like any other.
 FOLLOW_FOR = 180.0
 
+# HOW OFTEN THE FOLLOW LOOKS, and for how long it looks that often. A frame is
+# two seconds (FRAME_INTERVAL), which was a whole extra second on average
+# between the launcher opening the window and the client moving to it -- on a
+# path that now takes well under a second to get that far. So the follow runs
+# on its own thread at this tick, reading one small file (tree.tsv) per look
+# and forking tmux only once a row for the slug has appeared. After
+# FOLLOW_FAST_FOR it stops and the frame-paced follow_hint carries on alone:
+# a launch that slow is waiting on something (a disarmed watchdog, a daemon
+# that is not running, a dependency), and ten looks a second at it would be
+# spent watching nothing happen.
+FOLLOW_TICK = 0.1
+FOLLOW_FAST_FOR = 30.0
+
 
 class NewSession:
     """The c flow. Its answers so far live in app.ns, because esc in any of
@@ -96,6 +110,9 @@ class NewSession:
         # The window this form asked for and has not landed in yet:
         # {"slug", "until"}. See follow_hint.
         self.follow: dict | None = None
+        # The thread and the frame both look; whichever sees the window first
+        # takes it, under this, so the client is moved exactly once.
+        self._follow_lock = threading.Lock()
         # How many times `c` has been pressed this run. It is the nonce the
         # offered name is seeded with, so asking again asks for a different
         # word -- see start_new_session.
@@ -531,7 +548,7 @@ class NewSession:
         slug = self.app.ns["slug"]
         msg = self._ns_write()
         if not msg.startswith("could not"):
-            self.follow = {"slug": slug, "until": time.time() + FOLLOW_FOR}
+            self.start_follow(slug)
         return msg
 
     def _ns_folder_candidates(self) -> list[str]:
@@ -717,6 +734,13 @@ class NewSession:
     # is the honest description of what the side effect is about to do.
     #
     # IT COSTS NOTHING WHEN NOTHING IS PENDING: the first line returns.
+    #
+    # AND IT IS NO LONGER THE FAST PATH. The jump used to happen only here,
+    # once per two-second frame, after a launcher that only published the
+    # window once claude was ready and the brief pasted. Now the launcher
+    # publishes it the moment new-window returns, and start_follow looks on
+    # its own thread every FOLLOW_TICK; this is what carries on looking once
+    # that thread has stopped, and what draws the mark while either looks.
     def follow_hint(self, _app) -> Text | None:
         f = self.follow
         if not f:
@@ -727,13 +751,50 @@ class NewSession:
             # failed and the schedules tab is where that is explained.
             self.follow = None
             return None
-        node = read_tree().get(f["slug"])
-        wid = node["wid"] if node else ""
-        if wid and wid in live_windows():
-            self.follow = None
-            self.goto_window(wid)
+        if self._follow_landed(f):
             return None
         return Text("  · opening %s" % f["slug"], style=YELLOW)
+
+    def start_follow(self, slug: str) -> None:
+        """Remember the slug and start looking for its window at once, on a
+        thread, so the jump does not wait for the next frame (FOLLOW_TICK)."""
+        now = time.time()
+        f = {"slug": slug, "until": now + FOLLOW_FOR, "since": now}
+        self.follow = f
+        threading.Thread(target=self._follow_fast, args=(f,), daemon=True,
+                         name="follow-" + slug).start()
+
+    def _follow_fast(self, f: dict) -> None:
+        # `self.follow is f`, not a flag: a second `c` replaces the dict, and
+        # this thread then stops on its own instead of racing the new one to
+        # a window that is not the one now being asked for.
+        stop = min(f["until"], f["since"] + FOLLOW_FAST_FOR)
+        while self.follow is f and time.time() < stop:
+            if self._follow_landed(f):
+                return
+            time.sleep(FOLLOW_TICK)
+
+    def _follow_landed(self, f: dict) -> bool:
+        """Has the window for f appeared? If so, stop following and go there.
+        Shared by the thread and the frame, so the two cannot disagree.
+
+        A ROW OLDER THAN THE ASK IS NOT THE ANSWER. The launcher replaces a
+        slug's row when it opens the window, so a row stamped before Create
+        is an earlier window of the same name; following its window id would
+        be a jump to the wrong place if that window were still open. The
+        stamp is whole seconds, hence the one second of slack."""
+        node = read_tree().get(f["slug"])
+        wid = node["wid"] if node else ""
+        if not wid or node["at"] < int(f.get("since", 0)) - 1:
+            return False
+        if wid not in live_windows():
+            return False
+        with self._follow_lock:
+            if self.follow is not f:
+                return True
+            self.follow = None
+        self.goto_window(wid)
+        return True
 
     def goto_window(self, target: str) -> str:
         """Move the tmux client to a window id; the dashboard keeps running in
@@ -822,7 +883,7 @@ HELP_NEWSESSION = f"""
                   line and nothing invented
 
     THEN IT WRITES A SCHEDULE ENTRY with at: already past, and nothing else:
-    the watchdog opens the window within one pass and does the trust dialog,
+    the watchdog opens the window at once and does the trust dialog,
     the readiness wait, the paste and the tree row -- one launcher, whoever
     asked. The entry carries model:, effort:, permission-mode:, cwd:,
     parent:/window:, and watchdog: off / monitor: off when Settings says a new
@@ -831,12 +892,14 @@ HELP_NEWSESSION = f"""
     to every new window when Settings ▸ Send /rc to a new window is on (an
     entry's own rc: on|off wins).
 
-    AND THEN IT TAKES YOU THERE. There is no window to jump to when you press
-    Create -- the launcher has not opened it yet -- so the form remembers the
-    slug, the key line reads `opening name`, and the tmux client moves to
-    that window the moment it appears. The dashboard keeps running in window
-    0, so Ctrl-b 0 comes straight back. After three minutes it stops waiting
-    and the window is simply there, like any other.
+    AND THEN IT TAKES YOU THERE, AT ONCE. The watchdog drops what it is doing
+    for a `c` -- it does not finish scanning every session first -- and the
+    window is published the moment tmux opens it, so the client moves there
+    within about half a second and you watch claude start, answer the trust
+    dialog and take the paste in the window itself. While it looks, the key
+    line reads `opening name`. The dashboard keeps running in window 0, so
+    Ctrl-b 0 comes straight back. After three minutes it stops waiting and
+    the window is simply there, like any other.
 
     Choosing bypassPermissions also offers "…and make it the default": a
     confirm names the exact settings.json (project or account, per Settings)

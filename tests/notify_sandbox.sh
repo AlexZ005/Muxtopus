@@ -54,10 +54,12 @@ sb_init() {
 # fake claude: record argv, publish sessions/<pid>.json, show $FAKE_SCREEN or a prompt.
 printf '%s\n' "$*" >> "$HOME/fake-claude.argv"
 # --help, like the real one: the launcher reads it once for the flags this CLI
-# takes. FAKE_CLAUDE_OLD=1 plays a CLI without --append-system-prompt-file.
+# takes. FAKE_CLAUDE_OLD=1 plays a CLI without --append-system-prompt-file
+# or --settings.
 if [ "${1:-}" = --help ]; then
   echo "  --model <model>"
   [ -n "${FAKE_CLAUDE_OLD:-}" ] || echo "  --append-system-prompt-file <file>"
+  [ -n "${FAKE_CLAUDE_OLD:-}" ] || echo "  --settings <file-or-json>"
   exit 0
 fi
 cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
