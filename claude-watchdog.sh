@@ -2827,9 +2827,6 @@ sched_check() {
 # the third one never resolved. Now each writes its sentence to SCHED_WHY, the
 # dashboard renders it, and the log takes the changes.
 check_schedules() {
-  # Nothing judged, nothing held: a disarmed daemon must not alert on the
-  # reading it took before it was disarmed.
-  MEM_STATE=""; MEM_HELD=0
   [ -f "$ENABLED" ] || return 0
   [ "$DRY" = 1 ] && return 0
   # Before the folder test: the badge is about the machine, and it is drawn
@@ -4044,6 +4041,9 @@ pass() {
   tree_adopt
   tree_reparent
   snapshot_windows "$now"
+  # Nothing judged, nothing held: a disarmed daemon (check_schedules returns
+  # at its first line) must not alert on a reading from before it was.
+  MEM_STATE=""; MEM_HELD=0
   check_schedules
   NOTIFY_FAM[waiting]=1; NOTIFY_FAM[stranded]=1
   # The guard's own alert: once when it trips, "cleared" once it recovers.
