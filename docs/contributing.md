@@ -64,6 +64,9 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | `install.sh`: the closing block repeats what stops muxtopus running, and the PATH line; `muxtopus` refuses without `claude` | `tests/test_install_done.sh` | yes |
 | the window's identity on `--append-system-prompt-file`, the paste without it, and nothing pasted for an empty plan; the same identity shown on screen by a `--settings` SessionStart hook | `tests/test_identity.sh` | no — local |
 | `c` lands you in the window at once: the tree row before claude is ready, a nudge answered mid-scan and on waking, before the pass | `tests/test_create_latency.sh` | no — local |
+| the memory guard: a due entry held below the line and launched once memory recovers (with the margin), swap, off, a blind meminfo; `WATCHDOG_MEM_STOP_DEV` tells the newest lane that owns a server, once | `tests/test_mem_guard.sh` | no — local |
+| `lane-dev`: start, stop, refusals, the idle watcher, no inherited descriptors; `e2e-slot --dev` | `tests/test_lane_dev.sh` | no — local |
+| `install.sh` links `lane-dev` and `e2e-slot`, never over a file of yours | `tests/test_install_lanetools.sh` | no — local |
 | what is pasted: a `template:` on either type, then the body, then the footer; every placeholder resolved | `tests/test_sched_template.sh` | no — local |
 | `install.sh`: one line per tool, and the fetched python (checked, unpacked, never on PATH) | `tests/test_install_python.sh` | no — local |
 | where the no-systemd watchdog's pid file goes, under `su` | `tests/test_run_dir.sh` | no — local |
@@ -74,6 +77,7 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | a view is one new file | `tests/sandbox/onefile.sh` | no — local |
 | the insights view, every key | `tests/sandbox/insights.sh` | no — local |
 | the handovers tab, row by row | `tests/sandbox/handovers.sh` | no — local |
+| the memory guard on screen: the badge, the `held` row, two goldens of their own | `tests/sandbox/memguard.sh` | no — local |
 
 The Python tests are pure: a temporary HOME, no terminal, no daemon, so they run anywhere. The notify shell tests drive tmux and jq in their own sandbox against `tests/fake_telegram.py`, never the real bot.
 
@@ -88,6 +92,7 @@ tests/sandbox/goldens.sh --bless    # rewrite the goldens (only when the picture
 tests/sandbox/actions.sh            # the rows that write something
 tests/sandbox/handovers.sh          # the handovers tab
 tests/sandbox/insights.sh           # the i view
+tests/sandbox/memguard.sh           # the memory guard's badge and held row (--bless: its two goldens)
 ```
 
 The rules it enforces:

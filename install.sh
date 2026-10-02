@@ -301,6 +301,24 @@ step "4/7  muxtopus"
 run chmod +x "$SRC/muxtopus" "$SRC"/*.sh
 run ln -sfn "$SRC/muxtopus" "$BIN/muxtopus"
 ok "$BIN/muxtopus -> $SRC/muxtopus"
+# THE TWO LANE TOOLS (docs/orchestration.md): lane-dev, a dev server that
+# stops itself when unused, and e2e-slot, the machine-wide e2e slots that can
+# start one for a run. Linked only where the name is free or already ours:
+# e2e-slot existed as a hand-made file before it was versioned here, and a
+# file somebody wrote is not this installer's to replace.
+run chmod +x "$SRC/lane-dev" "$SRC/e2e-slot"
+for tool in lane-dev e2e-slot; do
+  cur="$(readlink "$BIN/$tool" 2>/dev/null)"
+  # Ours: a link into this checkout or another muxtopus checkout (one with a
+  # `muxtopus` beside it), or a link to nothing at all.
+  if [ ! -e "$BIN/$tool" ] && [ ! -L "$BIN/$tool" ] \
+     || { [ -L "$BIN/$tool" ] && { [ ! -e "$BIN/$tool" ] || [ -f "$(dirname "$cur")/muxtopus" ]; }; }; then
+    run ln -sfn "$SRC/$tool" "$BIN/$tool"
+    ok "$BIN/$tool -> $SRC/$tool"
+  else
+    skip "$BIN/$tool is not ours ($( [ -L "$BIN/$tool" ] && echo "-> $cur" || echo "a file" )), leaving it alone"
+  fi
+done
 # Links an earlier version made under the old names would now dangle -- or,
 # for `cc`, keep working under a name that shadows the C compiler. Only OUR
 # links go: one pointing anywhere else is somebody else's program.
