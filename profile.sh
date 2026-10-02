@@ -76,6 +76,10 @@ WATCHDOG_USAGE_STALE=180
 WATCHDOG_HEARTBEAT_LOG=60
 WATCHDOG_STRANDED=120
 WATCHDOG_WOUND_RESUME=on
+WATCHDOG_MEM_GUARD=on
+WATCHDOG_MEM_MIN_GB=4
+WATCHDOG_SWAP_MAX_PCT=80
+WATCHDOG_MEM_STOP_DEV=0
 CLAUDE_USAGE_MAX_AGE=20
 CLAUDE_USAGE_MODEL=-
 CLAUDE_CONTEXT_WINDOW=1000000
@@ -340,6 +344,18 @@ mux_key_help() {
                             echo "has come back -- but only while its handover is still open, and never"
                             echo "if it is opted out. off is the behaviour before this existed: the"
                             echo "window stops and nothing restarts it." ;;
+    WATCHDOG_MEM_GUARD)     echo "on|off. With it on, a schedule entry that is due is HELD, not launched,"
+                            echo "while memory is low (either half below), and launches by itself once"
+                            echo "memory recovers. The dashboard draws a red MEMORY badge meanwhile." ;;
+    WATCHDOG_MEM_MIN_GB)    echo "Whole GB. Memory is low while MemAvailable is under this. It recovers"
+                            echo "at 0.5 GB above it, so a machine on the line does not flip every pass."
+                            echo "0 turns this half off." ;;
+    WATCHDOG_SWAP_MAX_PCT)  echo "Memory is also low while more than this % of swap is used. It recovers"
+                            echo "2 points under it. 100 (or 0) turns this half off. Swapped pages stay"
+                            echo "in swap until touched, so this can read high long after the pressure." ;;
+    WATCHDOG_MEM_STOP_DEV)  echo "How many of the NEWEST lanes still running a dev server are told, once"
+                            echo "per low-memory episode, to stop it (a directive, like the wind-down)."
+                            echo "0 tells nobody. A session opted out of monitoring is never told." ;;
     CLAUDE_USAGE_MAX_AGE)   echo "Minutes: the dashboard's u and R re-read the limits only past this age." ;;
     CLAUDE_USAGE_MODEL)     echo "Which model's limit line the probe reads. Default: the model in"
                             echo "the account's settings.json." ;;

@@ -663,6 +663,7 @@ def status_counts(profile: str) -> dict:
         "pending": len(vs),
         "blocked": sum(1 for v in vs if v["verdict"] == "blocked"),
         "stalled": sum(1 for v in vs if v["verdict"] == "stalled"),
+        "held": sum(1 for v in vs if v["verdict"] == "held"),
         "questions": len(unanswered_files(profile)),
     }
 
@@ -679,7 +680,10 @@ def status_text(profile: str) -> tuple[str, dict]:
         age = human_age(time.time() - int(u["at"])) + " ago" if u.get("at", "").isdigit() else "?"
         lines.append("budget: session %s%% · week %s%% · resets %s (read %s)"
                      % (u.get("session_pct", "?"), u.get("week_pct", "?"), at, age))
-    lines.append("schedule: %d pending · %d blocked · %d stalled" % (c["pending"], c["blocked"], c["stalled"]))
+    lines.append("schedule: %d pending · %d blocked · %d stalled" % (c["pending"], c["blocked"], c["stalled"])
+                 # Only when there is one: the line every test and every
+                 # phone already knows stays the same on a healthy machine.
+                 + (" · %d held (memory low)" % c["held"] if c["held"] else ""))
     try:
         opened = len(list(muxconfig.mux_dir("handovers", profile).glob("STATUS-*.md")))
     except OSError:

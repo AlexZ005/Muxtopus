@@ -182,6 +182,10 @@ WATCHDOG_SCHED_WHY = WATCHDOG_DIR / "sched-why.tsv"
 # polling every 30s -- so liveness had to be inferred from the mtimes of files
 # it happens to rewrite. This says it outright.
 WATCHDOG_HEARTBEAT = WATCHDOG_DIR / "heartbeat"
+# The memory guard's last reading: epoch, available kB, swap %, ok|low|off|
+# unknown, since, why. While it reads `low` the daemon holds every due entry,
+# and the deck panel says so in red (claude-watchdog.sh mem_check).
+WATCHDOG_MEMORY = WATCHDOG_DIR / "memory"
 
 
 # ------------------------------------------------------------------ the tree

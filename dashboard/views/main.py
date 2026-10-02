@@ -46,7 +46,7 @@ from dashboard.core import (CONTEXT_WINDOW, DIM, EXTRAS_SENTINEL, EXTRA_HINTS,
 from dashboard.data import (Cpu, Repo, claude_sessions, dirty_for, dirty_repos,
                             drop_dead, first_glob, heartbeat_age, hooray,
                             hottest_c, lane_account, lane_name, lane_slug_of,
-                            listening_inodes, meminfo, monitor_on,
+                            listening_inodes, meminfo, memory_held, monitor_on,
                             monitor_opted_out, opted_out, ports_for,
                             processes, read_tree, session_mode,
                             toggle_watchdog, uptime_seconds, usage_failure,
@@ -777,6 +777,12 @@ class MainView(View):
         hb = heartbeat_age()
         scanned = hb if hb >= 0 else sess_age
         wd_stale = scanned < 0 or scanned > STALE_AFTER
+        # THE MEMORY GUARD'S BADGE. On the deck panel's border, beside the
+        # MEM row it is about; and in this table's title when the deck panel
+        # is hidden (Settings ▸ Panels), because a hold nobody can see is the
+        # "scheduled, but nothing will ever open it" bug again. Three passes
+        # of slack: a pass on a busy box takes ten seconds and more.
+        mem_held = memory_held(max(STALE_AFTER, 3.0 * WD_INTERVAL))
 
         ordered = sorted(sessions, key=lambda x: -x.ctx)
         # ...then hung into a tree, parents before children. With nothing
@@ -951,6 +957,8 @@ class MainView(View):
                                wd_label, (" · ", DIM),
                                (scan_txt, RED if wd_stale else DIM), (" · ", DIM),
                                mon_label)
+        if mem_held and "deck" in panels_off:
+            ctitle.append(" · memory low: new windows held", style="bold " + RED)
 
         # ---- system -------------------------------------------------------
         claude = [p for p in procs if p.comm == "claude"]
@@ -1048,7 +1056,10 @@ class MainView(View):
             panels.append(Panel(dt, title=uncommitted_title(dirty_list),
                                 title_align="left", border_style=FRAME, box=box.ROUNDED))
 
-        deck_panel = Panel(head, title="[bold]deck", subtitle=f"[{DIM}]{subtitle}",
+        deck_title = "[bold]deck"
+        if mem_held:
+            deck_title += f" [bold {RED}]· MEMORY LOW · new windows held[/]"
+        deck_panel = Panel(head, title=deck_title, subtitle=f"[{DIM}]{subtitle}",
                            subtitle_align="right", border_style=FRAME, box=box.ROUNDED)
         system_panel = Panel(sysrow, title="[bold]system", title_align="left",
                              border_style=FRAME, box=box.ROUNDED)

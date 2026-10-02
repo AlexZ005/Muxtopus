@@ -34,6 +34,10 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `WATCHDOG_HEARTBEAT_LOG` | `60` | minutes between the daemon's "still here" log lines |
 | `WATCHDOG_STRANDED` | `120` | minutes a lane may sit idle with an open handover and nothing pending naming it before its state reads `stranded`; `0` turns it off |
 | `WATCHDOG_WOUND_RESUME` | `on` | send the continue message to a window that a **hard** wind-down told to stop, once its budget window has come back and while its handover is still open; `off` leaves it stopped |
+| `WATCHDOG_MEM_GUARD` | `on` | the [memory guard](watchdog.md#the-memory-guard): while memory is low, a schedule entry that is due is **held** (`held` in the schedules tab, a red `MEMORY` badge on the deck panel) and launches by itself once memory recovers; `off` never holds |
+| `WATCHDOG_MEM_MIN_GB` | `4` | whole GB; memory is low while `MemAvailable` is under this, and recovers 0.5 GB above it. `0` turns this half off |
+| `WATCHDOG_SWAP_MAX_PCT` | `80` | memory is also low while more than this % of swap is used, and recovers 2 points under it. `100` (or `0`) turns this half off |
+| `WATCHDOG_MEM_STOP_DEV` | `0` | when the guard trips, tell this many of the **newest** lanes still running a dev server to stop it, once per episode (a directive, like the wind-down). `0` tells nobody |
 | `WATCHDOG_RESTORE` | `ask` | what `muxtopus` does with a [frozen window snapshot](restore.md) when there is no session: `ask` offers it at a terminal; `auto` restores without asking, and the watchdog relaunches `muxtopus -d` the moment the server disappears; `off` never offers (`muxtopus --restore` still works) |
 | `WATCHDOG_RESTORE_MAX_AGE` | `24` | hours; a frozen snapshot older than this is not offered at start (`--restore` takes it regardless) |
 | `MUXTOPUS_TMUX_SOCKET` | `default` | the tmux server every muxtopus command talks to: a name (`tmux -L`) or an absolute path (`tmux -S`), passed explicitly on every call so a command run inside a pane never follows that pane's `$TMUX` elsewhere. `default` is the socket a bare `tmux` uses outside tmux |

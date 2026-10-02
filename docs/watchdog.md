@@ -99,6 +99,25 @@ Not a field: a **state** the watchdog publishes for a window, beside `working`, 
 
 **It is a fact shown to a human, never a trigger.** It is derived only from `idle`, and the restart path only ever acts on `due`, so a stranded window is never prompted by it; the cure is to write an entry for it (or mark the handover done). `WATCHDOG_STRANDED=0` turns it off. One log line when a window becomes stranded and one when it stops being stranded — not one per pass. It is also one of the things [the phone is told](notifications.md).
 
+### The memory guard
+
+A lane window is a claude process (about 450 MB) plus whatever it starts, and a lane that runs proofs starts a dev server and a browser. In one round on a 29 GB machine, twelve lanes each left a vite server running and swap filled. Every window opened after that made things worse.
+
+So before an entry launches, the daemon reads `/proc/meminfo`. While memory is **low**, an entry that is due is **held**, not launched:
+
+- **low** means `MemAvailable` is under `WATCHDOG_MEM_MIN_GB` (default 4 GB), **or** more than `WATCHDOG_SWAP_MAX_PCT` (default 80 %) of swap is used;
+- it **recovers** at 0.5 GB above the minimum **and** 2 points under the swap limit, so a machine sitting on the line does not flip every pass and launch one more window each time;
+- a held entry's verdict is `held`, drawn red in the schedules tab, with the sentence `held: memory -- 3.1 GB available, under WATCHDOG_MEM_MIN_GB=4; …`. `--check` prints `HELD`. An entry still waiting for its time or its `after:` keeps that verdict, which is the more useful one;
+- the deck panel on the dashboard carries a red **`MEMORY LOW · new windows held`** badge for as long as it lasts;
+- one log line when it trips and one when it recovers; the phone is told once and "cleared" once, under `MUXTOPUS_NOTIFY_TROUBLE`;
+- held entries launch **by themselves** on the first pass after memory recovers. Nothing has to be pressed.
+
+`c` on the dashboard writes an ordinary entry, so it is held too. `WATCHDOG_MEM_GUARD=off` turns the guard off; the daemon re-reads its config within one pass. A `/proc/meminfo` that cannot be read holds nothing, and the published state says `unknown`.
+
+Swapped pages stay in swap until they are touched, so swap can read high long after the pressure has gone; the held sentence names both keys, and `WATCHDOG_SWAP_MAX_PCT=100` turns that half off.
+
+**Stopping dev servers (opt-in).** `WATCHDOG_MEM_STOP_DEV=N` also tells the N **newest** lanes that still run a dev server to stop it. The directive goes through the same `PostToolUse` hook as a wind-down, once per session per low-memory episode, and never to a session opted out of monitoring. A server belongs to the session whose working folder is the *longest* prefix of the server's, so a planning window in a parent folder never takes a server from the lane that owns it. While memory stays low, the N newest lanes that *still* own a server are asked each pass, so a lane that complied makes room for the next-newest. `0` (the default) tells nobody. For starting a server only when needed, see [`lane-dev`](orchestration.md#dev-servers-on-demand-lane-dev).
+
 ## The window snapshot
 
 Every pass the session is there, `windows.tsv` is rewritten: one row per window of the account's tmux session, in index order, with the window's name, cwd, pane, the Claude session id in it, its parent slug from the tree, and the model, effort and permission mode it was launched with (read from the claude process's own command line, else from the schedule entry that opened it).
@@ -118,7 +137,8 @@ All of it in `~/.local/state/claude-watchdog[-<account>]/`, read by the dashboar
 | file | |
 |---|---|
 | `status.tsv` | one row per session: id, window, pane, context, state, reset, what was spent, model, idle seconds, cwd, wound-at, opt-outs, pid, and the last thing it said — the first 80 characters of its last text, on one line, or `-` when there is no transcript to read (`--status` prints it as `SAID`) |
-| `sched-why.tsv` | one verdict per pending entry: `due` · `waiting` · `blocked` · `stalled`, with its sentence |
+| `sched-why.tsv` | one verdict per pending entry: `due` · `waiting` · `blocked` · `stalled` · `held`, with its sentence |
+| `memory` | the [memory guard](#the-memory-guard)'s last reading: epoch, available kB, swap %, `ok`·`low`·`off`·`unknown`, since when, and why |
 | `tree.tsv` | the window tree: slug, parent, window id, pane id, launched-at, entry file |
 | `windows.tsv` | the window snapshot, rewritten every pass the session is there; `windows.last.tsv` is the frozen one after a loss, `windows.restored.tsv` / `windows.declined.tsv` what became of it |
 | `usage.tsv` | the last usage reading and when it was taken |

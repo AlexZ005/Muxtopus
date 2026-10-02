@@ -115,7 +115,9 @@ A budget *reading* older than `WATCHDOG_USAGE_STALE` (default 180 min) cannot fi
 
 The watchdog writes a verdict per pending entry every pass, to `sched-why.tsv` in its state directory:
 
-`due` · `waiting` · `blocked` · `stalled`, each with the sentence that explains it, republished every pass and rendered under the table in the `s` view for the row under the cursor.
+`due` · `waiting` · `blocked` · `stalled` · `held`, each with the sentence that explains it, republished every pass and rendered under the table in the `s` view for the row under the cursor.
+
+`held` means it is due and would launch now, but [memory is low](watchdog.md#the-memory-guard): it launches by itself once memory recovers, and the row is red until then.
 
 `stalled` means it cannot be judged at all and will not resolve on its own. That case used to be **silent and permanent**: an empty `session_pct` was coerced to 100 (failing gate 1) and an empty `session_reset_at` failed gate 2, so an unreadable usage cache made every `at: reset` entry undue *forever*, with no log line and no error. Now it is named, it turns the row red, the reason is printed under the table, and the watchdog asks for a fresh `/usage` probe (at most one per quarter hour) to clear it.
 
@@ -206,11 +208,11 @@ A `{{NAME}}` outside that table is left in the paste as **literal text** and war
 | `←` `→` | the handovers tab |
 | `s` / `esc` | back |
 
-The row carries a yellow `⚠` note when the title is not a slug or the body names a placeholder the table does not know; the SLUG column shows the resolved answer. A red `stalled` row cannot be judged at all.
+The row carries a yellow `⚠` note when the title is not a slug or the body names a placeholder the table does not know; the SLUG column shows the resolved answer. A red `stalled` row cannot be judged at all; a red `held` row is due but waiting for memory.
 
 ### The schedule view's menu
 
-`space` on an entry opens **that entry's** menu, drawn by the same never-clipped engine: the executor's *why* sentence first when the entry is blocked, waiting or stalled; edit; options (the table, pre-ticked from the header); launch now; duplicate as a new pending entry (a `-copy` title, a pinned `slug:` dropped so two entries never share a window name and a handover, then the editor); check (the `--check --body` report, full screen); open its window when it has one; delete. A corrupted entry gets its reason and only delete. Nothing in it acts on a claude session.
+`space` on an entry opens **that entry's** menu, drawn by the same never-clipped engine: the executor's *why* sentence first when the entry is blocked, waiting, stalled or held; edit; options (the table, pre-ticked from the header); launch now; duplicate as a new pending entry (a `-copy` title, a pinned `slug:` dropped so two entries never share a window name and a handover, then the editor); check (the `--check --body` report, full screen); open its window when it has one; delete. A corrupted entry gets its reason and only delete. Nothing in it acts on a claude session.
 
 ### The options table
 

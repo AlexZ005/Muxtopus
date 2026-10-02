@@ -37,7 +37,8 @@ from typing import NamedTuple
 from dashboard.core import (
     HANDOVERS_DIR, HOME, PAGE, PROFILE, SCRIPTS, TICKS, USAGE_MAX_AGE,
     WATCHDOG_DIR, WATCHDOG_DIRECTIVES, WATCHDOG_ENABLED,
-    WATCHDOG_HEARTBEAT, WATCHDOG_HOORAY, WATCHDOG_MON_OPTOUT, WATCHDOG_MONITOR,
+    WATCHDOG_HEARTBEAT, WATCHDOG_HOORAY, WATCHDOG_MEMORY, WATCHDOG_MON_OPTOUT,
+    WATCHDOG_MONITOR,
     WATCHDOG_OPTOUT, WATCHDOG_REPOS, WATCHDOG_SCHED_WHY, WATCHDOG_STATUS,
     WATCHDOG_TREE, WATCHDOG_USAGE, WATCHDOG_USAGE_FAIL, profile_of, read)
 # THE HANDOVER RULES, which are not this module's: what "open" and "done"
@@ -469,6 +470,26 @@ def heartbeat_age() -> float:
         return time.time() - int(first)
     except (OSError, ValueError, IndexError):
         return -1.0
+
+
+def memory_held(stale_after: float) -> str:
+    """Why the watchdog is holding launches for memory, or "" when it is not.
+
+    The watchdog's VERDICT, not this process's own reading of /proc/meminfo:
+    the badge says "new windows held", and only the daemon knows whether it
+    is holding -- it has the thresholds, the margin it recovers at and the
+    episode it is in. A reading older than `stale_after` seconds is no
+    verdict at all (a daemon that stopped holds nothing), so it draws nothing.
+    """
+    try:
+        p = WATCHDOG_MEMORY.read_text().rstrip("\n").split("\t")
+        if len(p) < 6 or p[3] != "low":
+            return ""
+        if time.time() - int(p[0]) > stale_after:
+            return ""
+        return p[5]
+    except (OSError, ValueError):
+        return ""
 
 
 def sched_why() -> dict[str, tuple[str, str, int]]:
