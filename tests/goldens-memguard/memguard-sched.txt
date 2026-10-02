@@ -1,0 +1,21 @@
+╭─ ▸schedules 6 │ handovers 3 open · 2 ? ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                              │
+│        STATUS       TYPE     FOR                  AT                  TITLE                                                      SLUG                        │
+│  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+│        pending      plan     reset (08:50)        <stamp>    a pending plan  ⚠ title is not a slug; it becomes 'a-pe…   a-pending-plan <pad>│
+│        blocked      work     reset (08:50)        <stamp>    blocked behind a lane  ⚠ title is not a slug; it become…   blocked-behind-a-lane <pad>│
+│        corrupted    nonse…   whenever             <stamp>    a corrupted entry — type must be plan or work (got 'non…   a-corrupted-entry <pad>│
+│        launched     work     <stamp>     <stamp>    already launched — launched <stamp>               launched-lane <pad>│
+│        pending      plan     reset (08:50)        <stamp>    a title that is not a slug                                 pinned-one <pad>│
+│  ▸     held         work     <stamp>     <stamp>    with options and a model  ⚠ title is not a slug; it bec…   with-options-and-a-model <pad>│
+│                                                                                                                                                              │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ←→ tab ─╯
+╭─ why ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ held: memory -- 3.0 GB available, under WATCHDOG_MEM_MIN_GB=4; launches by itself once memory recovers (WATCHDOG_MEM_GUARD=off to stop holding) (<age> ago) <pad>│
+│ model fable  ·  effort high  ·  3 option(s)      o reopens the table                                                                                         │
+│ ⚠ title is not a slug; it becomes 'with-options-and-a-model' — set slug: to pin it                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ awaiting your answers: 2   → to answer                                                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ pick  pgup/dn home/end jump  space menu  enter/e edit  c create  o options  l launch now  d delete  r reload  s/esc back  q quit

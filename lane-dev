@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+# lane-dev -- a dev server that runs only while it is used.
+#
+#   lane-dev start <dir> <port> [--idle MIN] [-- command ...]
+#   lane-dev stop <port|dir>
+#   lane-dev status [<port|dir>] [--quiet]
+#
+# `start` runs `npm run dev -- --port <port> --strictPort` in <dir> (or the
+# command after `--`, or `bash -c "$LANE_DEV_CMD"`, each with $PORT set --
+# e2e-slot --dev has no `--` of its own to pass one through), waits until the
+# port is listening, and
+# returns. The server runs in its own session, so it outlives the shell that
+# started it and is stopped as one process group. A watcher stops it once
+# nothing has used the port for --idle minutes (LANE_DEV_IDLE, default 15;
+# 0 = never). `start` on a port that already runs the same folder's server
+# succeeds and leaves it running. `stop` and `status` take a port or a folder.
+#
+# WHY. In one round on a 29 GB machine, twelve lanes each left a vite server
+# running, about 1 GB apiece with its workers, and swap filled. A lane needs
+# its server for a proof run of a minute or two, then not for an hour. Lanes
+# were told to "stop it after", and they forgot. The watcher does not forget.
+#
+# WHAT COUNTS AS USE, read from /proc/net/tcp and tcp6 every LANE_DEV_POLL
+# seconds (10): an OPEN connection to or from the port, or one the last poll
+# did not see. A closed connection lingers in TIME_WAIT for 60 s on Linux, so
+# a request between two polls is still caught -- and counted once: if every
+# TIME_WAIT row counted, one request would keep the server "in use" for a
+# minute after it ended. A browser tab left open holds the HMR websocket and
+# keeps the server alive: close the browser (lane rule: never leave one idle).
+#
+# State: ${XDG_STATE_HOME:-~/.local/state}/lane-dev/<port>/ -- dir, pgid,
+# start (the leader's start time, so a recycled pid is never signalled),
+# watcher, last (the last use), idle, log (the server's output; kept as
+# <port>.log once the server is gone).
+#
+# Exit codes: 0 done (or nothing to do), 1 the server failed to start,
+# 2 usage, 3 the port is taken by something lane-dev did not start, or by
+# lane-dev for another folder.
+set -uo pipefail
+
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/lane-dev"
+IDLE_MIN="${LANE_DEV_IDLE:-15}"
+POLL="${LANE_DEV_POLL:-10}"
+# Seconds in one --idle unit. Only the tests change it: nobody waits fifteen
+# real minutes for a watcher to prove it stops a server.
+UNIT="${LANE_DEV_IDLE_UNIT:-60}"
+WAIT="${LANE_DEV_WAIT:-120}"
+SELF="$(readlink -f "$0")"
+
+die() { echo "lane-dev: $1" >&2; exit "${2:-2}"; }
+usage() { sed -n '2,15p' "$SELF" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+num() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
+
+# The start time of a process (field 22 of its stat), read with builtins.
+# Recorded at start and compared before every signal: a pid alone could be a
+# different program by the time the watcher wakes.
+starttime() {
+  local st
+  read -r st < "/proc/$1/stat" 2>/dev/null || return 1
+  st="${st##*) }"; local -a f; read -r -a f <<<"$st"
+  printf '%s' "${f[19]}"
+}
+
+# Is the server recorded for this port still the process we started?
+alive() {
+  local d="$STATE/$1" pg want
+  pg="$(cat "$d/pgid" 2>/dev/null)" && want="$(cat "$d/start" 2>/dev/null)" || return 1
+  num "$pg" && [ -n "$want" ] && [ "$(starttime "$pg")" = "$want" ]
+}
+
+# Rows of /proc/net/tcp{,6} on PORT, one socket per line: state, local and
+# remote address (state 0A is LISTEN, 01 ESTABLISHED). Ports are hex in that
+# file, so PORT is converted once here rather than every row in awk, where
+# mawk has no strtonum.
+sockets() {
+  local hex; hex="$(printf '%04X' "$1")"
+  awk -v p=":$hex" '
+    FNR > 1 {
+      split($2, l, ":"); split($3, r, ":")
+      if (":" l[2] == p || ":" r[2] == p) print $4, $2, $3
+    }' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+listening() { sockets "$1" | awk '$1=="0A"{f=1} END{exit !f}'; }
+# in_use PORT SEEN: an open connection, or one not in SEEN (the last poll's
+# rows, rewritten here).
+in_use() {
+  local now
+  now="$(sockets "$1" | awk '$1!="0A"')"
+  printf '%s\n' "$now" | awk -v seen="$2" '
+    BEGIN { while ((getline l < seen) > 0) old[l] = 1 }
+    NF && ($1 == "01" || !($0 in old)) { f = 1 }
+    END { exit !f }'
+  local rc=$?
+  printf '%s\n' "$now" > "$2"
+  return "$rc"
+}
+
+# Stop the group, TERM then KILL, only after checking it is still ours.
+stop_group() {
+  local port="$1" pg i
+  alive "$port" || return 0
+  pg="$(cat "$STATE/$port/pgid")"
+  kill -TERM -- "-$pg" 2>/dev/null
+  for i in $(seq 50); do kill -0 -- "-$pg" 2>/dev/null || return 0; sleep 0.1; done
+  alive "$port" && kill -KILL -- "-$pg" 2>/dev/null
+  return 0
+}
+
+# The record goes; the server's output is kept beside it as <port>.log, so
+# "why did it stop" still has an answer once it has.
+forget() {
+  [ -f "$STATE/${1:?}/log" ] && mv -f -- "$STATE/$1/log" "$STATE/$1.log"
+  rm -rf -- "${STATE:?}/${1:?}"
+}
+
+# A port, or the folder whose server it is.
+resolve() {
+  local a="$1" d
+  if num "$a"; then printf '%s' "$a"; return 0; fi
+  a="$(readlink -f "$a" 2>/dev/null)" || return 1
+  for d in "$STATE"/*/; do
+    [ -f "$d/dir" ] && [ "$(cat "$d/dir")" = "$a" ] && { basename "$d"; return 0; }
+  done
+  return 1
+}
+
+rss_of_group() {
+  ps -e -o pgid=,rss= 2>/dev/null | awk -v g="$1" '$1==g{s+=$2} END{printf "%d MB", s/1024}'
+}
+
+# THE WATCHER. One per server, in its own session like the server, so it
+# outlives the shell that ran `start`. It exits when the server does.
+watch() {
+  local port="$1" d="$STATE/$1" now last idle
+  idle="$(cat "$d/idle" 2>/dev/null)"; num "$idle" || idle="$IDLE_MIN"
+  while alive "$port"; do
+    now="$(date +%s)"
+    if in_use "$port" "$d/seen"; then
+      printf '%s\n' "$now" > "$d/last"
+    elif [ "$idle" -gt 0 ]; then
+      last="$(cat "$d/last" 2>/dev/null)"; num "$last" || last="$now"
+      if [ $(( now - last )) -ge $(( idle * UNIT )) ]; then
+        printf '\n[lane-dev %s] idle %s min: stopping\n' "$(date '+%F %T')" "$idle" >> "$d/log"
+        stop_group "$port"
+        break
+      fi
+    fi
+    sleep "$POLL"
+  done
+  # The server is gone, whoever stopped it: nothing of it stays recorded.
+  [ "$(cat "$d/watcher" 2>/dev/null)" = "$$" ] && forget "$port"
+  exit 0
+}
+
+cmd_start() {
+  local dir="" port="" idle="$IDLE_MIN" pid i d
+  local -a run=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --idle) num "${2:-}" || die "--idle takes whole minutes"; idle="$2"; shift 2 ;;
+      --) shift; run=("$@"); break ;;
+      -*) die "unknown option: $1" ;;
+      *) if [ -z "$dir" ]; then dir="$1"; elif [ -z "$port" ]; then port="$1"; else die "too many arguments"; fi; shift ;;
+    esac
+  done
+  [ -n "$dir" ] && [ -n "$port" ] || usage
+  num "$port" && [ "$port" -gt 0 ] && [ "$port" -lt 65536 ] || die "not a port: $port"
+  [ -d "$dir" ] || die "not a folder: $dir"
+  dir="$(readlink -f "$dir")"
+  d="$STATE/$port"
+  if alive "$port"; then
+    if [ "$(cat "$d/dir")" = "$dir" ]; then
+      date +%s > "$d/last"
+      echo "lane-dev: already running $dir on port $port (pgid $(cat "$d/pgid"))"
+      return 0
+    fi
+    die "port $port is lane-dev's server for $(cat "$d/dir") -- lane-dev stop $port first" 3
+  fi
+  [ -d "$d" ] && forget "$port"          # a server that died: its record goes
+  listening "$port" && die "port $port is already in use by something lane-dev did not start" 3
+  if [ ${#run[@]} = 0 ] && [ -n "${LANE_DEV_CMD:-}" ]; then
+    run=(bash -c "$LANE_DEV_CMD")
+  elif [ ${#run[@]} = 0 ]; then
+    [ -f "$dir/package.json" ] || die "$dir has no package.json; give the command after -- (or in LANE_DEV_CMD)"
+    run=(npm run dev -- --port "$port" --strictPort)
+  fi
+  mkdir -p "$d"
+  printf '%s\n' "$dir" > "$d/dir"; printf '%s\n' "$idle" > "$d/idle"
+  printf '%s\n' "${run[*]}" > "$d/cmd"
+  # ITS OWN SESSION, AND NONE OF OUR FILE DESCRIPTORS. setsid makes the server
+  # a group leader, so `stop` reaches npm, vite and every worker with one
+  # signal, and the shell that ran `start` can exit without taking it along.
+  # The descriptors matter as much: e2e-slot holds its slot as a flock on fd
+  # 8 or 9, and a server that inherited it would keep the slot locked for as
+  # long as it ran.
+  setsid bash -c '
+    for fd in /proc/$$/fd/*; do fd="${fd##*/}"; [ "$fd" -gt 2 ] 2>/dev/null && eval "exec $fd>&-"; done
+    printf "%s\n" "$$" > "$1/pgid"; cd "$2" || exit 1; shift 2; exec "$@"' \
+    lane-dev "$d" "$dir" env PORT="$port" "${run[@]}" < /dev/null > "$d/log" 2>&1 &
+  pid=$!
+  for i in $(seq 20); do [ -s "$d/pgid" ] && break; sleep 0.05; done
+  starttime "$pid" > "$d/start" 2>/dev/null
+  for i in $(seq $(( WAIT * 4 ))); do
+    listening "$port" && break
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "lane-dev: the server exited before it listened on $port; its output:" >&2
+      tail -20 "$d/log" >&2
+      forget "$port"; return 1
+    fi
+    sleep 0.25
+  done
+  if ! listening "$port"; then
+    echo "lane-dev: nothing listened on $port within ${WAIT}s; stopping it. Its output:" >&2
+    tail -20 "$d/log" >&2
+    stop_group "$port"; forget "$port"; return 1
+  fi
+  date +%s > "$d/last"
+  setsid "$SELF" _watch "$port" < /dev/null > /dev/null 2>&1 &
+  printf '%s\n' "$!" > "$d/watcher"
+  echo "lane-dev: $dir on port $port (pgid $(cat "$d/pgid")); stops after ${idle} min unused$([ "$idle" = 0 ] && echo ' -- never'); log $d/log"
+}
+
+cmd_stop() {
+  local port w
+  [ -n "${1:-}" ] || usage
+  port="$(resolve "$1")" || { echo "lane-dev: nothing running for $1"; return 0; }
+  if ! alive "$port"; then
+    [ -d "$STATE/$port" ] && forget "$port"
+    echo "lane-dev: nothing running on port $port"; return 0
+  fi
+  # The watcher first, so it does not log a second stop or race the cleanup.
+  w="$(cat "$STATE/$port/watcher" 2>/dev/null)"
+  if num "$w" && ps -o args= -p "$w" 2>/dev/null | grep -q "lane-dev _watch $port\$"; then
+    kill "$w" 2>/dev/null
+  fi
+  stop_group "$port"
+  echo "lane-dev: stopped $(cat "$STATE/$port/dir") on port $port"
+  forget "$port"
+}
+
+cmd_status() {
+  local quiet="" want="" d port n=0 now last idle
+  for a in "$@"; do case "$a" in --quiet|-q) quiet=1 ;; *) want="$a" ;; esac; done
+  if [ -n "$want" ]; then
+    port="$(resolve "$want")" && alive "$port" || {
+      [ -n "$quiet" ] || echo "lane-dev: nothing running for $want"; return 1; }
+    [ -n "$quiet" ] && return 0
+  fi
+  now="$(date +%s)"
+  for d in "$STATE"/*/; do
+    [ -d "$d" ] || continue
+    port="$(basename "$d")"
+    [ -n "$want" ] && [ "$port" != "$(resolve "$want")" ] && continue
+    alive "$port" || { forget "$port"; continue; }
+    [ "$n" = 0 ] && printf '%-6s %-8s %-8s %-10s %s\n' PORT PGID RAM UNUSED DIR
+    n=$((n + 1))
+    last="$(cat "$d/last" 2>/dev/null)"; num "$last" || last="$now"
+    idle="$(cat "$d/idle" 2>/dev/null)"
+    printf '%-6s %-8s %-8s %-10s %s\n' "$port" "$(cat "$d/pgid")" "$(rss_of_group "$(cat "$d/pgid")")" \
+      "$(( (now - last) / 60 ))/${idle}m" "$(cat "$d/dir")"
+  done
+  [ "$n" -gt 0 ] || { [ -n "$quiet" ] || echo "lane-dev: no servers running"; [ -z "$want" ]; return; }
+  return 0
+}
+
+# NONE OF THE CALLER'S DESCRIPTORS, before anything is started: the server
+# and the watcher both outlive this process, and e2e-slot holds its slot as a
+# flock on fd 8 or 9 -- a child that inherited it would keep the slot locked
+# for as long as it ran. Measured: the watcher did, until this. 255 is the
+# file bash is reading this script from.
+for _fd in /proc/$$/fd/*; do
+  _fd="${_fd##*/}"
+  case "$_fd" in 0|1|2|255|*[!0-9]*) ;; *) eval "exec $_fd>&-" 2>/dev/null ;; esac
+done
+
+mkdir -p "$STATE"
+case "${1:-}" in
+  start)  shift; cmd_start "$@" ;;
+  stop)   shift; cmd_stop "$@" ;;
+  status) shift; cmd_status "$@" ;;
+  _watch) watch "$2" ;;
+  -h|--help|"") usage ;;
+  *) die "unknown command: $1 (start, stop, status)" ;;
+esac

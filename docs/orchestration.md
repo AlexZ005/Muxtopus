@@ -90,6 +90,30 @@ It closes by the window **id** from the tree, never by name, because names repea
 
 Text after a `❯` in an idle Claude Code window is the CLI's dimmed placeholder **hint**, not a message someone typed and nobody sent. Measured on 2026-09-20: twelve such lines each looked like pending input, and one read "close the PR and delete the remote branch" — for a PR that had already been merged. Re-sending it would have been destructive. So a sweep never reads a pane and never types into one: what a window owes is judged from its handover and its repository, both files.
 
+## Dev servers on demand: `lane-dev`
+
+A lane that proves its work in a browser needs a dev server for a minute or two, then not for an hour. In one round on a 29 GB machine, twelve lanes each left a vite server running (about 1 GB apiece with its workers), swap filled, and every window opened after that made it worse. Lanes had been told to "stop it after", and they forgot. The [memory guard](watchdog.md#the-memory-guard) now holds new windows while memory is low, and `lane-dev` keeps the servers from piling up in the first place:
+
+```bash
+lane-dev start <dir> <port>        # npm run dev -- --port <port> --strictPort, in <dir>
+lane-dev start <dir> <port> --idle 5 -- <command…>   # any command; $PORT is set
+lane-dev status                    # PORT  PGID  RAM  UNUSED  DIR
+lane-dev stop <port|dir>
+```
+
+- `start` returns once the port is listening. The server runs in a session of its own, so it outlives the shell (or the tool call) that started it, and `stop` takes npm, vite and every worker down as one process group. It refuses (exit 3) a port that something else is listening on, or that lane-dev runs for another folder. `start` on a folder that is already running is a no-op.
+- **It stops itself.** A watcher stops a server that nothing has used for `--idle` minutes (`LANE_DEV_IDLE`, default 15; `0` never). *Used* means an open connection to the port, or one the last poll (every 10 s) had not seen. An open browser tab holds the HMR websocket and keeps the server alive, so close the browser when the proof is done.
+- Its state is in `~/.local/state/lane-dev/<port>/`. The server's output is the `log` there, kept as `<port>.log` once the server has stopped, with the reason it stopped.
+- Without a `package.json`, give the command after `--`, or in `LANE_DEV_CMD` (run with `bash -c`).
+
+**`e2e-slot --dev <dir> <port> -- <command>`** starts that folder's server once a slot is held, runs the command and stops the server afterwards. A server that was already running is left as it was. Its idle timer still applies. `e2e-slot` is the machine-wide pair of Playwright slots: `--exclusive` holds both (for timing runs), `--wait SECS` bounds the wait (exit 75 when none came free), and the command sees `E2E_SLOT=A`, `B` or `AB`. A slot is a `flock`, and neither lane-dev nor the server it starts inherits it, so a server outliving a run never holds a slot.
+
+`install.sh` links both into `~/.local/bin` beside `muxtopus`, but only where the name is free or already a link into a muxtopus checkout. A file of your own by either name is left alone, and the installer says so.
+
+**For lane rules** (what an orchestrator should paste into a brief):
+
+> Start your dev server only for a proof run: `lane-dev start <worktree> <your port>`, or `e2e-slot --dev <worktree> <your port> -- <e2e command>`, which starts it for the run and stops it after. `lane-dev stop <your port>` the moment the proof is taken; the idle watcher stops a forgotten one after 15 minutes. Never leave a browser open on it.
+
 ## What an orchestrator never does
 
 - **Release.** It never runs `release.sh`, never tags, never publishes, never merges a release PR (a `release/*` branch, or one that bumps `VERSION`) and never edits `VERSION`. Those are the owner's, every time; `preview-gate` exists to stop *before* them.

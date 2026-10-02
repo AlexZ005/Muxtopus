@@ -255,6 +255,30 @@ STRANDED_MIN="${WATCHDOG_STRANDED:-120}"
 # it. `stranded` would eventually have REPORTED it; reporting is not resuming.
 # off turns it back into today's behaviour.
 WOUND_RESUME="${WATCHDOG_WOUND_RESUME:-on}"
+# THE MEMORY GUARD (mem_check). A schedule entry that is due is HELD, not
+# launched, while the machine is short of memory. MEASURED in round 33 on the
+# Deck (29 GB): twelve lanes each left a vite dev server running and swap
+# filled. Every new window then made things worse: one more claude plus
+# whatever it starts. Held entries launch on their own once memory recovers.
+# Whole gigabytes and whole percentages, because bash has no floats; 0 turns
+# that half off (a swap limit of 100 does too).
+MEM_GUARD="${WATCHDOG_MEM_GUARD:-on}"
+MEM_MIN_GB="${WATCHDOG_MEM_MIN_GB:-4}"
+SWAP_MAX_PCT="${WATCHDOG_SWAP_MAX_PCT:-80}"
+# How many of the NEWEST lanes running a dev server are told to stop it when
+# the guard trips. 0 (the default) tells nobody: a directive changes what a
+# working window does, so like the wind-down it is opt-in.
+MEM_STOP_DEV="${WATCHDOG_MEM_STOP_DEV:-0}"
+# What the guard reads. A file, so a test can hand it a machine of any size;
+# nothing but the tests sets it.
+MEMINFO="${MUX_MEMINFO:-/proc/meminfo}"
+# ITS VERDICT, rewritten every time the schedules are judged, for the
+# dashboard's badge:  epoch <TAB> avail_kb <TAB> swap_pct <TAB> ok|low|off|unknown
+#                     <TAB> since <TAB> reason
+MEMORY="$STATE_DIR/memory"
+# Sessions already told to stop a dev server, once per low-memory episode:
+#   sid <TAB> episode-start
+MEM_TOLD="$STATE_DIR/memory-told"
 
 mkdir -p "$STATE_DIR"
 [ -f "$MSGFILE" ] || printf '%s\n' "$DEFAULT_MSG" > "$MSGFILE"
@@ -1253,6 +1277,195 @@ sched_request_probe() {
   else
     "$SCRIPT_DIR/claude-usage.sh" --ensure 1 >/dev/null 2>&1
   fi
+  return 0
+}
+
+# ------------------------------------------------------- the memory guard
+# IS THERE ROOM FOR ONE MORE WINDOW? Sets MEM_HELD (1: hold every due entry),
+# MEM_WHY (the sentence a held entry carries), MEM_STATE and MEM_SINCE, and
+# republishes $MEMORY for the dashboard's badge. One awk over meminfo, run
+# wherever the schedules are judged: once a pass, and again on each nudge.
+#
+# LOW IS EITHER HALF: MemAvailable under WATCHDOG_MEM_MIN_GB, or swap more
+# than WATCHDOG_SWAP_MAX_PCT used. MemAvailable, not MemFree: the kernel's own
+# estimate of what can be handed out without swapping, page cache included.
+# MemFree on this box reads 12 GB with 19 GB available.
+#
+# IT RECOVERS WITH A MARGIN: 0.5 GB above the minimum and 2 points under the
+# swap limit. Otherwise a machine sitting on the line flips every pass. Each
+# flip would launch one more held window, and that window's own claude
+# (~450 MB) is what pushes the machine back under.
+#
+# A MEMINFO THAT CANNOT BE READ HOLDS NOTHING. The guard protects the machine
+# from new windows; it is not a reason to stop scheduling. `unknown` is
+# published, so the dashboard can say the guard is blind instead of drawing
+# nothing at all.
+#
+# `mem_check peek` judges without publishing or logging: --check is read-only.
+MEM_HELD=0; MEM_WHY=""; MEM_STATE=""; MEM_SINCE=""; MEM_REASON=""
+mem_check() {
+  local peek="${1:-}" now pstate="" psince="" d1 d2 d3 out avail stot sused agb spct=0
+  local min max min_kb state since reason="" tripped="" sw_on=0
+  MEM_HELD=0; MEM_WHY=""; MEM_REASON=""
+  now="$(date +%s)"
+  [ -f "$MEMORY" ] && IFS=$'\t' read -r d1 d2 d3 pstate psince _ < "$MEMORY" 2>/dev/null
+  min="$MEM_MIN_GB"; case "$min" in ''|*[!0-9]*) min=4 ;; esac
+  max="$SWAP_MAX_PCT"; case "$max" in ''|*[!0-9]*) max=80 ;; esac
+  min_kb=$(( min * 1048576 ))
+  if [ "$MEM_GUARD" != on ]; then
+    state=off; avail=0; reason="WATCHDOG_MEM_GUARD=$MEM_GUARD"
+  elif ! out="$(awk '/^MemAvailable:/{a=$2} /^SwapTotal:/{t=$2} /^SwapFree:/{f=$2}
+                     END{if (a == "") exit 1; printf "%d %d %d %.1f\n", a, t, t-f, a/1048576}' \
+                    "$MEMINFO" 2>/dev/null)"; then
+    state=unknown; avail=0; reason="no MemAvailable could be read from $MEMINFO"
+  else
+    read -r avail stot sused agb <<<"$out"
+    [ "${stot:-0}" -gt 0 ] && spct=$(( (sused * 100 + stot / 2) / stot ))
+    [ "$max" -gt 0 ] && [ "$max" -lt 100 ] && [ "${stot:-0}" -gt 0 ] && sw_on=1
+    if [ "$min" -gt 0 ] && [ "$avail" -lt "$min_kb" ]; then
+      tripped="$agb GB available, under WATCHDOG_MEM_MIN_GB=$min"
+    fi
+    if [ "$sw_on" = 1 ] && [ "$spct" -gt "$max" ]; then
+      tripped="${tripped:+$tripped; }swap ${spct}% used, over WATCHDOG_SWAP_MAX_PCT=$max"
+    fi
+    if [ -n "$tripped" ]; then
+      state=low; reason="$tripped"
+    elif [ "$pstate" = low ] \
+         && { { [ "$min" -gt 0 ] && [ "$avail" -lt $(( min_kb + 524288 )) ]; } \
+              || { [ "$sw_on" = 1 ] && [ "$spct" -gt $(( max - 2 )) ]; }; }; then
+      # Back over the line but not past the margin: still low, and it says
+      # what it is waiting for rather than repeating a threshold it now meets.
+      state=low
+      reason="recovering: $agb GB available, swap ${spct}% -- waiting for"
+      [ "$min" -gt 0 ] && reason+=" ${min}.5 GB"
+      [ "$min" -gt 0 ] && [ "$sw_on" = 1 ] && reason+=" and"
+      [ "$sw_on" = 1 ] && reason+=" swap at most $(( max - 2 ))%"
+    else
+      state=ok; reason="$agb GB available, swap ${spct}%"
+    fi
+  fi
+  since="$now"
+  [ "$state" = "$pstate" ] && [ -n "$psince" ] && since="$psince"
+  if [ -z "$peek" ] && [ "$state" != "$pstate" ]; then
+    case "$state" in
+      low) log "memory low: holding new launches -- $reason" ;;
+      ok)  [ "$pstate" = low ] && log "memory recovered: $reason -- held launches go ahead"
+           rm -f "$MEM_TOLD" ;;
+      unknown) log "memory guard blind: $reason -- nothing is held" ;;
+    esac
+  fi
+  [ -z "$peek" ] && printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$now" "$avail" "$spct" "$state" "$since" "$reason" \
+    > "$MEMORY.tmp" 2>/dev/null && mv "$MEMORY.tmp" "$MEMORY" 2>/dev/null
+  MEM_STATE="$state"; MEM_SINCE="$since"; MEM_REASON="$reason"
+  if [ "$state" = low ]; then
+    MEM_HELD=1
+    MEM_WHY="held: memory -- $reason; launches by itself once memory recovers (WATCHDOG_MEM_GUARD=off to stop holding)"
+  fi
+  return 0
+}
+
+# THE DEV SERVERS ON THIS MACHINE, one line per process group and folder:
+#   pgid <TAB> cwd
+# The same four hints the dashboard's lanes table uses (dashboard/core.py
+# SERVER_HINTS). `npm run dev` and the vite it spawns are two processes in one
+# group with one cwd, so they are listed once. Each cmdline is read with a
+# builtin, so a /proc of four hundred processes costs no forks; only a match
+# costs one, for its cwd.
+mem_dev_servers() {
+  local d pid cmd st pg cwd
+  local -a args
+  local -A seen=()
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    mapfile -d '' -t args < "$d/cmdline" 2>/dev/null || continue
+    cmd="${args[*]}"
+    case "$cmd" in
+      *node_modules/.bin/vite*|*"vite dev"*|*"npm run dev"*|*"npm exec vite"*) ;;
+      *) continue ;;
+    esac
+    read -r st < "$d/stat" 2>/dev/null || continue
+    st="${st##*) }"; read -r _ _ pg _ <<<"$st"
+    cwd="$(readlink "$d/cwd" 2>/dev/null)" || continue
+    # BY GROUP AND FOLDER, not group alone: a server backgrounded from a
+    # non-interactive shell stays in that shell's group, so two servers one
+    # session started in two worktrees share a pgid and are still two.
+    [ -n "$pg" ] && [ -z "${seen[$pg/$cwd]-}" ] || continue
+    seen[$pg/$cwd]=1
+    printf '%s\t%s\n' "$pg" "$cwd"
+  done
+}
+
+# TELL THE NEWEST LANES TO STOP THEIR DEV SERVERS (WATCHDOG_MEM_STOP_DEV=N).
+#
+# WHOSE SERVER IS IT: a server belongs to the session whose cwd is the
+# longest prefix of the server's cwd. A lane works in its own worktree and
+# starts vite there; a planning window sitting in the parent folder matches
+# every server under it and must never take one from the lane that owns it.
+# NEWEST is the claude process's start time (/proc/<pid>/stat field 22), read
+# with a builtin.
+#
+# Each session is told ONCE per low-memory episode, through the same directive
+# file the wind-down uses: the PostToolUse hook hands it over at the session's
+# next tool call, without typing into a pane that is busy composing. A
+# session opted out of monitoring is never told. While memory stays low the
+# N newest lanes that still OWN a server are asked again each pass, so a lane
+# that complied makes room for the next-newest; one that already heard is
+# not told twice.
+mem_stop_dev() {
+  local n="$MEM_STOP_DEV" servers sessions sid name cwd pid mo st start told dirs
+  local -a _f
+  case "$n" in ''|*[!0-9]*|0) return 0 ;; esac
+  [ "$DRY" = 1 ] && return 0
+  [ -s "$STATUS" ] || return 0
+  servers="$(mem_dev_servers)"
+  [ -n "$servers" ] || return 0
+  sessions=""
+  # By awk, not by read's own splitting: a tab is whitespace to IFS, so an
+  # empty column (JOB, on every window that is not a background job) would
+  # collapse into its neighbour and shift every field after it.
+  while IFS=$'\t' read -r sid name cwd mo pid; do
+    [ -n "$sid" ] && [ -n "$cwd" ] && [ "$cwd" != - ] || continue
+    start=0
+    if read -r st < "/proc/$pid/stat" 2>/dev/null; then
+      st="${st##*) }"; read -r -a _f <<<"$st"; start="${_f[19]:-0}"
+    fi
+    # An opted-out session still OWNS its server -- it is only never told.
+    # Dropped here instead, its server would fall to whichever window sits
+    # in the parent folder, which is exactly who must never get it.
+    sessions+="C"$'\t'"$sid"$'\t'"$name"$'\t'"$cwd"$'\t'"$start"$'\t'"$mo"$'\n'
+  done < <(awk -F'\t' '{print $1 "\t" $2 "\t" $16 "\t" $18 "\t" $19}' "$STATUS")
+  [ -n "$sessions" ] || return 0
+  told="$(awk -F'\t' -v s="$MEM_SINCE" '$2==s{print $1}' "$MEM_TOLD" 2>/dev/null)"
+  while IFS=$'\t' read -r sid name dirs; do
+    [ -n "$sid" ] || continue
+    grep -qxF "$sid" <<<"$told" && continue
+    mkdir -p "$DIRECTIVES"
+    printf '%s\n' "Memory is low on this machine ($MEM_REASON), so new windows are held until it recovers. Stop the dev server you left running in $dirs now -- \`lane-dev stop <port>\` if lane-dev started it, otherwise kill that process group -- and start one again only for a proof run, stopping it right after." \
+      >> "$DIRECTIVES/$sid"
+    printf '%s\t%s\n' "$sid" "$MEM_SINCE" >> "$MEM_TOLD"
+    log "memory low: told $name (${sid:0:8}) to stop its dev server in $dirs"
+  done < <({ printf '%s\n' "$servers" | sed 's/^/S\t/'; printf '%s' "$sessions"; } | awk -F'\t' -v n="$n" '
+    $1=="C" { sid[++c]=$2; nm[c]=$3; cw[c]=$4; st[c]=$5+0; mo[c]=$6; next }
+    $1=="S" { sv[++s]=$3; next }
+    END {
+      for (i = 1; i <= s; i++) {
+        best = 0
+        for (j = 1; j <= c; j++) {
+          if (sv[i] != cw[j] && index(sv[i], cw[j] "/") != 1) continue
+          if (!best || length(cw[j]) > length(cw[best]) \
+              || (length(cw[j]) == length(cw[best]) && st[j] > st[best])) best = j
+        }
+        if (best) own[best] = (own[best] ? own[best] ", " : "") sv[i]
+      }
+      # newest first: a selection sort over at most a few dozen sessions
+      for (k = 0; k < n; k++) {
+        pick = 0
+        for (j = 1; j <= c; j++) if ((j in own) && mo[j] != 1 && !(j in done) && (!pick || st[j] > st[pick])) pick = j
+        if (!pick) break
+        done[pick] = 1
+        print sid[pick] "\t" nm[pick] "\t" own[pick]
+      }
+    }')
   return 0
 }
 
@@ -2530,7 +2743,11 @@ sched_check_one() {
 
   sched_due "$at" "$now"; rc=$?
   case "$rc" in
-    0) kv verdict "DUE NOW -- $SCHED_WHY_TXT" ;;
+    0) if [ "$st" = pending ] && mem_check peek && [ "$MEM_HELD" = 1 ]; then
+         kv verdict "HELD -- due ($SCHED_WHY_TXT), but $MEM_WHY"
+       else
+         kv verdict "DUE NOW -- $SCHED_WHY_TXT"
+       fi ;;
     1) kv verdict "not yet -- $SCHED_WHY_TXT" ;;
     2) kv verdict "$SCHED_WHY_TXT"; [ "$rcout" = 0 ] && rcout=2 ;;
   esac
@@ -2612,6 +2829,10 @@ sched_check() {
 check_schedules() {
   [ -f "$ENABLED" ] || return 0
   [ "$DRY" = 1 ] && return 0
+  # Before the folder test: the badge is about the machine, and it is drawn
+  # whether or not anything is scheduled.
+  mem_check
+  [ "$MEM_HELD" = 1 ] && mem_stop_dev
   [ -d "$SCHEDULES" ] || return 0
   # sched-why.tsv is fresh this pass: the notifications may judge it.
   SCHED_RAN=1
@@ -2658,6 +2879,12 @@ check_schedules() {
          continue ;;
       1) sched_note "$f" waiting "$SCHED_WHY_TXT"; continue ;;
     esac
+    # HELD IS ASKED LAST, of an entry that would otherwise launch now. An
+    # entry still waiting for its time or its dependency says that instead,
+    # which is the more useful sentence; this one only replaces "due".
+    if [ "$MEM_HELD" = 1 ]; then
+      sched_note "$f" held "$MEM_WHY"; continue
+    fi
     sched_note "$f" due "$SCHED_WHY_TXT${dep_ok:+; $dep_ok}"
     launch_schedule "$f" "$SCHED_WHY_TXT${dep_ok:+; $dep_ok}"
   done
@@ -2839,7 +3066,7 @@ check_update() {
 heartbeat() {
   local sessions="${1:-0}" now pending=0 last=0
   now="$(date +%s)"
-  pending="$(awk -F'\t' '$2=="waiting"||$2=="blocked"||$2=="stalled"{n++} END{print n+0}' \
+  pending="$(awk -F'\t' '$2=="waiting"||$2=="blocked"||$2=="stalled"||$2=="held"{n++} END{print n+0}' \
              "$SCHED_WHY" 2>/dev/null)"
   printf '%s\t%s\t%s\t%s\n' "$now" "${sessions:-0}" "${pending:-0}" "$INTERVAL" > "$HEARTBEAT"
   [ "${HEARTBEAT_LOG_MIN:-0}" -gt 0 ] 2>/dev/null || return 0
@@ -3814,8 +4041,17 @@ pass() {
   tree_adopt
   tree_reparent
   snapshot_windows "$now"
+  # Nothing judged, nothing held: a disarmed daemon (check_schedules returns
+  # at its first line) must not alert on a reading from before it was.
+  MEM_STATE=""; MEM_HELD=0
   check_schedules
   NOTIFY_FAM[waiting]=1; NOTIFY_FAM[stranded]=1
+  # The guard's own alert: once when it trips, "cleared" once it recovers.
+  NOTIFY_FAM[memory]=1
+  if [ "$NOTIFY_READY" = 1 ] && [ "$MEM_STATE" = low ]; then
+    notify_alert "memory:low" memory "${MUXTOPUS_NOTIFY_TROUBLE:-on}" \
+      "memory low: new windows held" "$MEM_REASON"
+  fi
   if [ "$NOTIFY_READY" = 1 ]; then
     notify_schedules
     notify_done

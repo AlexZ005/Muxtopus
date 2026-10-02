@@ -771,7 +771,7 @@ class ScheduleView(View):
                      "danger": True}]
         items: list[dict] = []
         verdict, reason, _at = r.get("why", ("", "", 0))
-        if verdict in ("blocked", "waiting", "stalled") and reason:
+        if verdict in ("blocked", "waiting", "stalled", "held") and reason:
             items.append({"label": reason, "disabled": verdict})
         pending = r["status"] == "pending"
         only = "" if pending else "only a pending entry; this one is %s" % (r["status"] or "?")
@@ -960,6 +960,11 @@ class ScheduleView(View):
                 # judge used to be indistinguishable from one that is simply
                 # early, and it never resolved on its own.
                 stx = Text("stalled", style=RED)
+            elif verdict == "held":
+                # DUE, AND NOT LAUNCHED ON PURPOSE: the watchdog's memory
+                # guard is holding it. Red like the deck panel's badge, so the
+                # two read as one fact; it launches by itself on recovery.
+                stx = Text("held", style=RED)
             elif verdict == "blocked":
                 stx = Text("blocked", style=YELLOW)
             elif verdict == "due":
@@ -1009,7 +1014,7 @@ class ScheduleView(View):
                 line = Text.assemble(("will never launch: ", RED), (sel["bad"], RED))
             elif reason:
                 stale = " (%s ago)" % human_age(time.time() - at) if at else ""
-                line = Text.assemble((reason, RED if verdict == "stalled" else ""),
+                line = Text.assemble((reason, RED if verdict in ("stalled", "held") else ""),
                                      (stale, DIM))
             elif sel["status"] == "launched":
                 # WHAT THE WINDOW THEN DID. The scheduler records the pane and
