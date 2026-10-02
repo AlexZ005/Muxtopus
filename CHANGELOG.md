@@ -4,6 +4,26 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.5.0 — 2026-10-02
+
+This release stops muxtopus from opening windows into a machine that has no memory left. On a 29 GB machine, twelve lanes each left a dev server running and swap filled. The scheduler kept launching anyway, and each new window made things worse. While memory is low, a due entry now waits and says why. It launches by itself once memory recovers. The release also adds `lane-dev`, a dev server that stops itself when nothing uses it, and `e2e-slot --dev`, which keeps one up for a single e2e run.
+
+A minor release: there are new settings (`WATCHDOG_MEM_GUARD`, `WATCHDOG_MEM_MIN_GB`, `WATCHDOG_SWAP_MAX_PCT`, `WATCHDOG_MEM_STOP_DEV`), a new schedule verdict (`held`), a new state file (`memory`) and two new commands. Nothing a user's own files name is renamed or moved.
+
+### Watchdog
+
+#### New windows wait while memory is low
+
+- While the machine is short of memory, a schedule entry that is due is **held** instead of launched. Short means less than 4 GB available, or more than 80 % of swap used. The schedules tab shows the entry as `held`, in red, with the reading and the setting behind it. The deck panel carries a red `MEMORY LOW · new windows held` badge, and the phone is told once. Held entries launch by themselves once memory recovers, at 0.5 GB above the line and 2 points under it, so a machine on the edge does not let one more window through every pass. `c` on the dashboard is held too.
+- New settings: `WATCHDOG_MEM_GUARD` (`on`), `WATCHDOG_MEM_MIN_GB` (`4`), `WATCHDOG_SWAP_MAX_PCT` (`80`; `100` turns the swap half off). `WATCHDOG_MEM_STOP_DEV` (`0`) can also ask the N newest lanes still running a dev server to stop it, once per episode, through the same hook as the wind-down.
+
+### Lanes
+
+#### `lane-dev`, a dev server that stops itself
+
+- `lane-dev start <dir> <port>` starts a folder's dev server in a session of its own and returns once it listens. `lane-dev status` lists the servers with their memory use. `lane-dev stop <port|dir>` takes the whole process group down. A server nothing has used for 15 minutes (`--idle`, `LANE_DEV_IDLE`) is stopped by its watcher.
+- `e2e-slot` is now part of muxtopus. Its new `--dev <dir> <port>` starts the server for one e2e run and stops it afterwards. `install.sh` links both into `~/.local/bin`, but never over a file of your own.
+
 ## v5.4.1 — 2026-10-01
 
 The release that puts you in a new window when you press `c`, instead of on
