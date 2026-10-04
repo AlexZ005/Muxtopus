@@ -4,6 +4,24 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.5.1 — 2026-10-04
+
+This release makes a restore quiet. Restoring windows after a lost tmux server, including after a reboot, used to paste a `carry on` line into every resumed Claude session. Each session took that line as an instruction and started working, mostly on windows that had been idle or stalled. One nine-window restore after a reboot spent 9% of the account's session limit. A restored window now comes back at its prompt and waits for you.
+
+A patch release: no command, setting or file changes; a restore just stops typing.
+
+### Restore
+
+#### A restored window comes back idle
+
+- `muxtopus --restore` (and `WATCHDOG_RESTORE=auto`) no longer pastes
+  `[muxtopus] restored …; carry on` into every resumed window. Each session
+  comes back at its prompt, where it stopped, and does nothing until you type.
+- Why: that line is a prompt. After a reboot every restored session took it as
+  an instruction and started working, including windows that had been idle or
+  stalled for days. One nine-window restore spent 9% of the account's session
+  limit that way.
+
 ## v5.5.0 — 2026-10-02
 
 This release stops muxtopus from opening windows into a machine that has no memory left. On a 29 GB machine, twelve lanes each left a dev server running and swap filled. The scheduler kept launching anyway, and each new window made things worse. While memory is low, a due entry now waits and says why. It launches by itself once memory recovers. The release also adds `lane-dev`, a dev server that stops itself when nothing uses it, and `e2e-slot --dev`, which keeps one up for a single e2e run.
