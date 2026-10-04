@@ -44,7 +44,7 @@ For each row, in saved order:
 
 1. A window at the saved index when that index is free, else appended — so the order holds either way and a subtree stays contiguous. The saved name; the saved cwd, or `$HOME` with a log line when the folder is gone.
 2. `claude --resume <session-id>` with the saved model, effort and permission mode when the session's transcript still exists; otherwise a plain shell in the right folder, and the log says which session had no transcript.
-3. The launcher's own recipe — answer the trust dialog, wait for `❯`, one bracketed paste — hands each resumed session one line: `[muxtopus] restored after the tmux server was lost at <ts>; carry on`.
+3. The launcher's own wait — answer the trust dialog, wait for `❯` — and then **nothing is typed**. Each session comes back idle at its prompt, where it stopped, and costs nothing until you type into it. (An earlier version pasted a `restored …; carry on` line into every window; each one took it as an instruction and went to work, and on one reboot that spent 9% of the account's session limit re-reading idle transcripts.)
 4. Every lane is recorded in `tree.tsv` with its saved parent — the snapshot's own column, not its name — so the dashboard's tree is what it was.
 
 The `status` window is skipped (`muxtopus` makes the dashboard itself), and so is any row whose session is already live in this account, so running a restore twice cannot resume a session twice. On success the frozen file becomes `windows.restored.tsv`; the log holds one line per window and a summary.

@@ -114,9 +114,12 @@ check "..and the banner it shows says so, and that it was restored" \
 check "plain resumed with no flags" grep -qx -- "--resume $sid_p" <<<"$argv"
 check "lane-b (no transcript) was not resumed" bash -c '! grep -q -- "$1" <<<"$2"' _ "$sid_b" "$argv"
 check "..the log says which" grep -q "restore: lane-b: no transcript for session $sid_b; a plain window" "$ST/log"
-notes() { tr -d '\n\\' < "$HOME/fake-claude.keys" 2>/dev/null | grep -o 'restored after the tmux server was lost at' | wc -l; }
-for i in $(seq 60); do [ "$(notes)" = 2 ] && break; sleep 0.25; done   # the fake drains a paste slowly
-check "each resumed window got the note" test "$(notes)" = 2
+# NOTHING IS TYPED into a restored window: a pasted line is a user turn,
+# and on a real reboot every resumed session took the old "carry on" as an
+# instruction and went to work (claude-watchdog.sh, restore_windows). The
+# fake drains a paste slowly, so give one the time it would have taken.
+sleep 2
+check "nothing was pasted into a resumed window" test ! -s "$HOME/fake-claude.keys"
 check "the tree has lane-b under lane-a again" test "$(awk -F'\t' '$1=="lane-b"{print $2}' "$ST/tree.tsv")" = lane-a
 check "..marked (restored)" test "$(awk -F'\t' '$1=="lane-a"{print $6}' "$ST/tree.tsv")" = "(restored)"
 check "the frozen file became windows.restored.tsv" test ! -f "$LAST" -a -f "$ST/windows.restored.tsv"

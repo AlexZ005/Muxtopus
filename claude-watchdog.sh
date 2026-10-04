@@ -2432,9 +2432,22 @@ launch_schedule() {
 # resume a session twice.
 #
 # THE WINDOWS ARE OPENED FIRST AND WAITED FOR SECOND, so K claudes start
-# side by side and the wait is the slowest one rather than the sum. Each
-# ready pane is handed one line by the launcher's own recipe (pane_ready,
-# pane_paste), so what a restored window sees is what a scheduled one does.
+# side by side and the wait is the slowest one rather than the sum. The wait
+# is the launcher's own (pane_ready: it answers the trust dialog and sees
+# `❯`), and then NOTHING IS TYPED. A restored session comes back idle, at its
+# prompt, exactly where it stopped.
+#
+# It used to be handed one line, "[muxtopus] restored ...; carry on" -- and
+# that line is a user turn. Measured on the first reboot restore here
+# (2026-10-04, nine windows): every one of the nine took it as an instruction
+# and went to work at once, between 0 and 12 tool calls each, re-checking
+# repos and PRs nobody had asked about -- most of them windows that had been
+# idle or stalled for days. That reboot cost 9% of the account's session
+# limit for nothing: each turn re-read a long transcript on a cold cache,
+# while a resumed window that nobody types into costs nothing at all. A lane
+# that was mid-task when the server died is not necessarily one that should
+# resume unattended after a reboot, and which is which is the user's call,
+# not this function's.
 restore_live_sids() {
   local f pid
   for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
@@ -2449,7 +2462,7 @@ restore_windows() {
   local f="$1" tag a b seen lost ts live idxs
   local wid idx name cwd pane sid parent model effort pmode src pid
   local -a R_NAME=() R_PANE=() R_WID=() R_SID=() R_PARENT=() R_KIND=()
-  local n=0 i k=0 plain=0 skipped=0 cmd newpane newwid newidx notef slug rc=0 idargs
+  local n=0 i k=0 plain=0 skipped=0 cmd newpane newwid newidx slug rc=0 idargs
   [ -f "$f" ] || { echo "restore: no snapshot at $f" >&2; return 1; }
   if ! mux_tmux has-session -t "=$MUX_TMUX" 2>/dev/null; then
     echo "restore: no tmux session '$MUX_TMUX' -- run muxtopus first (muxtopus --restore does both)" >&2
@@ -2552,13 +2565,10 @@ restore_windows() {
     tree_record "$slug" "${R_PARENT[$i]}" "${R_WID[$i]}" "${R_PANE[$i]}" "(restored)"
   done
 
-  # 3. Wait for each claude, hand it the note.
-  notef="$STATE_DIR/restore-note.$$"
-  printf '[muxtopus] restored after the tmux server was lost at %s; carry on\n' "$ts" > "$notef"
+  # 3. Wait for each claude to reach its prompt. Nothing is pasted (above).
   for i in "${!R_NAME[@]}"; do
     [ "${R_KIND[$i]}" = claude ] || continue
     if pane_ready "${R_PANE[$i]}"; then
-      pane_paste "${R_PANE[$i]}" "$notef"
       k=$(( k + 1 ))
       log "restore: ${R_NAME[$i]}: resumed ${R_SID[$i]:0:8} in win ${R_WID[$i]} pane ${R_PANE[$i]}${PANE_TRUSTED:+ (trusted the folder)}"
     else
@@ -2566,7 +2576,6 @@ restore_windows() {
       rc=1
     fi
   done
-  rm -f "$notef"
   log "restore: done -- $k resumed, $plain plain, $skipped skipped, of $n row(s) from $(basename "$f")"
   echo "restored $k window(s) with their sessions, $plain plain, $skipped already live (of $n, last seen $ts)"
   [ "$f" = "$SNAPSHOT_LAST" ] && mv "$f" "$STATE_DIR/windows.restored.tsv"
