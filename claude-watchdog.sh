@@ -2039,24 +2039,24 @@ budget_publish() {
 # and the lines like any launch. What does not fit stays due and is asked
 # again next pass; nothing is dropped.
 #
-#   rank <TAB> kind <TAB> sid <TAB> pane <TAB> key <TAB> name <TAB> ctx <TAB> cwd <TAB> prio
+#   rank <TAB> kind <TAB> sid <TAB> pane <TAB> key <TAB> name <TAB> ctx <TAB> cwd <TAB> prio <TAB> reset
 #
 # kind is `due` (it stopped at a limit) or `wound` (a hard wind-down stopped
 # it); key is the PROMPTED ledger's epoch for it, exactly what the immediate
 # path would have written.
 BUDGET_Q=()
 BG_Q_HELD=0; BG_Q_WHY=""
-budget_queue() {   # budget_queue KIND SID PANE KEY NAME CTX CWD
+budget_queue() {   # budget_queue KIND SID PANE KEY NAME CTX CWD RESET
   local prio; prio="$(budget_prio_of_slug "$(lane_slug_of "$5")")"
-  BUDGET_Q+=("$(budget_prio_rank "$prio")"$'\t'"$1"$'\t'"$2"$'\t'"$3"$'\t'"$4"$'\t'"$5"$'\t'"${6:-0}"$'\t'"${7:--}"$'\t'"$prio")
+  BUDGET_Q+=("$(budget_prio_rank "$prio")"$'\t'"$1"$'\t'"$2"$'\t'"$3"$'\t'"$4"$'\t'"$5"$'\t'"${6:-0}"$'\t'"${7:--}"$'\t'"$prio"$'\t'"${8:--}")
 }
 
 budget_resume_wave() {
-  local msg="$1" rank kind sid pane key name ctx cwd prio fired="" how lane
+  local msg="$1" rank kind sid pane key name ctx cwd prio reset fired="" how lane
   BG_Q_HELD=0; BG_Q_WHY=""
   [ ${#BUDGET_Q[@]} -gt 0 ] || return 0
   budget_check
-  while IFS=$'\t' read -r -u 9 rank kind sid pane key name ctx cwd prio; do
+  while IFS=$'\t' read -r -u 9 rank kind sid pane key name ctx cwd prio reset; do
     [ -n "$sid" ] || continue
     if ! budget_gate "$prio" 1; then
       BG_Q_HELD=$(( BG_Q_HELD + 1 )); [ -n "$BG_Q_WHY" ] || BG_Q_WHY="$BG_HOLD_WHY"
@@ -2074,7 +2074,9 @@ budget_resume_wave() {
       mux_tmux send-keys -t "$pane" "$msg" 2>/dev/null
       sleep 1
       mux_tmux send-keys -t "$pane" Enter 2>/dev/null
-      how=prompted
+      # The immediate path's own words for the ACTION column, so a reader of
+      # status.tsv cannot tell a wave from the old path except by the log.
+      how=prompted; [ "$kind" = wound ] && how=wound-resume
     fi
     printf '%s\t%s\t%s\n' "$sid" "$key" "$(date +%s)" >> "$PROMPTED"
     # A FRESH RESUME IS RESERVED, NOT RECORDED: its entry is launched by
@@ -2089,17 +2091,19 @@ budget_resume_wave() {
     fired+="$sid"$'\t'"$how"$'\n'
     if [ "$how" = fresh ]; then
       log "budget: $name (pane $pane, ${ctx} tokens) will resume FRESH from its handover -- $SCHEDULES/$BUDGET_FRESH_FILE ($prio, wave)"
+    elif [ "$kind" = wound ]; then
+      log "resumed ${sid:0:8} in $name (pane $pane): wound down hard for the budget window that reset at $(date -d "@$key" '+%H:%M' 2>/dev/null || printf '%s' "$key"), idle since, handover still open -- in a wave ($prio)"
     else
-      log "prompted ${sid:0:8} in $name (pane $pane) -- $kind, resumed in a wave ($prio)"
+      log "prompted ${sid:0:8} in $name (pane $pane) after reset $reset -- in a wave ($prio)"
     fi
   done 9< <(printf '%s\n' "${BUDGET_Q[@]}" | sort -t$'\t' -s -k1,1n)
   BUDGET_Q=()
   # THE STATUS ROW SAYS WHAT HAPPENED, not "queued", for the windows that went:
   # it was written before the wave was served, and the dashboard reads it.
   if [ -n "$fired" ] && [ -f "$STATUS" ]; then
-    awk -F'\t' -v OFS='\t' -v f="$fired" '
+    awk -F'\t' -v OFS='\t' -v f="$fired" -v now="$(date +%s)" '
       BEGIN { n = split(f, l, "\n"); for (i = 1; i <= n; i++) { split(l[i], p, "\t"); if (p[1] != "") h[p[1]] = p[2] } }
-      ($1 in h) && $8 == "queued" { $8 = (h[$1] == "fresh" ? "fresh-resume" : "prompted"); if (h[$1] != "fresh") $6 = "working" }
+      ($1 in h) && $8 == "queued" { $8 = (h[$1] == "fresh" ? "fresh-resume" : h[$1]); $9 = now; if (h[$1] != "fresh") $6 = "working" }
       { print }' "$STATUS" > "$STATUS.w" && mv "$STATUS.w" "$STATUS"
   fi
   return 0
@@ -4663,7 +4667,7 @@ pass() {
       elif [ "$BUDGET" = on ]; then
         # Served after the scan, in priority order and in waves
         # (budget_resume_wave) -- not typed into here, all at once.
-        budget_queue due "$sid" "$paneid" "$epoch" "$name" "$ctx" "$cwd"
+        budget_queue due "$sid" "$paneid" "$epoch" "$name" "$ctx" "$cwd" "$reset"
         acted="queued"
       else
         mux_tmux send-keys -t "$paneid" "$msg" 2>/dev/null
