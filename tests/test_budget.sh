@@ -167,6 +167,9 @@ check "..release still launches" launched wrelb
 pass
 check "--budget-reset-spent adds one by hand" [ "$(bval manual_resets)" = 2 ]
 reset_sandbox
+usage 5 1 100 1; entry spent release; pass
+check "a week at 100% holds even a release entry" grep -q "the week is at its limit (100%)" <<<"$(why spent)"
+reset_sandbox
 logline 300 10 95 10:00 "Oct 03"; logline 240 12 3 10:00 "Oct 10"; pass
 check "a drop where the reset DATE moved is a natural reset: not counted" [ "$(bval manual_resets)" = 0 ]
 reset_sandbox

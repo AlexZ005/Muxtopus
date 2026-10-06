@@ -74,6 +74,8 @@ jobs:
         run: python3 tests/test_stats.py
       - name: the handover reader, the states and the fork parser
         run: python3 tests/test_handovers.py
+      - name: the budget guard's dashboard half -- b, Settings ▸ Budget, the footer note
+        run: python3 tests/test_budget_view.py
       - name: handover.sh -- the marker, and what done carries with it
         run: bash tests/test_handover_sh.sh
       - name: every tmux call names its socket; no bare kill-server anywhere

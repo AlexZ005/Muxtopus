@@ -99,6 +99,17 @@ default: off
 ask: number
 line: Run at most {{VALUE}} lane windows in parallel; a lane that must wait for another gets `after: <that slug>` in its entry instead of a window that sits idle.
 
+# THE BUDGET GUARD'S CLASS (docs/budget.md): a header field, so the watchdog
+# can read it without parsing prose. release starts first, is held last and
+# is never paced by the week; p2 is held and wound down first. Unset is p1.
+key: priority
+group: windows
+label: priority class
+hint: header field for the budget guard: release first, p2 held first (unset = p1)
+default: off
+set: priority
+choices: p1, release, ops, p2
+
 key: orchestrate
 group: windows
 label: orchestrate, don't babysit

@@ -14,7 +14,6 @@
 
 
 
-
                                          ╭─ settings · <SB>/co…opus/profiles/mxsplit.dashboard.conf ─╮
                                          │    menu layout, defaults for a new window, where a mode is made permanent  │
                                          │  ▸ Menu layout: modal                                                      │
@@ -28,6 +27,7 @@
                                          │    Send /rc to a new window: off                                           │
                                          │    Handovers: show finished rows: off                                      │
                                          │    Handovers: show question rows: ON                                       │
+                                         │    Budget ▸                                                                │
                                          │    Notifications ▸                                                         │
                                          │    Tabs ▸                                                                  │
                                          │    Updates ▸                                                               │

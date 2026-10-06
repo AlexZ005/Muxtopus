@@ -1926,6 +1926,15 @@ budget_gate() {
       return 1
     fi
   fi
+  # A SPENT WEEK holds every class, release too: the pace below allows
+  # more than 100% late in the week (14 a day plus a day in hand is 112 by
+  # Friday), and a window started into a week at its limit stops on its
+  # first turn. It lifts when a reading shows room (the week's reset, or a
+  # manual one).
+  if [ -n "$BG_WEEK" ] && [ "$BG_WEEK" -ge 100 ]; then
+    BG_HOLD_WHY="held: budget -- the week is at its limit (${BG_WEEK}%); starts when a reading shows room$([ -n "$BG_WEEK_RESET_AT" ] && printf ' -- it resets %s' "$(date -d "@$BG_WEEK_RESET_AT" '+%a %H:%M' 2>/dev/null)")"
+    return 1
+  fi
   # THE WEEK'S PACE. Never a release lane: the week line is about not ending
   # the week early, and a release that waits for Friday is the thing the
   # budget was being saved for. p2 and ops wait as soon as the week is ahead
