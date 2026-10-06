@@ -315,6 +315,7 @@ Format:
     watchdog: off                  (optional: opt this session out of the watchdog's restarts)
     monitor: off                   (optional: opt this session out of wind-downs)
     rc: on                         (optional: send /rc once the window is ready; default from Settings)
+    priority: release              (optional: release | p1 | ops | p2 for the budget guard; default p1)
     options: questions, phases     (written by the dashboard's options table; see below)
     kind: sweep                    (written by the dashboard's c ▸ orchestrate; see below)
     status: pending                (the executor rewrites this)
@@ -325,6 +326,13 @@ Format:
 
 The launched window is named with a leading arrow and appears right after
 `window:` when that window exists.
+
+The budget guard (docs/budget.md) may HOLD a due entry -- past the cap of
+working windows, past the session line for its `priority:`, when it could not
+reach a checkpoint, or when the week is ahead of its pace -- and starts
+`at: reset` entries in waves. It writes `<slug>-resume.md` itself for a
+stopped window with a big context: `resume: fresh` and `replaces: <pane>
+<session>` mark those, and the old window is closed once the new one is up.
 
 A template is pasted first, then the body, then (for work) the handover
 footer -- for either type. resume-status is still a PLAN template in practice:

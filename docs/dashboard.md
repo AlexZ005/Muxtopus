@@ -11,13 +11,14 @@ nav_order: 4
 
 ## Screens
 
-The dashboard is one main view and three others, each a key away:
+The dashboard is one main view and four others, each a key away:
 
 | key | screen | page |
 |---|---|---|
 | — | **main**: deck, lanes, claude (the window tree), uncommitted, system | this page |
 | `s` | **scheduled windows**, with the **handovers** tab beside it on `←` `→` | [Scheduled windows](schedules.md), [Handovers](handovers.md) |
 | `i` | **insights**: what was used and what it would have cost | [Insights](stats.md) |
+| `b` | **budget**: the session estimate and when it runs out, the week against its pace, every window the budget guard runs, queues, pauses or holds | [The budget guard](budget.md) |
 | `?` | help, assembled from the loaded modules, with a link to this manual | |
 
 The screens that share a tab strip name each tab **with its count** — `▸schedules 6 │ handovers 4 open · 3 ?` — so from the schedules you can still see how many handovers are open and how many question files are waiting on you.
@@ -47,6 +48,7 @@ The screens that share a tab strip name each tab **with its count** — `▸sche
 | `f` | lanes: this account only / every account |
 | `s` | scheduled windows — and, on `←`/`→`, the handovers beside them |
 | `i` | insights: what was used, and what it would have cost |
+| `b` | budget: what the budget guard is holding, queueing and pausing, and why |
 | `w` | arm / disarm the watchdog |
 | `m` | session monitoring (wind-downs) on / off |
 | `u` | read usage limits (refreshes if older than 20 min) |

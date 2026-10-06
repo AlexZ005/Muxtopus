@@ -1,6 +1,7 @@
 ---
 title: The watchdog
 nav_order: 7
+has_children: true
 ---
 {% raw %}
 # The watchdog
@@ -38,6 +39,8 @@ An `idle` window that hit a limit is prompted to continue once its reset time pa
 
 > **Honest limitation.** Detecting a limit means reading the TUI's own banner out of the pane. That text is not an API, and a redesign upstream can change it. It has been wrong once already in a way worth knowing about: a limit resetting on the hour prints `resets 7pm` with no `:00`, and a pattern that required `H:MM` left every on-the-hour limit parked for hours while off-hour ones resumed correctly. The parser handles both now, and `--dry-run` will tell you what it currently sees.
 
+**Weekly, model and "said so" stops are limits too.** Besides the session banner, a pane showing `You've hit your weekly limit · resets Oct 10, 5pm` or `You've reached your <Model> limit` reads `limited`. So does a window whose last turn ended saying it hit a limit, when a usage reading at 100 % within the hour corroborates it. Each is due at its reset, or earlier once a reading taken after the stop shows room again (a manual or early reset). Under the [budget guard](budget.md), the windows due after a reset are resumed in **waves**, release first. A window with a context over 250 000 tokens and an open handover is restarted **fresh** from the handover instead of resumed.
+
 `space` on a dashboard row excludes one session (the checkmark becomes a dot); `--optout <id>` does the same from the shell, and a schedule entry's `watchdog: off` does it at launch. The choice lives in the watchdog's own file, so it holds whether or not the dashboard is open.
 
 ## Session monitoring: the wind-down bands
@@ -52,6 +55,8 @@ It is delivered through a `PostToolUse` hook (`claude-winddown-hook.sh`), so it 
 | hard | past `WATCHDOG_HARD_PCT` (85 %) | checkpoint: commit what you have, write the handoff, and stop |
 
 **The hard band only fires when it buys something** — a context bigger than `WATCHDOG_FRESH_CTX` (150,000 tokens), so restarting fresh from a handoff beats carrying on, or a weekly budget above `WATCHDOG_LOWPRI_WEEK` (40 %) so `/low-priority` cannot carry the session through. Otherwise the window is left to reach the limit banner, which costs nothing.
+
+Under the [budget guard](budget.md#priority-classes) both lines move with the window's `priority:` class: release +10, p1 0, ops −5, p2 −10. A p2 or ops lane is told to checkpoint at its hard line whatever its context. While the guard is on, the bands judge its session **estimate** rather than the last reading, which can be an hour old.
 
 The session is never told *why*. It receives an instruction, not a budget negotiation; the reasoning is logged instead: the dashboard's WOUND column says when a window was last asked to wrap up, and the log carries the reading that decided it. `monitor: off` on a schedule entry, or the second switch in a row's menu, exempts one session.
 
@@ -113,6 +118,8 @@ So before an entry launches, the daemon reads `/proc/meminfo`. While memory is *
 - held entries launch **by themselves** on the first pass after memory recovers. Nothing has to be pressed.
 
 `c` on the dashboard writes an ordinary entry, so it is held too. `WATCHDOG_MEM_GUARD=off` turns the guard off; the daemon re-reads its config within one pass. A `/proc/meminfo` that cannot be read holds nothing, and the published state says `unknown`.
+
+The [budget guard](budget.md) holds entries the same way, for the usage budget instead of memory: `held: budget -- …`.
 
 Swapped pages stay in swap until they are touched, so swap can read high long after the pressure has gone; the held sentence names both keys, and `WATCHDOG_SWAP_MAX_PCT=100` turns that half off.
 
