@@ -589,6 +589,93 @@ reset_epoch() {
   printf '%s' "$e"
 }
 
+# A date with no year ("Oct 10, 5pm", "Oct 10, 17:00") as an epoch: the
+# weekly banner and usage.tsv both print one. More than eight days behind is
+# next year's; nothing is ever further ahead than a week.
+date_noyear() {
+  local s e
+  s="$(sed -E 's/,//; s/([0-9])([ap]m)$/\1 \2/I' <<<"$1")"
+  e="$(date -d "$s" +%s 2>/dev/null)" || return 1
+  [ -n "$e" ] && [ "$e" -lt $(( $(date +%s) - 8 * 86400 )) ] && e="$(date -d "$s next year" +%s 2>/dev/null)"
+  printf '%s' "$e"
+}
+
+# THE LIMITS "hit your session limit" NEVER MATCHED. MEASURED across this
+# box's transcripts -- the `<synthetic>` records Claude Code writes when it
+# refuses a turn -- beside the session banners: 18 x "You've hit your weekly
+# limit · resets Oct 10, 5pm (Europe/Bucharest)" and 7 x "You've reached your
+# Fable limit. Run /usage-credits to continue or switch models". A window
+# stopped by either was published as `idle`, and nothing restarted it. And on
+# 2026-10-05 (roadmap 36) lanes ENDED THEIR TURN in their own words -- "your
+# usage limit was reached", a subagent having hit it -- and were idle too.
+# For a pane that is not working and shows no session banner:
+#
+#   week   the weekly banner; its reset carries a date
+#   model  "reached your <Model> limit": no time on it -- usage.tsv's
+#          model_reset when there is one
+#   said   the last thing the session SAID is that it hit a limit. Taken only
+#          when usage.log CORROBORATES it -- a reading at 100% (session or
+#          week) within the hour around the stop -- because a model talking
+#          ABOUT limits is not a model stopped by one, and this window types.
+#
+# A STOP IS DUE at its reset, OR EARLIER once a reading taken AFTER the stop
+# shows the budget open again (session and week under 100%, the model too for
+# a model stop): that is what a manual reset on claude.ai, or an early one,
+# looks like from here. With no reset time at all the stop's own moment keys
+# the PROMPTED ledger, so it is still prompted once.
+#
+# Sets LIM_KIND LIM_RESET LIM_EPOCH LIM_DUE; returns 1 when there is no limit.
+LIM_SAID_RE='(usage|session|weekly|rate) limit (was |has been |is )?(reached|hit)|(hit|reached) (my|your|the|its|our) (session|weekly|usage) limit'
+limit_scan() {
+  local text="$1" said="$2" tat="$3" now="$4" r e at sp wp mp lo hi
+  LIM_KIND=""; LIM_RESET="-"; LIM_EPOCH=""; LIM_DUE=0
+  case "$tat" in ''|*[!0-9]*) tat="" ;; esac
+  if grep -q "hit your weekly limit" <<<"$text"; then
+    LIM_KIND=week
+    r="$(grep -oE 'resets [A-Z][a-z]{2} [0-9]{1,2}, [0-9]{1,2}(:[0-9]{2})? ?[ap]m' <<<"$text" | tail -1)"
+    r="${r#resets }"
+    if [ -n "$r" ]; then LIM_RESET="${r// /}"; LIM_EPOCH="$(date_noyear "$r")"; fi
+  elif grep -qE "reached your [A-Za-z0-9 .-]+ limit" <<<"$text"; then
+    prompt_scan "$text" && return 1
+    LIM_KIND=model
+    r="$(usage_val model_reset)"
+    [ -n "$r" ] && LIM_EPOCH="$(date_noyear "$r")"
+  elif [ -n "$tat" ] && [ "$said" != "-" ] && grep -qiE "$LIM_SAID_RE" <<<"$said"; then
+    prompt_scan "$text" && return 1
+    lo="$(date -d "@$(( tat - 1800 ))" '+%F %T')"; hi="$(date -d "@$(( tat + 3600 ))" '+%F %T')"
+    tail -n 400 "$USAGE_LOG" 2>/dev/null | awk -F'\t' -v lo="$lo" -v hi="$hi" '
+      $1 >= lo && $1 <= hi && ($2 == "session=100%" || $4 == "week=100%") {f = 1}
+      END {exit !f}' || return 1
+    LIM_KIND=said
+    wp="$(usage_val week_pct)"; wp="${wp%%.*}"
+    if [ "${wp:-0}" -ge 100 ] 2>/dev/null; then
+      r="$(usage_val week_reset)"; [ -n "$r" ] && LIM_EPOCH="$(date_noyear "$r")"
+    else
+      LIM_EPOCH="$(usage_val session_reset_at)"
+    fi
+  else
+    return 1
+  fi
+  case "$LIM_EPOCH" in ''|*[!0-9]*) LIM_EPOCH="" ;; esac
+  if [ -n "$LIM_EPOCH" ]; then
+    [ "$LIM_RESET" = "-" ] && LIM_RESET="$(date -d "@$LIM_EPOCH" '+%b%d,%H:%M' 2>/dev/null || echo -)"
+    [ "$now" -ge $(( LIM_EPOCH + GRACE )) ] && { LIM_DUE=1; return 0; }
+  fi
+  # Lifted early? A reading from AFTER the stop, with room in it again.
+  at="$(usage_val at)"; sp="$(usage_val session_pct)"; wp="$(usage_val week_pct)"; mp="$(usage_val model_pct)"
+  sp="${sp%%.*}"; wp="${wp%%.*}"; mp="${mp%%.*}"
+  if [ -n "$tat" ] && [ "${at:-0}" -gt "$tat" ] 2>/dev/null \
+     && [ "${sp:-100}" -lt 100 ] 2>/dev/null && [ "${wp:-100}" -lt 100 ] 2>/dev/null \
+     && { [ "$LIM_KIND" != model ] || [ "${mp:-100}" -lt 100 ] 2>/dev/null; }; then
+    LIM_DUE=1
+    # Keyed by the stop when it carries no reset, so it is prompted once.
+    [ -n "$LIM_EPOCH" ] || LIM_EPOCH="$tat"
+    return 0
+  fi
+  [ -n "$LIM_EPOCH" ] || LIM_EPOCH="$tat"
+  return 0
+}
+
 transcript_of() {
   local sid="$1" f
   for f in "$MUX_CONFIG_DIR"/projects/*/"$sid".jsonl; do
@@ -1898,6 +1985,10 @@ budget_publish() {
   elif [ "${prev:-0}" -gt 0 ] 2>/dev/null && [ "$held" = 0 ]; then
     log "budget: no longer holding launches"
   fi
+  prev="$(awk -F'\t' '$1 == "queued" {print $2}' "$BUDGET_FILE" 2>/dev/null)"
+  if [ "${prev:-0}" = 0 ] && [ "${BG_Q_HELD:-0}" -gt 0 ]; then
+    log "budget: $BG_Q_HELD resume(s) waiting -- $BG_Q_WHY"
+  fi
   {
     printf 'at\t%s\n' "$BG_NOW"
     printf 'on\t%s\n' "$BUDGET"
@@ -1927,11 +2018,185 @@ budget_publish() {
     printf 'week_allowed\t%s\n' "$BG_WEEK_ALLOWED"
     printf 'running\t%s\n' "$r"
     printf 'limited\t%s\n' "$l"
-    printf 'queued\t%s\n' "$q"
+    printf 'queued\t%s\n' "$BG_Q_HELD"
+    printf 'queued_why\t%s\n' "$BG_Q_WHY"
     printf 'paused\t%s\n' "$p"
     printf 'held\t%s\n' "$held"
     printf 'held_why\t%s\n' "$why"
   } > "$BUDGET_FILE.tmp" 2>/dev/null && mv "$BUDGET_FILE.tmp" "$BUDGET_FILE" 2>/dev/null
+  return 0
+}
+
+# ------------------------------------------- resumes, in waves, some fresh
+# A RESUME IS A START, AND AFTER A RESET THEY ALL COME AT ONCE. Every window
+# that stopped at the limit is due the moment it lifts, and the pass used to
+# type "continue" into each of them in the order their session files happened
+# to be listed: nineteen cold resumes in one pass, each re-reading its whole
+# context uncached -- the storm budget_check describes. So under the guard a
+# due window is QUEUED during the scan (acted = queued) and the queue is
+# served after it, in priority order, through budget_gate as a wave: at most
+# WATCHDOG_BUDGET_WAVE every WATCHDOG_BUDGET_WAVE_MIN minutes, under the cap
+# and the lines like any launch. What does not fit stays due and is asked
+# again next pass; nothing is dropped.
+#
+#   rank <TAB> kind <TAB> sid <TAB> pane <TAB> key <TAB> name <TAB> ctx <TAB> cwd <TAB> prio
+#
+# kind is `due` (it stopped at a limit) or `wound` (a hard wind-down stopped
+# it); key is the PROMPTED ledger's epoch for it, exactly what the immediate
+# path would have written.
+BUDGET_Q=()
+BG_Q_HELD=0; BG_Q_WHY=""
+budget_queue() {   # budget_queue KIND SID PANE KEY NAME CTX CWD
+  local prio; prio="$(budget_prio_of_slug "$(lane_slug_of "$5")")"
+  BUDGET_Q+=("$(budget_prio_rank "$prio")"$'\t'"$1"$'\t'"$2"$'\t'"$3"$'\t'"$4"$'\t'"$5"$'\t'"${6:-0}"$'\t'"${7:--}"$'\t'"$prio")
+}
+
+budget_resume_wave() {
+  local msg="$1" rank kind sid pane key name ctx cwd prio fired="" how lane
+  BG_Q_HELD=0; BG_Q_WHY=""
+  [ ${#BUDGET_Q[@]} -gt 0 ] || return 0
+  budget_check
+  while IFS=$'\t' read -r -u 9 rank kind sid pane key name ctx cwd prio; do
+    [ -n "$sid" ] || continue
+    if ! budget_gate "$prio" 1; then
+      BG_Q_HELD=$(( BG_Q_HELD + 1 )); [ -n "$BG_Q_WHY" ] || BG_Q_WHY="$BG_HOLD_WHY"
+      continue
+    fi
+    lane="$(lane_slug_of "$name")"
+    how=""
+    # FRESH, NOT RESUMED, when the context is big and there is a handover to
+    # start from: budget_fresh_resume writes the entry, and the launcher opens
+    # it (at once, the gate having just said yes) and closes this window.
+    if [ "${ctx:-0}" -gt "$BG_FRESH_CTX" ] && wound_lane_open "$name" \
+       && budget_fresh_resume "$sid" "$pane" "$name" "$ctx" "$cwd" "$prio"; then
+      how=fresh
+    else
+      mux_tmux send-keys -t "$pane" "$msg" 2>/dev/null
+      sleep 1
+      mux_tmux send-keys -t "$pane" Enter 2>/dev/null
+      how=prompted
+    fi
+    printf '%s\t%s\t%s\n' "$sid" "$key" "$(date +%s)" >> "$PROMPTED"
+    # A FRESH RESUME IS RESERVED, NOT RECORDED: its entry is launched by
+    # check_schedules later in this pass, through the gate, and the launch
+    # records the start. Recorded here as well, it would count twice and hold
+    # its own launch behind itself.
+    if [ "$how" = fresh ]; then
+      BG_RUNNING=$(( BG_RUNNING + 1 )); BG_WAVED=$(( BG_WAVED + 1 ))
+    else
+      budget_started resume "$lane"
+    fi
+    fired+="$sid"$'\t'"$how"$'\n'
+    if [ "$how" = fresh ]; then
+      log "budget: $name (pane $pane, ${ctx} tokens) will resume FRESH from its handover -- $SCHEDULES/$BUDGET_FRESH_FILE ($prio, wave)"
+    else
+      log "prompted ${sid:0:8} in $name (pane $pane) -- $kind, resumed in a wave ($prio)"
+    fi
+  done 9< <(printf '%s\n' "${BUDGET_Q[@]}" | sort -t$'\t' -s -k1,1n)
+  BUDGET_Q=()
+  # THE STATUS ROW SAYS WHAT HAPPENED, not "queued", for the windows that went:
+  # it was written before the wave was served, and the dashboard reads it.
+  if [ -n "$fired" ] && [ -f "$STATUS" ]; then
+    awk -F'\t' -v OFS='\t' -v f="$fired" '
+      BEGIN { n = split(f, l, "\n"); for (i = 1; i <= n; i++) { split(l[i], p, "\t"); if (p[1] != "") h[p[1]] = p[2] } }
+      ($1 in h) && $8 == "queued" { $8 = (h[$1] == "fresh" ? "fresh-resume" : "prompted"); if (h[$1] != "fresh") $6 = "working" }
+      { print }' "$STATUS" > "$STATUS.w" && mv "$STATUS.w" "$STATUS"
+  fi
+  return 0
+}
+
+# A FRESH SESSION FROM THE HANDOVER, INSTEAD OF A RESUME OF A HUGE CONTEXT.
+#
+# MEASURED (docs/budget.md): a cold resume's first turn at 500k+ tokens costs
+# 2.1% of a Max 5x window on its own, and every hour after it costs 6.7% at
+# that size against 3.5% for a lane under 250k -- the context is re-read on
+# every request. A lane that stopped at a limit with an open handover has
+# already written down what is done and what is next; reading that is cheaper
+# than reading the whole conversation that produced it. This is the entry the
+# roadmap-37 orchestrator wrote by hand for its paused lanes, written here:
+#
+#   <slug>-resume.md   the ORIGINAL entry's header (cwd, model, effort,
+#                      permission mode, template, window, parent, priority),
+#                      `at:` now, `resume: fresh`, `replaces: <pane> <sid>`;
+#                      body: "read your handover first", then the original
+#                      brief. A window opened by hand has no entry: its
+#                      model, effort and mode come from its own command line.
+#
+# The slug is the lane's own, so the handover, the done marker and the tree
+# row stay the lane's. The launcher closes the old window once the fresh one
+# is up (`replaces:`); its transcript stays on disk, and the log names the
+# session for `claude --resume`.
+BUDGET_FRESH_FILE=""
+budget_fresh_resume() {
+  local sid="$1" pane="$2" name="$3" ctx="$4" cwd="$5" prio="$6"
+  local lane src f="" out model="" effort="" pmode="" pid k v body
+  lane="$(lane_slug_of "$name")"
+  [ -n "$lane" ] && [ -d "$SCHEDULES" ] || return 1
+  src="$(tree_field "$lane" 6)"
+  case "$src" in *.md) [ -f "$SCHEDULES/$src" ] && f="$SCHEDULES/$src" ;; esac
+  out="$SCHEDULES/$lane-resume.md"
+  # One pending fresh resume per lane; an older one that already ran is a
+  # record worth keeping, so a second gets the hour on its name.
+  if [ -f "$out" ]; then
+    [ "$(sched_field "$out" status)" = pending ] && return 1
+    out="$SCHEDULES/$lane-resume-$(date +%m%d%H%M).md"
+  fi
+  if [ -z "$f" ]; then
+    pid="$(awk -F'\t' -v p="$pane" '$5 == p {print $12; exit}' "$SNAPSHOT" 2>/dev/null)"
+    [ -n "$pid" ] && IFS=$'\t' read -r model effort pmode < <(snap_flags_of_pid "$pid"; printf '\n')
+  fi
+  {
+    printf 'type: work\n'
+    printf 'at: %s\n' "$(date '+%Y-%m-%d %H:%M')"
+    printf 'title: %s (fresh resume)\n' "$lane"
+    printf 'slug: %s\n' "$lane"
+    if [ -n "$f" ]; then
+      for k in window parent cwd template model effort permission-mode priority rc watchdog monitor; do
+        v="$(sched_field "$f" "$k")"
+        [ "$k" = cwd ] && [ -z "$v" ] && v="$cwd"
+        [ -n "$v" ] && printf '%s: %s\n' "$k" "$v"
+      done
+    else
+      printf 'cwd: %s\n' "$cwd"
+      [ -n "$model" ] && printf 'model: %s\n' "$model"
+      [ -n "$effort" ] && printf 'effort: %s\n' "$effort"
+      [ -n "$pmode" ] && printf 'permission-mode: %s\n' "$pmode"
+      [ "$prio" != p1 ] && printf 'priority: %s\n' "$prio"
+    fi
+    printf 'resume: fresh\n'
+    printf 'replaces: %s %s\n' "$pane" "$sid"
+    printf 'status: pending\n'
+    printf 'created: %s\n' "$(date '+%Y-%m-%d %H:%M')"
+    printf 'launched:\n'
+    printf -- '---\n'
+    printf 'You are lane {{SLUG}}, resuming in a FRESH session: the old one stopped at a usage limit with %s tokens of context, and resuming it would have re-read all of them. Read your handover {{HANDOVER}} first (questions: {{QUESTIONS}}), check `git status` and `git log` in {{CWD}}, and continue from the handover'"'"'s next step. If a "Budget checkpoint" note tells you to wind down, land the step you are on, commit, update the handover and stop.\n' "$ctx"
+    if [ -n "$f" ]; then
+      body="$(sched_body "$f")"
+      [ -n "$body" ] && printf '\nYour original brief follows.\n\n%s\n' "$body"
+    fi
+  } > "$out.tmp" && mv "$out.tmp" "$out" || return 1
+  BUDGET_FRESH_FILE="$(basename "$out")"
+  return 0
+}
+
+# THE OLD WINDOW OF A FRESH RESUME, closed once the new one is up. Only if
+# its pane still holds the session the entry named and that session is not
+# working: a window somebody has since typed into is theirs, not ours.
+budget_close_replaced() {
+  local f="$1" rep opane osid wid cur st
+  rep="$(sched_field "$f" replaces)"
+  [ -n "$rep" ] || return 0
+  opane="${rep%% *}"; osid="${rep#* }"
+  cur="$(awk -F'\t' -v p="$opane" '$3 == p {print $1 "\t" $6; exit}' "$STATUS" 2>/dev/null)"
+  st="${cur#*$'\t'}"; cur="${cur%%$'\t'*}"
+  if [ "$cur" != "$osid" ] || [ "$st" = working ]; then
+    log "schedule $(basename "$f"): left the old window (pane $opane) open -- it no longer holds ${osid:0:8} idle"
+    return 0
+  fi
+  wid="$(mux_tmux display-message -p -t "$opane" '#{window_id}' 2>/dev/null)" || return 0
+  [ -n "$wid" ] || return 0
+  mux_tmux kill-window -t "$wid" 2>/dev/null && \
+    log "schedule $(basename "$f"): closed the old window $wid (pane $opane); its session is on disk -- claude --resume $osid"
   return 0
 }
 
@@ -2875,6 +3140,8 @@ launch_schedule() {
   rm -f "$bodyf"
 
   sched_mark "$f" launched
+  # A FRESH RESUME takes the place of the window it was written for.
+  budget_close_replaced "$f"
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
@@ -4260,6 +4527,7 @@ pass() {
   # Rebuilt lazily, once per pass at most, by the stranded test below.
   SCHED_NAMED=""; SCHED_UNDER=""
   SNAP_SID=(); SNAP_PID=(); SNAP_CWD=()
+  BUDGET_Q=()
   notify_begin
   # Read once per pass, not once per session: every session is judged against
   # the same account-wide figures.
@@ -4309,7 +4577,7 @@ pass() {
     # from "quiet because it stalled" at a glance.
     # The same read gives SAID, the last thing it said: `-` with no
     # transcript (a background job, a plain shell) -- never an empty field.
-    idle=-1; said="-"
+    idle=-1; said="-"; turn_at=""
     if [ -n "${tr:-}" ] && [ -f "${tr:-}" ]; then
       last_turn "$tr"
       turn_at="$TURN_AT"; said="$TURN_SAID"
@@ -4357,6 +4625,14 @@ pass() {
       else
         state="limited"
       fi
+    elif limit_scan "$text" "$said" "${turn_at:-}" "$now"; then
+      # THE LIMITS THE SESSION TEST ABOVE NEVER SAW (limit_scan): a weekly
+      # or a model limit, or a turn that ENDED by saying the limit was
+      # reached. All of them used to read as `idle`, so nothing restarted
+      # them -- see limit_scan for the measurement.
+      reset="$LIM_RESET"; epoch="$LIM_EPOCH"
+      state="limited"
+      [ "$LIM_DUE" = 1 ] && state="due"
     fi
 
     # FOR THE ALERTS, from what was captured above -- no fork. A pane that
@@ -4384,6 +4660,11 @@ pass() {
         acted="watchdog-off"
       elif [ "$DRY" = 1 ]; then
         acted="WOULD-PROMPT"
+      elif [ "$BUDGET" = on ]; then
+        # Served after the scan, in priority order and in waves
+        # (budget_resume_wave) -- not typed into here, all at once.
+        budget_queue due "$sid" "$paneid" "$epoch" "$name" "$ctx" "$cwd"
+        acted="queued"
       else
         mux_tmux send-keys -t "$paneid" "$msg" 2>/dev/null
         sleep 1
@@ -4458,6 +4739,9 @@ pass() {
           acted="watchdog-off"
         elif [ "$DRY" = 1 ]; then
           acted="WOULD-RESUME"
+        elif [ "$BUDGET" = on ]; then
+          budget_queue wound "$sid" "$paneid" "$hkey" "$name" "$ctx" "$cwd"
+          acted="queued"
         else
           mux_tmux send-keys -t "$paneid" "$msg" 2>/dev/null
           sleep 1
@@ -4553,6 +4837,9 @@ pass() {
   done
 
   mv "$tmp" "$STATUS"
+  # The resumes the scan queued, served as a wave -- before the launches, so
+  # a fresh resume's entry is launched in this same pass when the gate allows.
+  budget_resume_wave "$msg"
   nudge_point
   sweep_repos
   tree_adopt
