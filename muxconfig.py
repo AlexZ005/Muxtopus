@@ -62,6 +62,24 @@ KEYS = {
     "WATCHDOG_MEM_MIN_GB": "4",
     "WATCHDOG_SWAP_MAX_PCT": "80",
     "WATCHDOG_MEM_STOP_DEV": "0",
+    # THE BUDGET GUARD (claude-watchdog.sh, docs/budget.md). None on a
+    # knob means "the plan preset's value": WATCHDOG_BUDGET_PLAN picks a
+    # preset (auto reads the account's rateLimitTier) and each knob set here
+    # overrides just that one number.
+    "WATCHDOG_BUDGET": "on",
+    "WATCHDOG_BUDGET_PLAN": "auto",
+    "WATCHDOG_BUDGET_LANES": None,
+    "WATCHDOG_BUDGET_HOLD_PCT": None,
+    "WATCHDOG_BUDGET_LANE_PCT": None,
+    "WATCHDOG_BUDGET_START_PCT": None,
+    "WATCHDOG_BUDGET_CHECKPOINT_MIN": "30",
+    "WATCHDOG_BUDGET_DAY_PCT": None,
+    "WATCHDOG_BUDGET_WAVE": None,
+    "WATCHDOG_BUDGET_WAVE_MIN": "10",
+    "WATCHDOG_BUDGET_FRESH_CTX": "250000",
+    "WATCHDOG_BUDGET_PROBE_MIN": "15",
+    # How many e2e runs the machine takes at once (e2e-slot).
+    "MUXTOPUS_E2E_SLOTS": "2",
     "CLAUDE_USAGE_MAX_AGE": "20",
     "CLAUDE_USAGE_MODEL": None,
     "CLAUDE_CONTEXT_WINDOW": "1000000",
