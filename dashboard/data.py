@@ -190,11 +190,11 @@ def ports_for(pids: list[int], inodes: dict[int, int]) -> dict[int, int]:
 class ClaudeSession:
     __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action",
                  "resumed", "spent", "cached", "optout", "model", "idle", "job",
-                 "cwd", "wound", "dirty", "moptout", "pid", "said")
+                 "cwd", "wound", "dirty", "moptout", "pid", "said", "tags")
 
     def __init__(self, sid, window, pane, ver, ctx, state, reset, action,
                  resumed=0, spent=0, cached=0, optout=False, model="-", idle=-1, job="",
-                 cwd="-", wound=0, moptout=False, pid=0, said="-"):
+                 cwd="-", wound=0, moptout=False, pid=0, said="-", tags=()):
         self.sid, self.window, self.pane, self.ver = sid, window, pane, ver
         self.ctx, self.state, self.reset, self.action = ctx, state, reset, action
         self.resumed, self.spent, self.cached = resumed, spent, cached
@@ -203,6 +203,7 @@ class ClaudeSession:
         self.cwd, self.wound, self.moptout = cwd, wound, moptout
         self.pid = pid
         self.said = said
+        self.tags = tuple(tags)
         self.dirty = 0          # filled in from the repo sweep at render time
 
 
@@ -246,6 +247,9 @@ def claude_sessions() -> tuple[list[ClaudeSession], float]:
             # watchdog's nineteen-column row reads as `-` -- not known, which
             # is the truth -- never as "" (said nothing).
             (f[19] or "-") if len(f) > 19 else "-",
+            # TAGS, after SAID by the same rule: comma separated, `-` for
+            # none, and an older watchdog's row has none.
+            tuple(t for t in (f[20] if len(f) > 20 else "").split(",") if t and t != "-"),
         ))
     return out, age
 

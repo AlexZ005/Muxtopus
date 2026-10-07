@@ -72,14 +72,21 @@ The screens that share a tab strip name each tab **with its count** — `▸sche
 
 **CONTEXT** is the session's live context against `CLAUDE_CONTEXT_WINDOW` (1,000k by default; set it if yours differs — a running session cannot be asked what its window is). **SPENT** is that session's lifetime input + cache writes + output, the parts billed at or above full rate; cache *reads* are excluded because they cost about a tenth and would swamp the number. Subagent tokens are not included — they never enter the parent transcript. **IDLE** is time since that session last wrote a turn; it goes amber past 15 minutes, so a stalled window reads differently from a finished one. **WOUND** is when a window was last asked to wrap up and **RESUMED** when the watchdog last restarted it. **DIRTY** is a hint for the tree that window is sitting in. **SAID** is the first 80 characters of the last thing the session said, on one line — hidden until you ask for it: Settings ▸ Columns, `enter` on its row. It is the session's last *text*, so after a tool call it is older than the turn IDLE counts from; `—` means there is nothing to read (a background job, a plain shell). It stays on this machine: no notification carries it.
 
-The **STATE** column is the watchdog's word for the window:
+The **STATE** column is the watchdog's one word for the window: what it needs or is doing. The **TAGS** column beside it lists, comma separated, everything that is true at the same time — see [states and tags](watchdog.md#states-and-tags). Hide TAGS (Settings ▸ Columns) and the first tag is shown after the state instead.
 
 | state | |
 |---|---|
 | `working` | mid-turn |
-| `idle` | not mid-turn. A fact about the last turn: the same word for a lane that finished ten minutes ago and one that stopped mid-phase |
+| `background` | green: the turn ended, but a job it started still runs — tests, a CI watch, a poller. TAGS says which |
+| `idle` | not mid-turn, and none of the states below applies |
+| `handed off` | blue: a lane with an **open** handover, at its prompt: it stopped at a checkpoint and left a note for whoever comes next |
+| `orchestrating` | handed off on purpose: lanes it scheduled are still pending under it |
+| `done` | green: the lane's handover is in `done/` — it said it is finished, and the window is safe to close |
+| `error` | red: the turn ended on an `API Error`; nothing retries it |
 | `needs you` | yellow: sitting at a permission or trust prompt. Also sent to the phone, with buttons — see [Notifications](notifications.md) |
-| `limited 14:30` | yellow: stopped at a usage limit, waiting for that reset |
+| `paused` | yellow: the watchdog told it to checkpoint **before** the limit (a hard wind-down), and its budget window has not come back yet |
+| `queued` | yellow: due, waiting for its resume wave (the [budget guard](budget.md#waves)) |
+| `limit hit 14:30` | yellow: stopped **abruptly** at a usage limit, waiting for that reset (TAGS says which: `session`, `week`, `model`) |
 | `due 13:00` | red: the reset has passed and it is still sitting there; the watchdog prompts it on its next pass |
 | `stranded` | red: a lane, idle past `WATCHDOG_STRANDED`, with an open handover and no pending schedule entry naming it. A label, never a trigger — see [the watchdog](watchdog.md#stranded) |
 | `resume due` | yellow: a window a **hard** wind-down told to stop, whose budget window has come back and whose handover is still open. Unlike `stranded` this one *is* going to be touched — see [resuming a wind-down](watchdog.md#resuming-a-wind-down) |

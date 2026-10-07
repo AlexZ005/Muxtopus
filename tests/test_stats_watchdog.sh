@@ -212,7 +212,8 @@ printf '{"pid":%s,"sessionId":"%s","cwd":"%s","version":"0.0.0","status":"idle",
 t0=$(date +%s); "$W" --once >/dev/null 2>&1; t1=$(date +%s)
 said_of() { awk -F'\t' -v s="$1" '$1==s{print $20}' "$ST/status.tsv"; }
 nf_of()   { awk -F'\t' -v s="$1" '$1==s{print NF}' "$ST/status.tsv"; }
-check "every row has twenty columns"          [ "$(nf_of "$SID2")" = 20 ] && [ "$(nf_of deadbeef-0000-4000-8000-00000000dead)" = 20 ]
+# Twenty-one since TAGS was appended after SAID; SAID is still index 19.
+check "every row has twenty-one columns"      [ "$(nf_of "$SID2"):$(nf_of deadbeef-0000-4000-8000-00000000dead)" = 21:21 ]
 check "no transcript: SAID is '-', not empty" [ "$(said_of deadbeef-0000-4000-8000-00000000dead)" = "-" ]
 got="$(said_of "$SID2")"
 check "the digest is the last TEXT, folded and cut: $got" \
@@ -225,10 +226,10 @@ E="$(date -d 2026-09-23T10:00:12Z +%s)"
 check "the idle column is still the last TURN's ($idle s)" \
   [ "$idle" -ge $(( t0 - E )) ] && [ "$idle" -le $(( t1 - E )) ]
 out="$("$W" --status)"
-check "--status names the column, last"       grep -q $'\tPID\tSAID$' <<<"$out"
+check "--status names the column, before TAGS" grep -q $'\tPID\tSAID\tTAGS$' <<<"$out"
 check "--status prints the digest"            grep -qF 'P1 is in: the digest' <<<"$out"
 out="$("$W" --dry-run 2>/dev/null)"
-check "--dry-run's table has it too"          grep -qE 'PID +SAID$' <<<"$out"
+check "--dry-run's table has it too"          grep -qE 'PID +SAID +TAGS$' <<<"$out"
 kill "$SLEEPER2" 2>/dev/null; SLEEPER2=""
 
 echo "== nothing outside the sandbox was touched"

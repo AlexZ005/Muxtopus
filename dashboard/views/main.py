@@ -114,6 +114,23 @@ def usage_rows() -> list[Text]:
     ]
 
 
+# THE TAGS CELL. Two of them are something to do -- a lane waiting for an
+# e2e slot, a question waiting for an answer -- and are yellow; an API error
+# stays with the state. Everything else is a fact, dim.
+TAG_LOUD = ("e2e-wait", "asking")
+
+
+def tags_text(tags) -> Text:
+    if not tags:
+        return Text("—", style=FRAME)
+    t = Text()
+    for i, tag in enumerate(tags):
+        if i:
+            t.append(",", style=FRAME)
+        t.append(tag, style=YELLOW if tag in TAG_LOUD else DIM)
+    return t
+
+
 class MainView(View):
     """The main screen, and the only view with no key: it is what `s` and
     everything after it come back to."""
@@ -837,6 +854,12 @@ class MainView(View):
             ("SPENT", {"justify": "right", "width": 8}, None),
             ("IDLE", {"justify": "right", "width": 6}, None),
             ("STATE", {"width": 15}, None),
+            # TAGS: what is true AT THE SAME TIME as the state -- a dev
+            # server, an e2e slot, a test run, the limit that stopped it
+            # (docs/watchdog.md, States and tags). Beside STATE because it is
+            # read with it; a cell too narrow for them all ends in an
+            # ellipsis, and hiding the column puts the first one in STATE.
+            ("TAGS", {"width": 22}, None),
             ("DIRTY", {"justify": "right", "width": 6}, None),
         # 12, NOT 11, AND no_wrap. when() renders a stamp older than today as
         # "%b %-d %H:%M" -- "Sep 5 21:13" is 11 and fitted, "Sep 12 12:21" is 12
@@ -863,6 +886,7 @@ class MainView(View):
 
         skipped = opted_out()
         mskipped = monitor_opted_out()
+        tags_hidden = "TAGS" in columnsmod.hidden_columns(PROFILE).get("claude", set())
         for s, depth, hidden in layout:
             s.optout = s.sid in skipped
             s.moptout = s.sid in mskipped
@@ -886,6 +910,9 @@ class MainView(View):
             label, style, with_reset = STATES.get(s.state, (s.state, DIM, False))
             st_txt = Text(label + (" " + s.reset if with_reset else ""),
                           style=style)
+            tags_txt = tags_text(s.tags)
+            if s.tags and tags_hidden:
+                st_txt.append(" · " + s.tags[0], style=DIM)
             # An idle window is only interesting once it has been quiet a
             # while, and only alarming if it is quiet with work in flight.
             if s.idle < 0:
@@ -928,7 +955,7 @@ class MainView(View):
                 ct_cur = len(ct_rows)
             ct_rows.append([mark, mon_txt, wtx, Text(s.model, style=DIM), bar,
                        Text(human_tokens(s.spent), style=DIM), idle_txt, st_txt,
-                       dirty_txt,
+                       tags_txt, dirty_txt,
                        Text(when(s.wound), style=DIM if s.wound else FRAME),
                        Text(when(s.resumed), style=DIM if s.resumed else FRAME),
                        # `-` is "not known" (no transcript, or a watchdog too
@@ -939,7 +966,7 @@ class MainView(View):
         if not sessions:
             ct_rows.append(["", "", Text("—", style=DIM), "",
                             Text("no claude sessions" if not wd_stale else "watchdog not running",
-                                 style=DIM), "", "", "", "", "", "", ""])
+                                 style=DIM), "", "", "", "", "", "", "", ""])
 
         wd_label = ("watchdog on", GREEN) if wd_on else ("watchdog off", DIM)
         if wd_stale:
@@ -1575,8 +1602,20 @@ HELP_DIRTY = f"""
     those separately. Untracked files are ignored: a scratch file is noise, a
     modified tracked file is work you could lose.
 
-    [{YELLOW}]limited[/]  stopped at a usage limit, waiting for the reset
+    [{YELLOW}]limit hit[/] stopped ABRUPTLY at a usage limit, waiting for the reset
+    [{YELLOW}]paused[/]   the watchdog cooled it down BEFORE the limit; resumes after it
+    [{YELLOW}]queued[/]   due, waiting for its resume wave (the budget guard)
     [{RED}]due[/]      the reset has passed and it is still sitting there
+    [{RED}]error[/]    the turn ended on an API error; nothing retries it
+    [{GREEN}]background[/] the turn ended but a job it started still runs (TAGS: which)
+    [bold]handed off[/] a lane at its prompt with an OPEN handover: a checkpoint
+    [bold]orchestrating[/] handed off on purpose -- its lanes are pending under it
+    [{GREEN}]done[/]     its handover is in done/; the window is safe to close
+
+    [bold]TAGS[/] is everything true at the same time as the state, comma
+    separated: e2e / e2e-wait, test, ci, sleep, job:<name>, serve:<port>,
+    session / week / model (which limit), asking, its priority class,
+    compacting. One state is what the watchdog acts on; tags never trigger.
     [{RED}]stranded[/] NOTHING IS EVER GOING TO TOUCH THIS. A lane, idle past
              WATCHDOG_STRANDED (120m), with an OPEN handover, and no pending
              schedule entry naming it -- not by slug, not by after:, not a

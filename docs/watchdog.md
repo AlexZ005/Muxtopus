@@ -91,6 +91,45 @@ An entry fires on whichever comes first:
 
 The launch line names which one fired. A budget *reading* older than `WATCHDOG_USAGE_STALE` (default 180 min) cannot fire gate 1 — the bucket refills over five hours, so a three-hour-old percentage says nothing about now. The reset *epoch* is exempt: it is an absolute moment. An entry that cannot be judged at all — no usable reading — is `stalled`, drawn red, and the daemon asks for a fresh `/usage` probe (at most one per quarter hour) to clear it.
 
+### States and tags
+
+Each window has **one state** and **any number of tags**. The state is the one thing the window needs or is doing, and the watchdog acts on it: `due` is typed into, `needs you` pages the phone, `working` counts toward the budget cap. That is why it stays one word. Everything true *at the same time* goes in the **TAGS** column (`status.tsv`'s 21st field, comma separated, `-` for none). A lane can be `working` with `e2e,serve:5380`, or `done` with a `serve:5352` it forgot to stop.
+
+What `idle` used to hide, decided in this order:
+
+| state | when |
+|---|---|
+| `error` | the turn ended on `API Error: …` |
+| `paused` | a hard wind-down stopped it **before** the limit, and the budget window it was told about has not come back (it becomes `resume due` when it has) |
+| `background` | the turn ended, but a tool shell it started is still running |
+| `stranded` | as below |
+| `orchestrating` | an open handover, and a pending entry names this window as its `window:` or `parent:` |
+| `handed off` | an open handover: it stopped at a checkpoint |
+| `done` | its handover is in `done/` |
+
+`background`, `paused` and `error` come before `stranded` on purpose. Each is a window that *is* going somewhere. A lane two hours into a background test run used to go `stranded` and page the phone.
+
+A stop at the limit banner reads **`limit hit`**: it was abrupt. That is the internal state `limited` with new words, so nothing that keys on it changes. `paused` is the controlled version of the same stop.
+
+**The tags.** Most come from the window's **process tree**. An idle claude has no child processes; its tool shells are `bash -c source …/shell-snapshots/…`. So anything alive under one is a job the turn left running. Measured on 2026-10-07: one lane read `idle` while its tests ran, and one while it ran `gh run watch`. A wrapping shell is walked through, never matched: its own argv contains the whole command text, including commands that have not started yet.
+
+| tag | when |
+|---|---|
+| `e2e` / `e2e-wait` | an `e2e-slot` holds a slot / is waiting for one (its child is `sleep 5`) |
+| `test` | a test runner: `npm`/`pnpm`/`yarn` `test` or `e2e`, `vitest`, `jest`, `pytest`, `playwright test`, a `tests/test_*` script, `go test`, `cargo test` |
+| `ci` | `gh run watch`, `gh pr checks` |
+| `sleep` | a `sleep N` (N ≥ 20) poller |
+| `job:<name>` | any other script or program a shell started, while the window is not working |
+| `serve:<port>` | a dev server it owns. A server in a folder that ends in the lane's slug (`run-38-int-a`) is that lane's; otherwise the window whose folder is the longest prefix of the server's |
+| `session` / `week` / `model` | which limit stopped it (with `limit hit`, `due`, `queued`, `paused`) |
+| `asking` | its QUESTIONS file has no `ANSWERED` marker |
+| `release` / `ops` / `p2` | its [priority class](budget.md#priority-classes), when not p1 |
+| `compacting` | the pane shows "Compacting conversation" |
+
+Reading the tree costs one builtin read of `/proc/<pid>/stat` per process per pass, and no new process.
+
+Phone alerts follow the **state**. A tag can change every pass, so a tag alone never pages. Two combinations are worth an opt-in alert (`MUXTOPUS_NOTIFY_TAGS`, off by default): `e2e-wait` for over 30 minutes, and `done` or `handed off` with a `serve:` tag.
+
 ### `stranded`
 
 Not a field: a **state** the watchdog publishes for a window, beside `working`, `idle`, `limited`, `waiting` and `due`. A lane is called `stranded` instead of `idle` when all of these are true:

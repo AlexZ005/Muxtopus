@@ -170,6 +170,9 @@ KEYS = {
     "DASHBOARD_HINTS_MENU_LINE": "on",
     "DASHBOARD_HINTS_FOOTER_KEYS": "on",
     "DASHBOARD_HINTS_TABLE_NOTES": "on",
+    # Two tag combinations worth a push (docs/notifications.md): an e2e
+    # slot waited on over 30 minutes, a finished lane with a server up.
+    "MUXTOPUS_NOTIFY_TAGS": "off",
 }
 KINDS = ("schedules", "backups", "handovers")
 

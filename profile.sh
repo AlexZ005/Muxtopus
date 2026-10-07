@@ -136,6 +136,7 @@ DASHBOARD_HINTS_ROW_DESC=on
 DASHBOARD_HINTS_MENU_LINE=on
 DASHBOARD_HINTS_FOOTER_KEYS=on
 DASHBOARD_HINTS_TABLE_NOTES=on
+MUXTOPUS_NOTIFY_TAGS=off
 "
 
 # The checkout these scripts live in, from this file's own location, so a
@@ -443,6 +444,9 @@ mux_key_help() {
                             echo "all (verdict stalled in sched-why.tsv), and when it recovers." ;;
     MUXTOPUS_NOTIFY_STRANDED) echo "on: tell the phone when a lane is stranded -- idle with an open"
                             echo "handover and nothing that will ever resume it -- and when not." ;;
+    MUXTOPUS_NOTIFY_TAGS)   echo "on: tell the phone about two tag combinations worth acting on: a"
+                            echo "lane waiting over 30 min for an e2e slot, and a done or handed-off"
+                            echo "lane with a dev server still running. Off by default." ;;
     DASHBOARD_NEW_RC)       echo "on: the launcher sends /rc to every new scheduled window once it"
                             echo "is ready, unless its entry says rc: off. An entry's rc: on|off"
                             echo "always wins; this is the default for entries that do not say." ;;

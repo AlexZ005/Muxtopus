@@ -74,6 +74,7 @@ The events above are news; these are the ways every lane can stop without a word
 | **budget band** | a budget past `WATCHDOG_SOFT_PCT` or `WATCHDOG_HARD_PCT`; a band that only fell is not news | `MUXTOPUS_NOTIFY_LIMIT_BANDS` | off |
 | **stalled** | the scheduler cannot judge an entry at all (`stalled` in `sched-why.tsv`) | `MUXTOPUS_NOTIFY_STALLED` | **on** |
 | **stranded** | a lane is idle with an open handover and nothing will ever resume it | `MUXTOPUS_NOTIFY_STRANDED` | **on** |
+| **slot or server stuck** | a lane has waited over 30 minutes for an e2e slot (tag `e2e-wait`), or a `done` / `handed off` lane still has a dev server running (tag `serve:<port>`) | `MUXTOPUS_NOTIFY_TAGS` | off |
 
 **Why those defaults.** On is every condition where lanes stop and nothing else will say so: a lost session and a logout end work silently — a logout ends *all* of it, at each lane's next turn — a limit is hours of nothing, and stalled and stranded are the scheduler admitting it cannot help. The bands are off because they are a forecast rather than trouble: the watchdog already winds sessions down at them, and on a busy day they fire several times.
 

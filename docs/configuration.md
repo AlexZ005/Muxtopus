@@ -73,6 +73,7 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `MUXTOPUS_NOTIFY_LIMIT_BANDS` | `off` | also alert when a budget crosses the soft or hard band |
 | `MUXTOPUS_NOTIFY_STALLED` | `on` | alert when an entry cannot be judged at all |
 | `MUXTOPUS_NOTIFY_STRANDED` | `on` | alert when a lane is stranded |
+| `MUXTOPUS_NOTIFY_TAGS` | `off` | alert when a lane has waited over 30 minutes for an e2e slot, or a finished lane still has a dev server running |
 | `DASHBOARD_MENU_LAYOUT` | `modal` | how a context menu is drawn: `table` (under the panel the cursor is in), `modal` (centred), `bottom` (the footer, scrolling) |
 | `DASHBOARD_NEW_PERMISSION_MODE` | `ask` | the mode preselected when `c` creates a window; `ask` preselects nothing |
 | `DASHBOARD_PERMANENT_MODE_SCOPE` | `project` | which `settings.json` *make it the default* writes: `project` (`<cwd>/.claude/`) or `account` (`~/.claude/`) |
