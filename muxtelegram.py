@@ -556,9 +556,17 @@ A fork: press (a) (b) … (★ is the recommended one), or ✎ type / reply to i
 /unmute -- pushes back on
 Replies come within one watchdog pass (at most ~30 s)."""
 STATUS_COLS = ("sid", "name", "pane", "ver", "ctx", "state", "reset", "action", "resumed",
-               "spent", "cached", "optout", "model", "idle", "job", "cwd", "wound", "moptout", "pid")
+               "spent", "cached", "optout", "model", "idle", "job", "cwd", "wound", "moptout", "pid",
+               "said", "tags")
 STATE_WORDS = (("working", "working"), ("waiting", "needs you"), ("idle", "idle"),
-               ("limited", "limited"), ("due", "due"), ("stranded", "stranded"))
+               ("limited", "limit hit"), ("due", "due"), ("stranded", "stranded"),
+               ("paused", "paused"), ("queued", "queued"), ("error", "error"),
+               ("background", "background"), ("orchestrating", "orchestrating"),
+               ("handed-off", "handed off"), ("done", "done"))
+# AT ITS PROMPT, NOTHING RUNNING: the states a line may be typed into. `idle`
+# alone used to be all of them; a lane with an open handover now reads
+# `handed off`, and that is exactly the lane a "questions answered" is for.
+AT_PROMPT = ("idle", "handed-off", "orchestrating", "done")
 
 
 def register_commands(force: bool = False):
@@ -815,10 +823,13 @@ def cmd_windows(profiles_: list[str], note: str = "") -> None:
             idle = s.get("idle", "-1")
             ctx = int(s["ctx"]) if s.get("ctx", "").isdigit() else 0
             word = dict(STATE_WORDS).get(s.get("state", ""), s.get("state", ""))
-            lines.append("%s · %s · %s%s · ctx %d%%" % (
+            tags = s.get("tags", "")
+            lines.append("%s · %s · %s%s · ctx %d%%%s" % (
                 label(p), s.get("name"), word,
                 (" %s" % human_age(int(idle))) if idle.lstrip("-").isdigit() and int(idle) >= 0 else "",
-                ctx * 100 // cw if cw else 0))
+                ctx * 100 // cw if cw else 0,
+                # The tags the dashboard shows, `-` (none) left out.
+                (" · " + tags.replace(",", ", ")) if tags and tags != "-" else ""))
             if s.get("state") == "waiting":
                 waiting.append((p, s))
     send(("\n".join(lines) if lines else "no sessions") + note)
@@ -1249,8 +1260,8 @@ def tell_lane(profile: str, path: str) -> str:
     if live.returncode != 0 or wid not in live.stdout.split():
         return ""
     st = next((s for s in sessions(profile) if s.get("pane") == pane), None)
-    if not st or st.get("state") != "idle":
-        return "%s is not idle -- not told" % slug
+    if not st or st.get("state") not in AT_PROMPT:
+        return "%s is not at its prompt (%s) -- not told" % (slug, st.get("state") if st else "gone")
     line = "Your questions are answered in %s -- read it and continue." % path
     if tmux("send-keys", "-t", pane, "-l", line).returncode != 0:
         return "could not reach %s" % slug

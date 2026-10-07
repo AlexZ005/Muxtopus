@@ -138,13 +138,13 @@ def budget_lanes(now: float | None = None) -> list[dict]:
         sid, name, state, acted = p[0], p[1], p[5], p[7]
         ctx = _int(p[4], 0) or 0
         slug = name.replace("➥", "")
-        if state == "working":
+        if state in ("working", "background"):
             what = "running"
-        elif acted == "queued":
+        elif acted == "queued" or state == "queued":
             what = "queued"
         elif state in ("limited", "due", "resume-due"):
             what = "limited"
-        elif state == "idle" and sid in paused:
+        elif state == "paused" or (state == "idle" and sid in paused):
             what = "paused"
         else:
             continue

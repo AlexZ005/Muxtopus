@@ -6,7 +6,7 @@ any of that on or off, sets it up, and proves it works -- and it is one new
 file, registering through the seam, with nothing in the shell edited.
 
     Settings ▸ Notifications ▸      a menu kind of its own (esc_to="settings")
-    the thirteen MUXTOPUS_NOTIFY_* keys (seven, and the six alerts) via muxsettings.register(..., menu="notify")
+    the MUXTOPUS_NOTIFY_* keys (seven, the six alerts, the release and the tags) via muxsettings.register(..., menu="notify")
     `waiting` drawn as a yellow `needs you` via app.add_state
 
 WHY THE SEVEN KEYS ARE NOT IN THE SETTINGS LIST. muxsettings.register puts a
@@ -37,7 +37,7 @@ from dashboard.core import DIM, PROFILE, SCRIPTS, YELLOW
 
 NOTIFY_SH = SCRIPTS / "claude-notify.sh"
 
-# The thirteen, in the order they have in muxconfig.KEYS and profile.sh's
+# All of them, in the order they have in muxconfig.KEYS and profile.sh's
 # MUX_CONFIG_KEYS -- the order a reader comparing the three lists expects,
 # and the order the rows come out in, because this dict is what draws them.
 NOTIFY_KEYS: dict[str, dict] = {
@@ -91,6 +91,11 @@ NOTIFY_KEYS: dict[str, dict] = {
     "MUXTOPUS_NOTIFY_UPDATE": {
         "label": "A new muxtopus release", "kind": "onoff",
         "hint": "once per version, with the headline of its notes -- off by default"},
+    # TWO TAG COMBINATIONS, off by default: a tag alone changes too often to
+    # page anybody, these two mean somebody should act.
+    "MUXTOPUS_NOTIFY_TAGS": {
+        "label": "A slot or a server is stuck", "kind": "onoff",
+        "hint": "e2e slot waited on 30m+; a done lane with its dev server still up"},
 }
 
 # The blocked-after row is minutes on disk and words on screen. One table,

@@ -218,7 +218,11 @@ def model_choices() -> list[str]:
 # what an unknown state from a newer watchdog has to do.
 STATES: dict[str, tuple[str, str, bool]] = {
     "due": ("due", RED, True),
-    "limited": ("limited", YELLOW, True),
+    # Stopped abruptly by the limit banner. The NAME stays `limited` -- the
+    # watchdog, the phone and the budget guard all key on it -- and only the
+    # words change: "limit hit" is what happened, set against `paused`, which
+    # is a window the watchdog cooled down BEFORE the limit.
+    "limited": ("limit hit", YELLOW, True),
     "working": ("working", GREEN, False),
     # THE "nothing is ever going to touch this" state. idle stays dim because
     # it is a fact about the last turn and usually means finished; stranded is
@@ -231,6 +235,17 @@ STATES: dict[str, tuple[str, str, bool]] = {
     # something (an opt-out, the global switch, --dry-run) is holding the
     # resume back. A resume nobody can see coming is worse than no resume.
     "resume-due": ("resume due", YELLOW, False),
+    # THE STATES OF "WHAT IS IDLE ACTUALLY DOING" (docs/watchdog.md, States
+    # and tags). Before them every one of these read `idle`: a lane whose
+    # tests were still running, a lane that had finished, a lane that had
+    # stopped at a checkpoint and one that died on an API error.
+    "queued": ("queued", YELLOW, False),          # a resume waiting for its wave
+    "paused": ("paused", YELLOW, False),          # wound down before the limit
+    "error": ("error", RED, False),               # the turn ended on an API error
+    "background": ("background", GREEN, False),   # the turn left a job running
+    "orchestrating": ("orchestrating", DIM, False),  # idle on purpose: its lanes run
+    "handed-off": ("handed off", "#7fb7d9", False),  # stopped at a checkpoint, note left
+    "done": ("done", GREEN, False),               # handover.sh done: safe to close
 }
 
 
