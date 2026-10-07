@@ -100,6 +100,9 @@ OPTOUT="$STATE_DIR/optout"
 TOKDIR="$STATE_DIR/tokens"
 REPOS="$STATE_DIR/repos.tsv"
 USAGE="$STATE_DIR/usage.tsv"
+# Every reading claude-usage.sh took, appended: the budget guard reads the
+# observed rate and the manual weekly resets out of it.
+USAGE_LOG="$STATE_DIR/usage.log"
 # SESSION MONITORING is a SEPARATE power from the restart flag, and a separate
 # switch. Restarting a window that already stopped cannot lose anything;
 # telling a working window to wrap up changes what it is doing, so it is opt-in
@@ -279,6 +282,33 @@ MEMORY="$STATE_DIR/memory"
 # Sessions already told to stop a dev server, once per low-memory episode:
 #   sid <TAB> episode-start
 MEM_TOLD="$STATE_DIR/memory-told"
+# THE BUDGET GUARD (budget_check; docs/budget.md). The memory guard's twin for
+# the USAGE budget. MEASURED on 2026-10-06, Max 5x: nineteen lanes started
+# together after a reset spent 61% of the 5-hour window in about fifteen
+# minutes -- a fresh or cold lane's first quarter hour costs a median 3.5% of
+# that window, and 19 x 3.5 is 66. Every lane then stopped at the limit at
+# once. So a launch is HELD past a cap of working windows, past a session
+# line, when it could not reach a checkpoint before the budget runs out, and
+# when the week is ahead of its pace; resumes after a reset go out in waves.
+#
+# THE NUMBERS COME FROM A PLAN PRESET (budget_preset), each one overridable on
+# its own: an empty knob means "the preset's value". off holds nothing and
+# leaves every wind-down exactly as it was before the guard existed.
+BUDGET="${WATCHDOG_BUDGET:-on}"
+BUDGET_PLAN_CFG="${WATCHDOG_BUDGET_PLAN:-auto}"
+BUDGET_CKPT_MIN="${WATCHDOG_BUDGET_CHECKPOINT_MIN:-30}"
+BUDGET_WAVE_MIN="${WATCHDOG_BUDGET_WAVE_MIN:-10}"
+BUDGET_FRESH_CTX="${WATCHDOG_BUDGET_FRESH_CTX:-250000}"
+BUDGET_PROBE_MIN="${WATCHDOG_BUDGET_PROBE_MIN:-15}"
+# ITS VERDICT, `key <TAB> value` like usage.tsv, rewritten wherever the
+# schedules are judged; the dashboard's Budget panel and --budget read it.
+BUDGET_FILE="$STATE_DIR/budget"
+# Every window the guard let START (a launch or a resume), for the cap and
+# the waves:  epoch <TAB> kind <TAB> slug   (kind: launch | wave | resume)
+BUDGET_STARTS="$STATE_DIR/budget-starts"
+# Manual weekly resets recorded by hand (--budget-reset-spent), for the ones
+# usage.log could not see:  epoch <TAB> note
+BUDGET_RESETS="$STATE_DIR/week-resets"
 
 mkdir -p "$STATE_DIR"
 [ -f "$MSGFILE" ] || printf '%s\n' "$DEFAULT_MSG" > "$MSGFILE"
@@ -462,6 +492,16 @@ case "${1:---once}" in
              printf 'sha\t%s\nyes\t%s\nquestion\t%s\n%s\n' "$PROMPT_SHA" "$PROMPT_YES" "$PROMPT_Q" "$PROMPT_BOX"
              exit 0 ;;
   --tree)    MODE=tree ;;
+  # THE BUDGET GUARD'S PICTURE, computed now (read-only: nothing is held,
+  # launched or published by asking).
+  --budget)  MODE=budget ;;
+  # A MANUAL WEEKLY RESET the owner spent (the claude.ai reset button) and
+  # usage.log could not see -- pressed and used up between two readings.
+  # Counted as a whole week already consumed until the week's own reset.
+  --budget-reset-spent)
+             printf '%s\t%s\n' "$(date +%s)" "${2:-by hand}" >> "$STATE_DIR/week-resets"
+             echo "recorded a manual weekly reset as spent ($MUX_LABEL); it counts until the week resets"
+             exit 0 ;;
   --restore) MODE=restore; RESTORE_FILE="${2:-}" ;;
   --check)   MODE=check; CHECK_ARG="${2:-}"; CHECK_BODY=""
              case "${2:-}" in --body) CHECK_ARG=""; CHECK_BODY=1 ;; esac
@@ -547,6 +587,93 @@ reset_epoch() {
     e="$(date -d "tomorrow $hhmm" +%s 2>/dev/null)"
   fi
   printf '%s' "$e"
+}
+
+# A date with no year ("Oct 10, 5pm", "Oct 10, 17:00") as an epoch: the
+# weekly banner and usage.tsv both print one. More than eight days behind is
+# next year's; nothing is ever further ahead than a week.
+date_noyear() {
+  local s e
+  s="$(sed -E 's/,//; s/([0-9])([ap]m)$/\1 \2/I' <<<"$1")"
+  e="$(date -d "$s" +%s 2>/dev/null)" || return 1
+  [ -n "$e" ] && [ "$e" -lt $(( $(date +%s) - 8 * 86400 )) ] && e="$(date -d "$s next year" +%s 2>/dev/null)"
+  printf '%s' "$e"
+}
+
+# THE LIMITS "hit your session limit" NEVER MATCHED. MEASURED across this
+# box's transcripts -- the `<synthetic>` records Claude Code writes when it
+# refuses a turn -- beside the session banners: 18 x "You've hit your weekly
+# limit · resets Oct 10, 5pm (Europe/Bucharest)" and 7 x "You've reached your
+# Fable limit. Run /usage-credits to continue or switch models". A window
+# stopped by either was published as `idle`, and nothing restarted it. And on
+# 2026-10-05 (roadmap 36) lanes ENDED THEIR TURN in their own words -- "your
+# usage limit was reached", a subagent having hit it -- and were idle too.
+# For a pane that is not working and shows no session banner:
+#
+#   week   the weekly banner; its reset carries a date
+#   model  "reached your <Model> limit": no time on it -- usage.tsv's
+#          model_reset when there is one
+#   said   the last thing the session SAID is that it hit a limit. Taken only
+#          when usage.log CORROBORATES it -- a reading at 100% (session or
+#          week) within the hour around the stop -- because a model talking
+#          ABOUT limits is not a model stopped by one, and this window types.
+#
+# A STOP IS DUE at its reset, OR EARLIER once a reading taken AFTER the stop
+# shows the budget open again (session and week under 100%, the model too for
+# a model stop): that is what a manual reset on claude.ai, or an early one,
+# looks like from here. With no reset time at all the stop's own moment keys
+# the PROMPTED ledger, so it is still prompted once.
+#
+# Sets LIM_KIND LIM_RESET LIM_EPOCH LIM_DUE; returns 1 when there is no limit.
+LIM_SAID_RE='(usage|session|weekly|rate) limit (was |has been |is )?(reached|hit)|(hit|reached) (my|your|the|its|our) (session|weekly|usage) limit'
+limit_scan() {
+  local text="$1" said="$2" tat="$3" now="$4" r e at sp wp mp lo hi
+  LIM_KIND=""; LIM_RESET="-"; LIM_EPOCH=""; LIM_DUE=0
+  case "$tat" in ''|*[!0-9]*) tat="" ;; esac
+  if grep -q "hit your weekly limit" <<<"$text"; then
+    LIM_KIND=week
+    r="$(grep -oE 'resets [A-Z][a-z]{2} [0-9]{1,2}, [0-9]{1,2}(:[0-9]{2})? ?[ap]m' <<<"$text" | tail -1)"
+    r="${r#resets }"
+    if [ -n "$r" ]; then LIM_RESET="${r// /}"; LIM_EPOCH="$(date_noyear "$r")"; fi
+  elif grep -qE "reached your [A-Za-z0-9 .-]+ limit" <<<"$text"; then
+    prompt_scan "$text" && return 1
+    LIM_KIND=model
+    r="$(usage_val model_reset)"
+    [ -n "$r" ] && LIM_EPOCH="$(date_noyear "$r")"
+  elif [ -n "$tat" ] && [ "$said" != "-" ] && grep -qiE "$LIM_SAID_RE" <<<"$said"; then
+    prompt_scan "$text" && return 1
+    lo="$(date -d "@$(( tat - 1800 ))" '+%F %T')"; hi="$(date -d "@$(( tat + 3600 ))" '+%F %T')"
+    tail -n 400 "$USAGE_LOG" 2>/dev/null | awk -F'\t' -v lo="$lo" -v hi="$hi" '
+      $1 >= lo && $1 <= hi && ($2 == "session=100%" || $4 == "week=100%") {f = 1}
+      END {exit !f}' || return 1
+    LIM_KIND=said
+    wp="$(usage_val week_pct)"; wp="${wp%%.*}"
+    if [ "${wp:-0}" -ge 100 ] 2>/dev/null; then
+      r="$(usage_val week_reset)"; [ -n "$r" ] && LIM_EPOCH="$(date_noyear "$r")"
+    else
+      LIM_EPOCH="$(usage_val session_reset_at)"
+    fi
+  else
+    return 1
+  fi
+  case "$LIM_EPOCH" in ''|*[!0-9]*) LIM_EPOCH="" ;; esac
+  if [ -n "$LIM_EPOCH" ]; then
+    [ "$LIM_RESET" = "-" ] && LIM_RESET="$(date -d "@$LIM_EPOCH" '+%b%d,%H:%M' 2>/dev/null || echo -)"
+    [ "$now" -ge $(( LIM_EPOCH + GRACE )) ] && { LIM_DUE=1; return 0; }
+  fi
+  # Lifted early? A reading from AFTER the stop, with room in it again.
+  at="$(usage_val at)"; sp="$(usage_val session_pct)"; wp="$(usage_val week_pct)"; mp="$(usage_val model_pct)"
+  sp="${sp%%.*}"; wp="${wp%%.*}"; mp="${mp%%.*}"
+  if [ -n "$tat" ] && [ "${at:-0}" -gt "$tat" ] 2>/dev/null \
+     && [ "${sp:-100}" -lt 100 ] 2>/dev/null && [ "${wp:-100}" -lt 100 ] 2>/dev/null \
+     && { [ "$LIM_KIND" != model ] || [ "${mp:-100}" -lt 100 ] 2>/dev/null; }; then
+    LIM_DUE=1
+    # Keyed by the stop when it carries no reset, so it is prompted once.
+    [ -n "$LIM_EPOCH" ] || LIM_EPOCH="$tat"
+    return 0
+  fi
+  [ -n "$LIM_EPOCH" ] || LIM_EPOCH="$tat"
+  return 0
 }
 
 transcript_of() {
@@ -752,12 +879,19 @@ usage_val() {
 # hard and gives an otherwise-quiet session a nudge -- but it never winds down
 # a session that has barely started, which would spend a checkpoint turn to
 # save a bucket that is about to refill anyway.
+#
+# A THIRD ARGUMENT SHIFTS BOTH SESSION LINES: the budget guard's priority
+# class (budget_prio_shift), so a p2 lane is nudged and wound down ten points
+# before a p1 and a release lane ten points after. The week is not shifted:
+# it is one bucket for every class, and the guard paces it on launches.
 band_for() {
-  local s="${1%%.*}" w="${2%%.*}" b=0
+  local s="${1%%.*}" w="${2%%.*}" sh="${3:-0}" b=0 soft hard
   case "$s" in ''|*[!0-9]*) s=0 ;; esac
   case "$w" in ''|*[!0-9]*) w=0 ;; esac
-  [ "$s" -ge "$SOFT_PCT" ] && b=1
-  [ "$s" -ge "$HARD_PCT" ] && b=2
+  soft=$(( SOFT_PCT + sh )); hard=$(( HARD_PCT + sh ))
+  [ "$hard" -gt 99 ] && hard=99
+  [ "$s" -ge "$soft" ] && b=1
+  [ "$s" -ge "$hard" ] && b=2
   if [ "$w" -ge "$HARD_PCT" ]; then
     [ "$b" -eq 1 ] && b=2
     [ "$b" -eq 0 ] && b=1
@@ -821,7 +955,14 @@ wind_down() {
   # already stopped, and typing at it would start work rather than end it.
   [ "$st" = "working" ] || return 0
 
-  local b; b="$(band_for "$spct" "$wpct")"
+  # THE BUDGET GUARD'S CLASS of this window shifts its lines (band_for),
+  # and only while the guard is on: off is exactly the behaviour before it.
+  local prio=p1 sh=0
+  if [ "$BUDGET" = on ]; then
+    prio="$(budget_prio_of_slug "$(lane_slug_of "$name")")"
+    sh="$(budget_prio_shift "$prio")"
+  fi
+  local b; b="$(band_for "$spct" "$wpct" "$sh")"
   [ "$b" = 0 ] && return 0
 
   # THE HARD BAND ONLY FIRES WHEN IT BUYS SOMETHING. A wind-down costs a
@@ -830,7 +971,12 @@ wind_down() {
   # continue -- or when /low-priority is not available to carry this session
   # through the limit. Otherwise the cheapest correct thing is to let it reach
   # the banner and continue from there, which costs nothing at all.
-  if [ "$b" = 2 ]; then
+  #
+  # EXCEPT FOR A LOWER CLASS UNDER THE GUARD. Pausing a p2 or ops lane early
+  # is not about that lane's own restart: it is what leaves the rest of the
+  # window to the p1 and release lanes, so it is worth the checkpoint turn
+  # whatever this lane's context.
+  if [ "$b" = 2 ] && [ "$prio" != p2 ] && [ "$prio" != ops ]; then
     local wi="${wpct%%.*}"
     case "$wi" in ''|*[!0-9]*) wi=0 ;; esac
     if [ "${ctx:-0}" -le "$FRESH_CTX" ] && [ "$wi" -lt "$LOWPRI_WEEK" ]; then
@@ -862,7 +1008,7 @@ wind_down() {
   mkdir -p "$DIRECTIVES"
   printf '%s\n' "$msg" > "$DIRECTIVES/$sid"
   printf '%s\t%s\t%s\t%s\n' "$sid" "$b" "$qkey" "$now" >> "$WOUND"
-  log "wound down ${sid:0:8} in $name band=$b session=${spct}% week=${wpct}% ctx=$ctx"
+  log "wound down ${sid:0:8} in $name band=$b session=${spct}% week=${wpct}% ctx=$ctx$([ "$sh" != 0 ] && printf ' class=%s' "$prio")"
   wound="$now"
 }
 
@@ -1466,6 +1612,604 @@ mem_stop_dev() {
         print sid[pick] "\t" nm[pick] "\t" own[pick]
       }
     }')
+  return 0
+}
+
+# ------------------------------------------------------- the budget guard
+# HOW MUCH OF THE ACCOUNT'S BUDGET IS LEFT, AND MAY ONE MORE WINDOW START?
+# budget_check sets the BG_* figures below; budget_gate answers one entry;
+# budget_publish writes $BUDGET_FILE for the dashboard. docs/budget.md is the
+# user's half of all this, with the measurement the presets came from.
+
+# THE PLAN, from the account's own credentials. rateLimitTier says what the
+# limits ARE (default_claude_max_5x); subscriptionType only what is billed --
+# the work account on this box is subscriptionType "team" with the max_5x
+# tier, so the tier is read first. Once per daemon process: a plan does not
+# change between passes, and a config edit re-execs the daemon anyway.
+BUDGET_DETECTED=""; BUDGET_DETECTED_SRC=""
+budget_detect() {
+  [ -n "$BUDGET_DETECTED" ] && return 0
+  local c="$MUX_CONFIG_DIR/.credentials.json" tier sub
+  tier="$(mux_json -r '.claudeAiOauth.rateLimitTier // empty' "$c" 2>/dev/null)"
+  sub="$(mux_json -r '.claudeAiOauth.subscriptionType // empty' "$c" 2>/dev/null)"
+  case "$tier" in
+    *max_20x*) BUDGET_DETECTED=max20x ;;
+    *max_5x*)  BUDGET_DETECTED=max5x ;;
+    *) case "$sub" in
+         pro)             BUDGET_DETECTED=pro ;;
+         team|enterprise) BUDGET_DETECTED=team ;;
+       esac ;;
+  esac
+  if [ -n "$BUDGET_DETECTED" ]; then
+    BUDGET_DETECTED_SRC="detected (${tier:-$sub})"
+  else
+    # A GUESS, AND SAID TO BE ONE. No tier means no login yet, or a CLI that
+    # stopped writing it; the Max 5x numbers are the measured ones.
+    BUDGET_DETECTED=max5x
+    BUDGET_DETECTED_SRC="not detected (${sub:-no subscription} without a rateLimitTier) -- the max5x numbers"
+  fi
+}
+
+# THE PRESETS: lanes hold% lane%/h start% day% wave.
+#
+# MAX 5X IS MEASURED, on this box over the eight days to 2026-10-06 (25,027
+# API messages, each counted once, priced API-equivalent and calibrated
+# against the hourly usage.log readings): 1% of the 5-hour window is $2.19,
+# one active lane-hour of Opus 5.5 a median 6.3% and a mean 8.2% of it, a
+# fresh or cold lane's first fifteen minutes 3.5%, a week about 7.5 windows.
+# So: four working windows burn ~25%/h and a window lasts ~4 hours at the cap;
+# hold at 70 leaves an hour of that for what is already running; a wave of two
+# cold starts is ~7%.
+#
+# THE OTHERS ARE SCALED, NOT MEASURED -- by the session multipliers Anthropic
+# publishes (Pro 1, Max 5x 5, Max 20x 20). Team is taken as Max 5x because
+# the one Team account here carries the max_5x tier. custom starts from Max
+# 5x and expects its knobs to be set.
+budget_preset() {
+  case "$1" in
+    pro)    BP=(1 60 40 17 14 1) ;;
+    max20x) BP=(12 80 2 1 14 6) ;;
+    *)      BP=(4 70 8 4 14 2) ;;
+  esac
+}
+# A knob, or the preset's number when the knob is unset or not a number.
+budget_knob() {
+  case "$1" in ''|-|*[!0-9]*) printf -v "$3" '%s' "$2" ;; *) printf -v "$3" '%s' "$1" ;; esac
+}
+budget_resolve() {
+  local plan="$BUDGET_PLAN_CFG"
+  BG_PLAN_SRC="WATCHDOG_BUDGET_PLAN=$plan"
+  case "$plan" in
+    pro|max5x|max20x|team|custom) ;;
+    *) budget_detect; plan="$BUDGET_DETECTED"; BG_PLAN_SRC="$BUDGET_DETECTED_SRC" ;;
+  esac
+  BG_PLAN="$plan"
+  budget_preset "$plan"
+  budget_knob "${WATCHDOG_BUDGET_LANES:-}"     "${BP[0]}" BG_LANES
+  budget_knob "${WATCHDOG_BUDGET_HOLD_PCT:-}"  "${BP[1]}" BG_HOLD
+  budget_knob "${WATCHDOG_BUDGET_LANE_PCT:-}"  "${BP[2]}" BG_LANE_PCT
+  budget_knob "${WATCHDOG_BUDGET_START_PCT:-}" "${BP[3]}" BG_START
+  budget_knob "${WATCHDOG_BUDGET_DAY_PCT:-}"   "${BP[4]}" BG_DAY
+  budget_knob "${WATCHDOG_BUDGET_WAVE:-}"      "${BP[5]}" BG_WAVE
+  budget_knob "$BUDGET_CKPT_MIN"  30     BG_CKPT
+  budget_knob "$BUDGET_WAVE_MIN"  10     BG_WAVE_MIN
+  budget_knob "$BUDGET_FRESH_CTX" 250000 BG_FRESH_CTX
+  budget_knob "$BUDGET_PROBE_MIN" 15     BG_PROBE
+}
+
+# PRIORITY CLASSES, from an entry's `priority:` field. Absent is p1: an entry
+# nobody labelled is ordinary work, not the first thing to drop.
+#
+#   release  release-gating work: held LAST, wound down LAST, resumed FIRST
+#   p1       ordinary work
+#   ops      sweeps and housekeeping: cheap, but they can wait for a p1
+#   p2       nice-to-have: held first, wound down first, resumed last
+#
+# ONE SHIFT TABLE moves both lines: the hold line (WATCHDOG_BUDGET_HOLD_PCT)
+# and the wind-down line (WATCHDOG_HARD_PCT). A p2 lane is held 10 points
+# earlier and told to checkpoint 10 points earlier; a release lane 10 later.
+budget_prio_norm() {
+  local v="${1,,}"
+  case "$v" in
+    release|release-gating|release-gate|gating|p0) printf release ;;
+    p2|low)  printf p2 ;;
+    ops|op)  printf ops ;;
+    *)       printf p1 ;;
+  esac
+}
+budget_prio_shift() {
+  case "$1" in release) printf 10 ;; ops) printf -- -5 ;; p2) printf -- -10 ;; *) printf 0 ;; esac
+}
+budget_prio_rank() {
+  case "$1" in release) printf 0 ;; ops) printf 2 ;; p2) printf 3 ;; *) printf 1 ;; esac
+}
+budget_prio_of_entry() { budget_prio_norm "$(sched_field "$1" priority)"; }
+# A running window's class: the entry that launched it (tree.tsv column 6),
+# else p1 -- a window opened by hand has no entry to ask.
+budget_prio_of_slug() {
+  local b; b="$(tree_field "$1" 6)"
+  case "$b" in
+    *.md) if [ -f "$SCHEDULES/$b" ]; then budget_prio_of_entry "$SCHEDULES/$b"; return 0; fi ;;
+  esac
+  printf p1
+}
+
+# THE WEEK. Sets BG_WEEK (the reading), BG_WEEK_RESET_AT, BG_WEEK_START,
+# BG_RESETS_USED, BG_WEEK_EFF and BG_WEEK_ALLOWED; all empty when the week
+# cannot be read, which holds nothing.
+#
+# A MANUAL RESET IS BUDGET ALREADY SPENT. The claude.ai reset button empties
+# the week without moving its reset date, so a week that reads 33% after one
+# press has really used 133% of a week's allowance -- and pacing against the
+# 33 would let it end on Tuesday again. MEASURED 2026-10-06 07:19 in
+# usage.log: week 100% -> 5%, "resets Oct 10" on both sides. So: the week %
+# falling by 40 points or more between two readings whose reset DATE is the
+# same is a manual reset (a natural one moves the date a week). Ones the log
+# could not see -- a reset pressed and spent between two readings -- are
+# recorded by hand with --budget-reset-spent.
+#
+# AND THE OBSERVED SESSION RATE, from the same read: the last two readings,
+# if they belong to one 5-hour window and are ten minutes or more apart.
+BG_OBS_RATE=""
+budget_week() {
+  local now="$1" wp wr e ws n=0 hand=0 out t1 s1 r1 t2 s2 r2 e1 e2 d1 d2
+  BG_WEEK=""; BG_WEEK_RESET_AT=""; BG_WEEK_START=""; BG_RESETS_USED=0
+  BG_WEEK_EFF=""; BG_WEEK_ALLOWED=""; BG_OBS_RATE=""
+  wp="$(usage_val week_pct)"; wp="${wp%%.*}"
+  wr="$(usage_val week_reset)"
+  case "$wp" in ''|*[!0-9]*) wp="" ;; esac
+  e=""
+  if [ -n "$wr" ]; then
+    # "Oct 10, 16:59" carries no year: a date more than eight days behind
+    # is next year's.
+    e="$(date -d "${wr/,/}" +%s 2>/dev/null)"
+    if [ -n "$e" ] && [ "$e" -lt $(( now - 8 * 86400 )) ]; then
+      e="$(date -d "${wr/,/} next year" +%s 2>/dev/null)"
+    fi
+  fi
+  ws=""
+  [ -n "$e" ] && ws="$(date -d "@$(( e - 7 * 86400 ))" '+%F %T' 2>/dev/null)"
+  out="$(tail -n 4000 "$USAGE_LOG" 2>/dev/null | awk -F'\t' -v ws="$ws" '
+    $2 ~ /^session=/ && $4 ~ /^week=/ {
+      s = $2; sub(/^session=/, "", s); sub(/%$/, "", s)
+      w = $4; sub(/^week=/, "", w);    sub(/%$/, "", w)
+      r = $3; sub(/^resets=/, "", r)
+      d = $5; sub(/^resets=/, "", d);  sub(/,.*/, "", d)
+      if (s !~ /^[0-9]+$/ || w !~ /^[0-9]+$/) next
+      if (ws != "" && pw != "" && pw + 0 >= 50 && w + 0 <= pw - 40 && d == pd && $1 >= ws) n++
+      pw = w; pd = d
+      t1 = t2; s1 = s2; r1 = r2; t2 = $1; s2 = s; r2 = r
+    }
+    END { printf "%d\t%s\t%s\t%s\t%s\t%s\t%s", n, t1, s1, r1, t2, s2, r2 }')"
+  IFS=$'\t' read -r n t1 s1 r1 t2 s2 r2 <<<"$out"
+  # The observed rate: same window (the reset clock within two minutes --
+  # the panel rounds, 16:59 and 17:00 are one window), not falling.
+  case "$r1$r2" in [0-9][0-9]:[0-9][0-9][0-9][0-9]:[0-9][0-9]) ;; *) r1="" ;; esac
+  if [ -n "$t1" ] && [ -n "$r1" ] && [ "${s2:-0}" -ge "${s1:-0}" ] 2>/dev/null; then
+    d1=$(( 10#${r1%%:*} * 60 + 10#${r1##*:} ))
+    d2=$(( 10#${r2%%:*} * 60 + 10#${r2##*:} ))
+    # 23:59 and 00:00 are one window too.
+    d1=$(( (d1 - d2 + 1440) % 1440 ))
+    if [ "$d1" -le 2 ] || [ "$d1" -ge 1438 ]; then
+      e1="$(date -d "$t1" +%s 2>/dev/null)"; e2="$(date -d "$t2" +%s 2>/dev/null)"
+      if [ -n "$e1" ] && [ -n "$e2" ] && [ $(( e2 - e1 )) -ge 600 ]; then
+        BG_OBS_RATE=$(( (s2 - s1) * 3600 / (e2 - e1) ))
+      fi
+    fi
+  fi
+  [ -n "$wp" ] && [ -n "$e" ] || return 0
+  BG_WEEK="$wp"; BG_WEEK_RESET_AT="$e"; BG_WEEK_START=$(( e - 7 * 86400 ))
+  [ -f "$BUDGET_RESETS" ] && hand="$(awk -F'\t' -v ws="$BG_WEEK_START" '$1+0 >= ws {k++} END {print k+0}' "$BUDGET_RESETS" 2>/dev/null)"
+  BG_RESETS_USED=$(( ${n:-0} + ${hand:-0} ))
+  BG_WEEK_EFF=$(( wp + 100 * BG_RESETS_USED ))
+  # THE PACE: DAY_PCT a day, with one day in hand so a week that starts busy
+  # is not held on its first morning. 14 a day is 98 by the reset.
+  BG_WEEK_ALLOWED=$(( BG_DAY * ( (now - BG_WEEK_START) / 3600 + 24 ) / 24 ))
+}
+
+# THE WHOLE PICTURE, once per judgement. Sets:
+#   BG_ON          1 when the guard holds anything at all
+#   BG_RUNNING     windows working now, plus starts since status.tsv was taken
+#   BG_EST         the session % NOW, estimated; "" when blind
+#   BG_EST_SRC     how it was arrived at, in words
+#   BG_BLIND       why there is no estimate, or ""
+#   BG_RESET_AT    the 5-hour window's reset epoch, or ""
+#   BG_RATE        %/h the estimate runs at; BG_RATE_SRC says which rate
+#   BG_EXHAUST_AT  when the window runs out at that rate, "" if not before the reset
+#
+# THE ESTIMATE IS WHY THIS IS NOT JUST A THRESHOLD ON usage.tsv. A reading is
+# taken every WATCHDOG_USAGE_EVERY minutes (60), and the storm this guard
+# exists for spent 61% in fifteen of them: a line drawn on the last reading
+# would have been crossed four times over before it was read again. So the
+# figure judged is the reading PLUS the burn since it, at the faster of two
+# rates: the one observed between the last two readings, and the working
+# windows times WATCHDOG_BUDGET_LANE_PCT -- which reacts the moment more
+# windows start, before any reading can. Conservative on purpose: it holds
+# early rather than late. The panel says it is an estimate, and how made.
+budget_check() {
+  local now sp at e age el base st_at rmod
+  now="$(date +%s)"
+  budget_resolve
+  BG_ON=0; [ "$BUDGET" = on ] && BG_ON=1
+  BG_NOW="$now"
+  BG_WORKING="$(awk -F'\t' '$6 == "working" {n++} END {print n+0}' "$STATUS" 2>/dev/null)"
+  BG_WORKING="${BG_WORKING:-0}"
+  st_at="$(stat -c %Y "$STATUS" 2>/dev/null || echo 0)"
+  BG_RUNNING=$(( BG_WORKING + $(awk -F'\t' -v t="$st_at" '$1 + 0 > t {n++} END {print n+0}' "$BUDGET_STARTS" 2>/dev/null || echo 0) ))
+  BG_WAVED="$(awk -F'\t' -v t=$(( now - BG_WAVE_MIN * 60 )) '$1 + 0 > t && ($2 == "wave" || $2 == "resume") {n++} END {print n+0}' "$BUDGET_STARTS" 2>/dev/null)"
+  BG_WAVED="${BG_WAVED:-0}"
+
+  budget_week "$now"
+  BG_EST=""; BG_EST_SRC=""; BG_BLIND=""; BG_RATE=0; BG_RATE_SRC=""; BG_EXHAUST_AT=""
+  sp="$(usage_val session_pct)"; sp="${sp%%.*}"
+  at="$(usage_val at)"; e="$(usage_val session_reset_at)"
+  case "$sp" in ''|*[!0-9]*) sp="" ;; esac
+  case "$at" in ''|*[!0-9]*) at="" ;; esac
+  case "$e" in ''|*[!0-9]*) e="" ;; esac
+  BG_RESET_AT="$e"
+  if [ -z "$sp" ] || [ -z "$at" ]; then
+    BG_BLIND="no session reading in $USAGE"
+  else
+    age=$(( (now - at) / 60 ))
+    if [ "$age" -gt "$USAGE_STALE" ]; then
+      BG_BLIND="the ${sp}% reading is ${age}m old, past WATCHDOG_USAGE_STALE=${USAGE_STALE}m"
+    fi
+  fi
+  rmod=$(( BG_RUNNING * BG_LANE_PCT ))
+  BG_RATE="$rmod"; BG_RATE_SRC="$BG_RUNNING working x ${BG_LANE_PCT}%/h"
+  if [ -n "$BG_OBS_RATE" ] && [ "$BG_OBS_RATE" -gt "$rmod" ]; then
+    BG_RATE="$BG_OBS_RATE"; BG_RATE_SRC="observed between the last two readings"
+  fi
+  [ -z "$BG_BLIND" ] || return 0
+  if [ -n "$e" ] && [ "$now" -ge "$e" ] && [ "$at" -lt "$e" ]; then
+    # The window has reset since the reading: it starts again from nothing.
+    # The next reading (asked for every WATCHDOG_BUDGET_PROBE_MIN while
+    # anything works) replaces this with a measured figure.
+    base=0; el=$(( now - e ))
+    BG_EST_SRC="the window reset at $(date -d "@$e" '+%H:%M'), + ${BG_RATE}%/h since"
+    BG_RESET_AT=$(( e + 5 * 3600 ))
+  else
+    base="$sp"; el=$(( now - at ))
+    BG_EST_SRC="read ${sp}% $(( el / 60 ))m ago, + ${BG_RATE}%/h since"
+  fi
+  BG_EST=$(( base + BG_RATE * el / 3600 ))
+  [ "$BG_EST" -gt 100 ] && BG_EST=100
+  if [ "$BG_RATE" -gt 0 ]; then
+    BG_EXHAUST_AT=$(( now + (100 - BG_EST) * 3600 / BG_RATE ))
+    if [ -n "$BG_RESET_AT" ] && [ "$BG_EXHAUST_AT" -ge "$BG_RESET_AT" ]; then BG_EXHAUST_AT=""; fi
+  fi
+  return 0
+}
+
+# MAY ONE MORE WINDOW START? budget_gate PRIO WAVED -> 0 yes, 1 held with
+# BG_HOLD_WHY. WAVED is 1 for a start that belongs to a wave: a resume, and
+# an `at: reset` entry, both of which arrive all at once after a reset by
+# their nature. Asked in this order, so a held entry names the first thing
+# in its way: the cap, the wave, the session line, the checkpoint, the week.
+BG_HOLD_WHY=""
+budget_gate() {
+  local prio="$1" waved="${2:-0}" sh thr avail burn mins left hhmm
+  BG_HOLD_WHY=""
+  [ "$BG_ON" = 1 ] || return 0
+  hhmm=""; [ -n "$BG_RESET_AT" ] && hhmm="$(date -d "@$BG_RESET_AT" '+%H:%M' 2>/dev/null)"
+  if [ "$BG_RUNNING" -ge "$BG_LANES" ]; then
+    BG_HOLD_WHY="held: budget -- $BG_RUNNING windows working, the cap is $BG_LANES (WATCHDOG_BUDGET_LANES, plan $BG_PLAN); starts when one stops"
+    return 1
+  fi
+  if [ "$waved" = 1 ] && [ "$BG_WAVED" -ge "$BG_WAVE" ]; then
+    BG_HOLD_WHY="held: budget -- resuming in waves of $BG_WAVE every ${BG_WAVE_MIN}m (WATCHDOG_BUDGET_WAVE); $BG_WAVED started in the last ${BG_WAVE_MIN}m, $prio waits its turn"
+    return 1
+  fi
+  if [ -n "$BG_EST" ]; then
+    sh="$(budget_prio_shift "$prio")"
+    thr=$(( BG_HOLD + sh )); [ "$thr" -gt 99 ] && thr=99
+    if [ "$BG_EST" -ge "$thr" ]; then
+      case "$sh" in 0) sh="" ;; -*) sh=" $sh for $prio" ;; *) sh=" +$sh for $prio" ;; esac
+      BG_HOLD_WHY="held: budget -- the session is at ~${BG_EST}% ($BG_EST_SRC), at or over the $prio line of ${thr}% (WATCHDOG_BUDGET_HOLD_PCT=$BG_HOLD$sh); starts after the reset${hhmm:+ at $hhmm}"
+      return 1
+    fi
+    # NEVER START WHAT CANNOT REACH A CHECKPOINT: the start costs START_PCT,
+    # and then every window -- this one included -- burns LANE_PCT an hour.
+    # If what is left runs out before the lane has had WATCHDOG_BUDGET_
+    # CHECKPOINT_MIN minutes, AND before the reset refills it, the lane would
+    # stop at the limit mid-step with nothing committed: a start that buys
+    # nothing but the resume it then needs.
+    avail=$(( 100 - BG_EST - BG_START ))
+    burn=$(( (BG_RUNNING + 1) * BG_LANE_PCT ))
+    left=999999
+    [ -n "$BG_RESET_AT" ] && left=$(( (BG_RESET_AT - BG_NOW) / 60 ))
+    if [ "$avail" -le 0 ]; then mins=0
+    elif [ "$burn" -gt 0 ]; then mins=$(( avail * 60 / burn ))
+    else mins=999999; fi
+    if [ "$mins" -lt "$BG_CKPT" ] && [ "$mins" -lt "$left" ]; then
+      BG_HOLD_WHY="held: budget -- a window started now would run out in ~${mins}m (session ~${BG_EST}%, ${burn}%/h with it), before a ${BG_CKPT}m checkpoint (WATCHDOG_BUDGET_CHECKPOINT_MIN) and before the reset${hhmm:+ at $hhmm}"
+      return 1
+    fi
+  fi
+  # A SPENT WEEK holds every class, release too: the pace below allows
+  # more than 100% late in the week (14 a day plus a day in hand is 112 by
+  # Friday), and a window started into a week at its limit stops on its
+  # first turn. It lifts when a reading shows room (the week's reset, or a
+  # manual one).
+  if [ -n "$BG_WEEK" ] && [ "$BG_WEEK" -ge 100 ]; then
+    BG_HOLD_WHY="held: budget -- the week is at its limit (${BG_WEEK}%); starts when a reading shows room$([ -n "$BG_WEEK_RESET_AT" ] && printf ' -- it resets %s' "$(date -d "@$BG_WEEK_RESET_AT" '+%a %H:%M' 2>/dev/null)")"
+    return 1
+  fi
+  # THE WEEK'S PACE. Never a release lane: the week line is about not ending
+  # the week early, and a release that waits for Friday is the thing the
+  # budget was being saved for. p2 and ops wait as soon as the week is ahead
+  # of its pace, p1 only when it is two days ahead.
+  if [ -n "$BG_WEEK_EFF" ] && [ "$prio" != release ]; then
+    thr="$BG_WEEK_ALLOWED"
+    [ "$prio" = p1 ] && thr=$(( BG_WEEK_ALLOWED + 2 * BG_DAY ))
+    if [ "$BG_WEEK_EFF" -gt "$thr" ]; then
+      local spent=""
+      [ "$BG_RESETS_USED" -gt 0 ] && spent=" + $BG_RESETS_USED manual reset$([ "$BG_RESETS_USED" -gt 1 ] && printf s) x 100"
+      BG_HOLD_WHY="held: budget -- the week is at ${BG_WEEK_EFF}% effective (${BG_WEEK}%$spent), ahead of the $prio pace of ${thr}% (${BG_DAY}%/day, WATCHDOG_BUDGET_DAY_PCT); release lanes still start"
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# A START, recorded the moment it happens: the cap and the waves count these.
+budget_started() {   # budget_started KIND SLUG
+  printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" >> "$BUDGET_STARTS"
+  BG_RUNNING=$(( ${BG_RUNNING:-0} + 1 ))
+  case "$1" in wave|resume) BG_WAVED=$(( ${BG_WAVED:-0} + 1 )) ;; esac
+  # Kept short: a day of starts is all anything here looks back over.
+  if [ "$(grep -c '' "$BUDGET_STARTS" 2>/dev/null)" -gt 500 ]; then
+    tail -n 200 "$BUDGET_STARTS" > "$BUDGET_STARTS.tmp" && mv "$BUDGET_STARTS.tmp" "$BUDGET_STARTS"
+  fi
+}
+
+# WRITE THE VERDICT for the dashboard and --budget: `key <TAB> value`, one
+# per line, the shape of usage.tsv. HELD and HELD_WHY come from the caller,
+# which is the only one who knows what it held this time; the window counts
+# come from the status table just written and the wound ledger:
+#   running  working now
+#   limited  stopped at a limit (limited / due), waiting for it to lift
+#   queued   due, but waiting for its wave or the cap (acted = queued)
+#   paused   told to checkpoint by a hard wind-down whose window has not reset
+budget_publish() {
+  local held="${1:-0}" why="${2:-}" counts wf="$WOUND"
+  # A missing file is an awk error that would blank every count: no wound
+  # ledger yet is an empty one.
+  [ -f "$wf" ] || wf=/dev/null
+  counts="$(awk -F'\t' -v now="$BG_NOW" '
+    FILENAME == ARGV[1] { if ($2 == 2 && $3 + 0 > now) wound[$1] = 1; next }
+    { if ($6 == "working") r++
+      else if ($6 == "limited" || $6 == "due") l++
+      if ($8 == "queued") q++
+      if ($6 == "idle" && ($1 in wound)) p++ }
+    END { printf "%d\t%d\t%d\t%d", r, l, q, p }' "$wf" "$STATUS" 2>/dev/null)"
+  local r=0 l=0 q=0 p=0 prev
+  [ -n "$counts" ] && IFS=$'\t' read -r r l q p <<<"$counts"
+  # THE LOG GETS THE CHANGES, like the memory guard: one line when the guard
+  # starts holding, one when it stops. The reason itself moves every pass (the
+  # estimate climbs), so a line per entry per change would be a line a pass.
+  prev="$(awk -F'\t' '$1 == "held" {print $2}' "$BUDGET_FILE" 2>/dev/null)"
+  if [ "${prev:-0}" = 0 ] && [ "$held" -gt 0 ]; then
+    log "budget: holding $held launch(es) -- $why"
+  elif [ "${prev:-0}" -gt 0 ] 2>/dev/null && [ "$held" = 0 ]; then
+    log "budget: no longer holding launches"
+  fi
+  prev="$(awk -F'\t' '$1 == "queued" {print $2}' "$BUDGET_FILE" 2>/dev/null)"
+  if [ "${prev:-0}" = 0 ] && [ "${BG_Q_HELD:-0}" -gt 0 ]; then
+    log "budget: $BG_Q_HELD resume(s) waiting -- $BG_Q_WHY"
+  fi
+  {
+    printf 'at\t%s\n' "$BG_NOW"
+    printf 'on\t%s\n' "$BUDGET"
+    printf 'plan\t%s\n' "$BG_PLAN"
+    printf 'plan_src\t%s\n' "$BG_PLAN_SRC"
+    printf 'lanes\t%s\n' "$BG_LANES"
+    printf 'hold_pct\t%s\n' "$BG_HOLD"
+    printf 'wind_pct\t%s\n' "$HARD_PCT"
+    printf 'lane_pct\t%s\n' "$BG_LANE_PCT"
+    printf 'start_pct\t%s\n' "$BG_START"
+    printf 'checkpoint_min\t%s\n' "$BG_CKPT"
+    printf 'day_pct\t%s\n' "$BG_DAY"
+    printf 'wave\t%s\n' "$BG_WAVE"
+    printf 'wave_min\t%s\n' "$BG_WAVE_MIN"
+    printf 'fresh_ctx\t%s\n' "$BG_FRESH_CTX"
+    printf 'session_est\t%s\n' "$BG_EST"
+    printf 'session_est_src\t%s\n' "$BG_EST_SRC"
+    printf 'blind\t%s\n' "$BG_BLIND"
+    printf 'session_reset_at\t%s\n' "$BG_RESET_AT"
+    printf 'rate_pct_h\t%s\n' "$BG_RATE"
+    printf 'rate_src\t%s\n' "$BG_RATE_SRC"
+    printf 'exhaust_at\t%s\n' "$BG_EXHAUST_AT"
+    printf 'week_pct\t%s\n' "$BG_WEEK"
+    printf 'week_reset_at\t%s\n' "$BG_WEEK_RESET_AT"
+    printf 'manual_resets\t%s\n' "$BG_RESETS_USED"
+    printf 'week_eff\t%s\n' "$BG_WEEK_EFF"
+    printf 'week_allowed\t%s\n' "$BG_WEEK_ALLOWED"
+    printf 'running\t%s\n' "$r"
+    printf 'limited\t%s\n' "$l"
+    printf 'queued\t%s\n' "$BG_Q_HELD"
+    printf 'queued_why\t%s\n' "$BG_Q_WHY"
+    printf 'paused\t%s\n' "$p"
+    printf 'held\t%s\n' "$held"
+    printf 'held_why\t%s\n' "$why"
+  } > "$BUDGET_FILE.tmp" 2>/dev/null && mv "$BUDGET_FILE.tmp" "$BUDGET_FILE" 2>/dev/null
+  return 0
+}
+
+# ------------------------------------------- resumes, in waves, some fresh
+# A RESUME IS A START, AND AFTER A RESET THEY ALL COME AT ONCE. Every window
+# that stopped at the limit is due the moment it lifts, and the pass used to
+# type "continue" into each of them in the order their session files happened
+# to be listed: nineteen cold resumes in one pass, each re-reading its whole
+# context uncached -- the storm budget_check describes. So under the guard a
+# due window is QUEUED during the scan (acted = queued) and the queue is
+# served after it, in priority order, through budget_gate as a wave: at most
+# WATCHDOG_BUDGET_WAVE every WATCHDOG_BUDGET_WAVE_MIN minutes, under the cap
+# and the lines like any launch. What does not fit stays due and is asked
+# again next pass; nothing is dropped.
+#
+#   rank <TAB> kind <TAB> sid <TAB> pane <TAB> key <TAB> name <TAB> ctx <TAB> cwd <TAB> prio <TAB> reset
+#
+# kind is `due` (it stopped at a limit) or `wound` (a hard wind-down stopped
+# it); key is the PROMPTED ledger's epoch for it, exactly what the immediate
+# path would have written.
+BUDGET_Q=()
+BG_Q_HELD=0; BG_Q_WHY=""
+budget_queue() {   # budget_queue KIND SID PANE KEY NAME CTX CWD RESET
+  local prio; prio="$(budget_prio_of_slug "$(lane_slug_of "$5")")"
+  BUDGET_Q+=("$(budget_prio_rank "$prio")"$'\t'"$1"$'\t'"$2"$'\t'"$3"$'\t'"$4"$'\t'"$5"$'\t'"${6:-0}"$'\t'"${7:--}"$'\t'"$prio"$'\t'"${8:--}")
+}
+
+budget_resume_wave() {
+  local msg="$1" rank kind sid pane key name ctx cwd prio reset fired="" how lane
+  BG_Q_HELD=0; BG_Q_WHY=""
+  [ ${#BUDGET_Q[@]} -gt 0 ] || return 0
+  budget_check
+  while IFS=$'\t' read -r -u 9 rank kind sid pane key name ctx cwd prio reset; do
+    [ -n "$sid" ] || continue
+    if ! budget_gate "$prio" 1; then
+      BG_Q_HELD=$(( BG_Q_HELD + 1 )); [ -n "$BG_Q_WHY" ] || BG_Q_WHY="$BG_HOLD_WHY"
+      continue
+    fi
+    lane="$(lane_slug_of "$name")"
+    how=""
+    # FRESH, NOT RESUMED, when the context is big and there is a handover to
+    # start from: budget_fresh_resume writes the entry, and the launcher opens
+    # it (at once, the gate having just said yes) and closes this window.
+    if [ "${ctx:-0}" -gt "$BG_FRESH_CTX" ] && wound_lane_open "$name" \
+       && budget_fresh_resume "$sid" "$pane" "$name" "$ctx" "$cwd" "$prio"; then
+      how=fresh
+    else
+      mux_tmux send-keys -t "$pane" "$msg" 2>/dev/null
+      sleep 1
+      mux_tmux send-keys -t "$pane" Enter 2>/dev/null
+      # The immediate path's own words for the ACTION column, so a reader of
+      # status.tsv cannot tell a wave from the old path except by the log.
+      how=prompted; [ "$kind" = wound ] && how=wound-resume
+    fi
+    printf '%s\t%s\t%s\n' "$sid" "$key" "$(date +%s)" >> "$PROMPTED"
+    # A FRESH RESUME IS RESERVED, NOT RECORDED: its entry is launched by
+    # check_schedules later in this pass, through the gate, and the launch
+    # records the start. Recorded here as well, it would count twice and hold
+    # its own launch behind itself.
+    if [ "$how" = fresh ]; then
+      BG_RUNNING=$(( BG_RUNNING + 1 )); BG_WAVED=$(( BG_WAVED + 1 ))
+    else
+      budget_started resume "$lane"
+    fi
+    fired+="$sid"$'\t'"$how"$'\n'
+    if [ "$how" = fresh ]; then
+      log "budget: $name (pane $pane, ${ctx} tokens) will resume FRESH from its handover -- $SCHEDULES/$BUDGET_FRESH_FILE ($prio, wave)"
+    elif [ "$kind" = wound ]; then
+      log "resumed ${sid:0:8} in $name (pane $pane): wound down hard for the budget window that reset at $(date -d "@$key" '+%H:%M' 2>/dev/null || printf '%s' "$key"), idle since, handover still open -- in a wave ($prio)"
+    else
+      log "prompted ${sid:0:8} in $name (pane $pane) after reset $reset -- in a wave ($prio)"
+    fi
+  done 9< <(printf '%s\n' "${BUDGET_Q[@]}" | sort -t$'\t' -s -k1,1n)
+  BUDGET_Q=()
+  # THE STATUS ROW SAYS WHAT HAPPENED, not "queued", for the windows that went:
+  # it was written before the wave was served, and the dashboard reads it.
+  if [ -n "$fired" ] && [ -f "$STATUS" ]; then
+    awk -F'\t' -v OFS='\t' -v f="$fired" -v now="$(date +%s)" '
+      BEGIN { n = split(f, l, "\n"); for (i = 1; i <= n; i++) { split(l[i], p, "\t"); if (p[1] != "") h[p[1]] = p[2] } }
+      ($1 in h) && $8 == "queued" { $8 = (h[$1] == "fresh" ? "fresh-resume" : h[$1]); $9 = now; if (h[$1] != "fresh") $6 = "working" }
+      { print }' "$STATUS" > "$STATUS.w" && mv "$STATUS.w" "$STATUS"
+  fi
+  return 0
+}
+
+# A FRESH SESSION FROM THE HANDOVER, INSTEAD OF A RESUME OF A HUGE CONTEXT.
+#
+# MEASURED (docs/budget.md): a cold resume's first turn at 500k+ tokens costs
+# 2.1% of a Max 5x window on its own, and every hour after it costs 6.7% at
+# that size against 3.5% for a lane under 250k -- the context is re-read on
+# every request. A lane that stopped at a limit with an open handover has
+# already written down what is done and what is next; reading that is cheaper
+# than reading the whole conversation that produced it. This is the entry the
+# roadmap-37 orchestrator wrote by hand for its paused lanes, written here:
+#
+#   <slug>-resume.md   the ORIGINAL entry's header (cwd, model, effort,
+#                      permission mode, template, window, parent, priority),
+#                      `at:` now, `resume: fresh`, `replaces: <pane> <sid>`;
+#                      body: "read your handover first", then the original
+#                      brief. A window opened by hand has no entry: its
+#                      model, effort and mode come from its own command line.
+#
+# The slug is the lane's own, so the handover, the done marker and the tree
+# row stay the lane's. The launcher closes the old window once the fresh one
+# is up (`replaces:`); its transcript stays on disk, and the log names the
+# session for `claude --resume`.
+BUDGET_FRESH_FILE=""
+budget_fresh_resume() {
+  local sid="$1" pane="$2" name="$3" ctx="$4" cwd="$5" prio="$6"
+  local lane src f="" out model="" effort="" pmode="" pid k v body
+  lane="$(lane_slug_of "$name")"
+  [ -n "$lane" ] && [ -d "$SCHEDULES" ] || return 1
+  src="$(tree_field "$lane" 6)"
+  case "$src" in *.md) [ -f "$SCHEDULES/$src" ] && f="$SCHEDULES/$src" ;; esac
+  out="$SCHEDULES/$lane-resume.md"
+  # One pending fresh resume per lane; an older one that already ran is a
+  # record worth keeping, so a second gets the hour on its name.
+  if [ -f "$out" ]; then
+    [ "$(sched_field "$out" status)" = pending ] && return 1
+    out="$SCHEDULES/$lane-resume-$(date +%m%d%H%M).md"
+  fi
+  if [ -z "$f" ]; then
+    pid="$(awk -F'\t' -v p="$pane" '$5 == p {print $12; exit}' "$SNAPSHOT" 2>/dev/null)"
+    [ -n "$pid" ] && IFS=$'\t' read -r model effort pmode < <(snap_flags_of_pid "$pid"; printf '\n')
+  fi
+  {
+    printf 'type: work\n'
+    printf 'at: %s\n' "$(date '+%Y-%m-%d %H:%M')"
+    printf 'title: %s (fresh resume)\n' "$lane"
+    printf 'slug: %s\n' "$lane"
+    if [ -n "$f" ]; then
+      for k in window parent cwd template model effort permission-mode priority rc watchdog monitor; do
+        v="$(sched_field "$f" "$k")"
+        [ "$k" = cwd ] && [ -z "$v" ] && v="$cwd"
+        [ -n "$v" ] && printf '%s: %s\n' "$k" "$v"
+      done
+    else
+      printf 'cwd: %s\n' "$cwd"
+      [ -n "$model" ] && printf 'model: %s\n' "$model"
+      [ -n "$effort" ] && printf 'effort: %s\n' "$effort"
+      [ -n "$pmode" ] && printf 'permission-mode: %s\n' "$pmode"
+      [ "$prio" != p1 ] && printf 'priority: %s\n' "$prio"
+    fi
+    printf 'resume: fresh\n'
+    printf 'replaces: %s %s\n' "$pane" "$sid"
+    printf 'status: pending\n'
+    printf 'created: %s\n' "$(date '+%Y-%m-%d %H:%M')"
+    printf 'launched:\n'
+    printf -- '---\n'
+    printf 'You are lane {{SLUG}}, resuming in a FRESH session: the old one stopped at a usage limit with %s tokens of context, and resuming it would have re-read all of them. Read your handover {{HANDOVER}} first (questions: {{QUESTIONS}}), check `git status` and `git log` in {{CWD}}, and continue from the handover'"'"'s next step. If a "Budget checkpoint" note tells you to wind down, land the step you are on, commit, update the handover and stop.\n' "$ctx"
+    if [ -n "$f" ]; then
+      body="$(sched_body "$f")"
+      [ -n "$body" ] && printf '\nYour original brief follows.\n\n%s\n' "$body"
+    fi
+  } > "$out.tmp" && mv "$out.tmp" "$out" || return 1
+  BUDGET_FRESH_FILE="$(basename "$out")"
+  return 0
+}
+
+# THE OLD WINDOW OF A FRESH RESUME, closed once the new one is up. Only if
+# its pane still holds the session the entry named and that session is not
+# working: a window somebody has since typed into is theirs, not ours.
+budget_close_replaced() {
+  local f="$1" rep opane osid wid cur st
+  rep="$(sched_field "$f" replaces)"
+  [ -n "$rep" ] || return 0
+  opane="${rep%% *}"; osid="${rep#* }"
+  cur="$(awk -F'\t' -v p="$opane" '$3 == p {print $1 "\t" $6; exit}' "$STATUS" 2>/dev/null)"
+  st="${cur#*$'\t'}"; cur="${cur%%$'\t'*}"
+  if [ "$cur" != "$osid" ] || [ "$st" = working ]; then
+    log "schedule $(basename "$f"): left the old window (pane $opane) open -- it no longer holds ${osid:0:8} idle"
+    return 0
+  fi
+  wid="$(mux_tmux display-message -p -t "$opane" '#{window_id}' 2>/dev/null)" || return 0
+  [ -n "$wid" ] || return 0
+  mux_tmux kill-window -t "$wid" 2>/dev/null && \
+    log "schedule $(basename "$f"): closed the old window $wid (pane $opane); its session is on disk -- claude --resume $osid"
   return 0
 }
 
@@ -2409,6 +3153,8 @@ launch_schedule() {
   rm -f "$bodyf"
 
   sched_mark "$f" launched
+  # A FRESH RESUME takes the place of the window it was written for.
+  budget_close_replaced "$f"
   # WHICH GATE FIRED IS PART OF THE RECORD. "due: the budget reads fresh (4%)"
   # and "due: the session window rolled over at 10:10" are different events,
   # and a launch that cannot be explained afterwards is a launch nobody trusts.
@@ -2628,6 +3374,7 @@ sched_check_one() {
   echo "$(basename "$f")"
   kv type "${type:-(missing)}"
   kv at "${at:-(missing)}"
+  kv priority "$(budget_prio_of_entry "$f")$( [ -z "$(sched_field "$f" priority)" ] && printf " (no priority: field -- p1)")"
   kv title "${title:-(none)}"
   model="$(sched_field "$f" model)"
   kv model "${model:-(account default from settings.json)}"
@@ -2754,6 +3501,10 @@ sched_check_one() {
   case "$rc" in
     0) if [ "$st" = pending ] && mem_check peek && [ "$MEM_HELD" = 1 ]; then
          kv verdict "HELD -- due ($SCHED_WHY_TXT), but $MEM_WHY"
+       elif [ "$st" = pending ] && budget_check \
+            && ! budget_gate "$(budget_prio_of_entry "$f")" \
+                 "$([ "$at" = reset ] || [ -n "$(sched_field "$f" resume)" ] && echo 1 || echo 0)"; then
+         kv verdict "HELD -- due ($SCHED_WHY_TXT), but $BG_HOLD_WHY"
        else
          kv verdict "DUE NOW -- $SCHED_WHY_TXT"
        fi ;;
@@ -2842,10 +3593,12 @@ check_schedules() {
   # whether or not anything is scheduled.
   mem_check
   [ "$MEM_HELD" = 1 ] && mem_stop_dev
-  [ -d "$SCHEDULES" ] || return 0
+  budget_check
+  if [ ! -d "$SCHEDULES" ]; then budget_publish 0; return 0; fi
   # sched-why.tsv is fresh this pass: the notifications may judge it.
   SCHED_RAN=1
-  local f now st type at cwd rc probe=0 after dep_ok
+  local f now st type at cwd rc probe=0 after dep_ok prio waved why bheld=0 bwhy=""
+  local -a due=()
   now="$(date +%s)"
   : > "$SCHED_WHY.tmp"
   for f in "$SCHEDULES"/*.md; do
@@ -2894,9 +3647,35 @@ check_schedules() {
     if [ "$MEM_HELD" = 1 ]; then
       sched_note "$f" held "$MEM_WHY"; continue
     fi
-    sched_note "$f" due "$SCHED_WHY_TXT${dep_ok:+; $dep_ok}"
-    launch_schedule "$f" "$SCHED_WHY_TXT${dep_ok:+; $dep_ok}"
+    # DUE: judged by the budget below, in priority order, not here.
+    prio="$(budget_prio_of_entry "$f")"
+    due+=("$(budget_prio_rank "$prio")"$'\t'"$prio"$'\t'"$f"$'\t'"$SCHED_WHY_TXT${dep_ok:+; $dep_ok}")
   done
+  # THE DUE ENTRIES IN PRIORITY ORDER -- release first, p2 last; within a
+  # class the file order the loop used to launch in. The budget is asked
+  # once per entry, and each launch counts against the next, so when only
+  # two may start the two that start are the two that matter most.
+  if [ ${#due[@]} -gt 0 ]; then
+    # fd 9, not stdin: the launcher runs tmux and claude, and anything in
+    # it that reads stdin would eat the rest of this list.
+    while IFS=$'\t' read -r -u 9 _ prio f why; do
+      [ -n "$f" ] || continue
+      at="$(sched_field "$f" at)"
+      waved=0
+      { [ "$at" = reset ] || [ -n "$(sched_field "$f" resume)" ]; } && waved=1
+      if ! budget_gate "$prio" "$waved"; then
+        sched_note "$f" held "$BG_HOLD_WHY"
+        bheld=$(( bheld + 1 )); [ -n "$bwhy" ] || bwhy="$BG_HOLD_WHY"
+        continue
+      fi
+      sched_note "$f" due "$why"
+      if launch_schedule "$f" "$why"; then
+        [ "$waved" = 1 ] && budget_started wave "$(sched_slug "$f")" \
+                         || budget_started launch "$(sched_slug "$f")"
+      fi
+    done 9< <(printf '%s\n' "${due[@]}" | sort -t$'\t' -s -k1,1n)
+  fi
+  budget_publish "$bheld" "$bwhy"
   mv "$SCHED_WHY.tmp" "$SCHED_WHY" 2>/dev/null
   [ "$probe" = 1 ] && sched_request_probe
   return 0
@@ -3761,12 +4540,22 @@ pass() {
   # Rebuilt lazily, once per pass at most, by the stranded test below.
   SCHED_NAMED=""; SCHED_UNDER=""
   SNAP_SID=(); SNAP_PID=(); SNAP_CWD=()
+  BUDGET_Q=()
   notify_begin
   # Read once per pass, not once per session: every session is judged against
   # the same account-wide figures.
   local spct wpct rkey
   spct="$(usage_val session_pct)"; wpct="$(usage_val week_pct)"
   rkey="$(usage_val session_reset_at)"
+  # UNDER THE BUDGET GUARD THE WIND-DOWN JUDGES THE ESTIMATE, not the last
+  # reading: a reading is up to an hour old, and the burn this guard exists
+  # for crossed both bands inside fifteen minutes (see budget_check). A blind
+  # guard leaves the reading exactly as before.
+  budget_check
+  if [ "$BUDGET" = on ] && [ -n "$BG_EST" ]; then
+    spct="$BG_EST"
+    [ -n "$BG_RESET_AT" ] && rkey="$BG_RESET_AT"
+  fi
   for f in "$MUX_CONFIG_DIR"/sessions/*.json; do
     nudge_point   # one session's work is the most a `c` waits (see nudge_point)
     [ -f "$f" ] || continue
@@ -3801,7 +4590,7 @@ pass() {
     # from "quiet because it stalled" at a glance.
     # The same read gives SAID, the last thing it said: `-` with no
     # transcript (a background job, a plain shell) -- never an empty field.
-    idle=-1; said="-"
+    idle=-1; said="-"; turn_at=""
     if [ -n "${tr:-}" ] && [ -f "${tr:-}" ]; then
       last_turn "$tr"
       turn_at="$TURN_AT"; said="$TURN_SAID"
@@ -3849,6 +4638,14 @@ pass() {
       else
         state="limited"
       fi
+    elif limit_scan "$text" "$said" "${turn_at:-}" "$now"; then
+      # THE LIMITS THE SESSION TEST ABOVE NEVER SAW (limit_scan): a weekly
+      # or a model limit, or a turn that ENDED by saying the limit was
+      # reached. All of them used to read as `idle`, so nothing restarted
+      # them -- see limit_scan for the measurement.
+      reset="$LIM_RESET"; epoch="$LIM_EPOCH"
+      state="limited"
+      [ "$LIM_DUE" = 1 ] && state="due"
     fi
 
     # FOR THE ALERTS, from what was captured above -- no fork. A pane that
@@ -3876,6 +4673,11 @@ pass() {
         acted="watchdog-off"
       elif [ "$DRY" = 1 ]; then
         acted="WOULD-PROMPT"
+      elif [ "$BUDGET" = on ]; then
+        # Served after the scan, in priority order and in waves
+        # (budget_resume_wave) -- not typed into here, all at once.
+        budget_queue due "$sid" "$paneid" "$epoch" "$name" "$ctx" "$cwd" "$reset"
+        acted="queued"
       else
         mux_tmux send-keys -t "$paneid" "$msg" 2>/dev/null
         sleep 1
@@ -3950,6 +4752,9 @@ pass() {
           acted="watchdog-off"
         elif [ "$DRY" = 1 ]; then
           acted="WOULD-RESUME"
+        elif [ "$BUDGET" = on ]; then
+          budget_queue wound "$sid" "$paneid" "$hkey" "$name" "$ctx" "$cwd"
+          acted="queued"
         else
           mux_tmux send-keys -t "$paneid" "$msg" 2>/dev/null
           sleep 1
@@ -4045,6 +4850,9 @@ pass() {
   done
 
   mv "$tmp" "$STATUS"
+  # The resumes the scan queued, served as a wave -- before the launches, so
+  # a fresh resume's entry is launched in this same pass when the gate allows.
+  budget_resume_wave "$msg"
   nudge_point
   sweep_repos
   tree_adopt
@@ -4084,11 +4892,20 @@ pass() {
   # NAMED, not inherited. The environment happens to be right here, but the
   # account these figures belong to is not a thing to leave to chance: the
   # numbers decide when a limited window is restarted.
+  # WHILE ANYTHING WORKS, THE BUDGET GUARD READS MORE OFTEN: its estimate
+  # runs from the last reading, and an hour-old one is an hour of guessing.
+  # A probe costs no tokens (a throwaway claude, ~15 s); an idle account keeps
+  # the hourly clock.
+  local every="$USAGE_EVERY"
+  if [ "$BUDGET" = on ] && [ "${BG_WORKING:-0}" -gt 0 ] && [ "${BG_PROBE:-0}" -gt 0 ] \
+     && [ "$BG_PROBE" -lt "$every" ] 2>/dev/null; then
+    every="$BG_PROBE"
+  fi
   if [ -x "$SCRIPT_DIR/claude-usage.sh" ] && [ -f "$MUX_CONFIG_DIR/.credentials.json" ]; then
     if [ -n "$MUX_PROFILE" ]; then
-      "$SCRIPT_DIR/claude-usage.sh" --profile "$MUX_PROFILE" --ensure "$USAGE_EVERY" >/dev/null 2>&1
+      "$SCRIPT_DIR/claude-usage.sh" --profile "$MUX_PROFILE" --ensure "$every" >/dev/null 2>&1
     else
-      "$SCRIPT_DIR/claude-usage.sh" --ensure "$USAGE_EVERY" >/dev/null 2>&1
+      "$SCRIPT_DIR/claude-usage.sh" --ensure "$every" >/dev/null 2>&1
     fi
   fi
   # LAST, and on its own five-minute clock. Everything above this line is the
@@ -4108,6 +4925,36 @@ if [ "$MODE" = tree ]; then
   tree_adopt
   tree_reparent
   { printf 'WINDOW\tID\tSTATE\tOPENED\n'; tree_print; } | column -t -s $'\t'
+  exit 0
+fi
+
+if [ "$MODE" = budget ]; then
+  budget_check
+  hm() { [ -n "$1" ] && date -d "@$1" '+%a %H:%M' 2>/dev/null || printf -- '-'; }
+  echo "# account=$MUX_LABEL budget=$BUDGET plan=$BG_PLAN ($BG_PLAN_SRC)"
+  printf '%-16s %s\n' knobs "cap ${BG_LANES} windows · hold at ${BG_HOLD}% · wind down at ${HARD_PCT}% · ${BG_LANE_PCT}%/lane-hour · start ${BG_START}% · checkpoint ${BG_CKPT}m · ${BG_DAY}%/day · waves of ${BG_WAVE} per ${BG_WAVE_MIN}m · fresh above ${BG_FRESH_CTX} tokens"
+  printf '%-16s %s\n' classes "release +10 · p1 0 · ops -5 · p2 -10 (on the hold and the wind-down lines)"
+  if [ -n "$BG_EST" ]; then
+    printf '%-16s ~%s%% (%s); resets %s\n' session "$BG_EST" "$BG_EST_SRC" "$(hm "$BG_RESET_AT")"
+    if [ -n "$BG_EXHAUST_AT" ]; then
+      printf '%-16s runs out ~%s at %s%%/h (%s)\n' projected "$(hm "$BG_EXHAUST_AT")" "$BG_RATE" "$BG_RATE_SRC"
+    else
+      printf '%-16s lasts to the reset at %s%%/h (%s)\n' projected "$BG_RATE" "$BG_RATE_SRC"
+    fi
+  else
+    printf '%-16s blind: %s -- only the cap and the waves hold\n' session "$BG_BLIND"
+  fi
+  if [ -n "$BG_WEEK_EFF" ]; then
+    printf '%-16s %s%% effective (%s%% read + %s manual reset(s)); pace allows %s%% now; resets %s\n' \
+      week "$BG_WEEK_EFF" "$BG_WEEK" "$BG_RESETS_USED" "$BG_WEEK_ALLOWED" "$(hm "$BG_WEEK_RESET_AT")"
+  else
+    printf '%-16s unknown (no week reading)\n' week
+  fi
+  printf '%-16s %s working, %s started since the last scan, %s in waves the last %sm\n' windows "$BG_WORKING" "$(( BG_RUNNING - BG_WORKING ))" "$BG_WAVED" "$BG_WAVE_MIN"
+  for _p in release p1 ops p2; do
+    if budget_gate "$_p" 0; then printf '%-16s a %s launch would START now\n' "gate $_p" "$_p"
+    else printf '%-16s %s\n' "gate $_p" "$BG_HOLD_WHY"; fi
+  done
   exit 0
 fi
 

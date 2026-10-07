@@ -38,6 +38,18 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `WATCHDOG_MEM_MIN_GB` | `4` | whole GB; memory is low while `MemAvailable` is under this, and recovers 0.5 GB above it. `0` turns this half off |
 | `WATCHDOG_SWAP_MAX_PCT` | `80` | memory is also low while more than this % of swap is used, and recovers 2 points under it. `100` (or `0`) turns this half off |
 | `WATCHDOG_MEM_STOP_DEV` | `0` | when the guard trips, tell this many of the **newest** lanes still running a dev server to stop it, once per episode (a directive, like the wind-down). `0` tells nobody |
+| `WATCHDOG_BUDGET` | `on` | the [budget guard](budget.md): hold a due entry that would overspend the account (the cap, the session line by priority class, the checkpoint, the week's pace), resume stopped windows in waves, restart big ones fresh. `off` holds nothing |
+| `WATCHDOG_BUDGET_PLAN` | `auto` | `auto` reads the account's `rateLimitTier`; `pro`, `max5x`, `max20x`, `team` or `custom` pins a [preset](budget.md#the-presets). Every `WATCHDOG_BUDGET_*` knob below left empty takes the preset's number |
+| `WATCHDOG_BUDGET_LANES` | preset (Max 5x: `4`) | most windows working at once; a due entry past it waits |
+| `WATCHDOG_BUDGET_HOLD_PCT` | preset (`70`) | hold new launches at this session %; release +10, ops −5, p2 −10 |
+| `WATCHDOG_BUDGET_LANE_PCT` | preset (`8`) | session % one working lane burns an hour, for the estimate between readings |
+| `WATCHDOG_BUDGET_START_PCT` | preset (`4`) | session % a start costs |
+| `WATCHDOG_BUDGET_CHECKPOINT_MIN` | `30` | never start a window that would run out sooner than this, before the reset |
+| `WATCHDOG_BUDGET_DAY_PCT` | preset (`14`) | the week's pace; a manual weekly reset counts as a week already spent |
+| `WATCHDOG_BUDGET_WAVE` / `_WAVE_MIN` | preset (`2`) / `10` | resumes (and `at: reset` starts) per wave, and minutes between waves |
+| `WATCHDOG_BUDGET_FRESH_CTX` | `250000` | a stopped window with more context than this and an open handover restarts fresh from it |
+| `WATCHDOG_BUDGET_PROBE_MIN` | `15` | minutes between `/usage` readings while anything works |
+| `MUXTOPUS_E2E_SLOTS` | `2` | how many `e2e-slot` runs the machine takes at once (`E2E_SLOTS` in the environment beats it for one run). Shared by every account |
 | `WATCHDOG_RESTORE` | `ask` | what `muxtopus` does with a [frozen window snapshot](restore.md) when there is no session: `ask` offers it at a terminal; `auto` restores without asking, and the watchdog relaunches `muxtopus -d` the moment the server disappears; `off` never offers (`muxtopus --restore` still works) |
 | `WATCHDOG_RESTORE_MAX_AGE` | `24` | hours; a frozen snapshot older than this is not offered at start (`--restore` takes it regardless) |
 | `MUXTOPUS_TMUX_SOCKET` | `default` | the tmux server every muxtopus command talks to: a name (`tmux -L`) or an absolute path (`tmux -S`), passed explicitly on every call so a command run inside a pane never follows that pane's `$TMUX` elsewhere. `default` is the socket a bare `tmux` uses outside tmux |

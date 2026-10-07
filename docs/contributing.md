@@ -65,6 +65,10 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | the window's identity on `--append-system-prompt-file`, the paste without it, and nothing pasted for an empty plan; the same identity shown on screen by a `--settings` SessionStart hook | `tests/test_identity.sh` | no — local |
 | `c` lands you in the window at once: the tree row before claude is ready, a nudge answered mid-scan and on waking, before the pass | `tests/test_create_latency.sh` | no — local |
 | the memory guard: a due entry held below the line and launched once memory recovers (with the margin), swap, off, a blind meminfo; `WATCHDOG_MEM_STOP_DEV` tells the newest lane that owns a server, once | `tests/test_mem_guard.sh` | no — local |
+| the budget guard: the plan presets and knobs, the cap, the session line by priority class, the estimate, blind, the checkpoint, the week's pace with manual resets, priority order, waves, off, the class-shifted wind-down | `tests/test_budget.sh` | no — local |
+| after a limit: weekly / model / "said so" stops, resumes in waves in priority order, a big context resumed fresh from its handover (and the old window closed), in place without one, `--dry-run` | `tests/test_budget_resume.sh` | no — local |
+| `b` and Settings ▸ Budget ▸: the summary, blind and stale, the windows table by class, the knobs' refusals, the footer note | `tests/test_budget_view.py` | yes |
+| `e2e-slot`'s slot count: the default two, `MUXTOPUS_E2E_SLOTS`, `E2E_SLOTS`, `--exclusive` holds every slot | `tests/test_e2e_slots.sh` | no — local |
 | `lane-dev`: start, stop, refusals, the idle watcher, no inherited descriptors; `e2e-slot --dev` | `tests/test_lane_dev.sh` | no — local |
 | `install.sh` links `lane-dev` and `e2e-slot`, never over a file of yours | `tests/test_install_lanetools.sh` | no — local |
 | what is pasted: a `template:` on either type, then the body, then the footer; every placeholder resolved | `tests/test_sched_template.sh` | no — local |

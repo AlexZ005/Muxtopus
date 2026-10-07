@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-# e2e-slot -- run an e2e command in one of TWO machine-wide Playwright slots.
+# e2e-slot -- run an e2e command in one of N machine-wide Playwright slots.
 #
 #   e2e-slot [--exclusive] [--wait SECS] [--dev <dir> <port>] -- <command...>
 #
-# Slot A is the classic /tmp/tp-e2e.lock, so old-style `flock /tmp/tp-e2e.lock`
-# users share slot A; slot B is /tmp/tp-e2e.lock.b. --exclusive holds BOTH (use
-# it for fps/timing measurements). The command sees E2E_SLOT=A, B or AB. Exit
-# 75 when no slot came free within --wait seconds (default 5400).
+# HOW MANY: MUXTOPUS_E2E_SLOTS (default 2; Settings ▸ Budget ▸ on the
+# dashboard, or the config file), and E2E_SLOTS in the environment beats it
+# for one run. Slot A is the classic /tmp/tp-e2e.lock, so old-style
+# `flock /tmp/tp-e2e.lock` users share slot A; slot B is /tmp/tp-e2e.lock.b,
+# C .c and so on. --exclusive holds EVERY slot (use it for fps/timing
+# measurements). The command sees E2E_SLOT=A, B, ... or AB... for exclusive.
+# Exit 75 when no slot came free within --wait seconds (default 5400).
+#
+# WHY A KNOB. Two was right for the box it was written on (a 30 GB Deck,
+# where a third Playwright run pushed it into swap); a bigger machine can take
+# more, and a lane budget that allows twelve lanes queues most of them here.
 #
 # --dev <dir> <port> starts that folder's dev server with `lane-dev` once the
 # slot is held, runs the command, and stops the server afterwards -- unless it
@@ -30,11 +37,35 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ $# -gt 0 ] || { echo "usage: e2e-slot [--exclusive] [--wait S] [--dev DIR PORT] -- cmd" >&2; exit 2; }
-A="${E2E_SLOT_LOCK:-/tmp/tp-e2e.lock}"; B="$A.b"; touch "$A" "$B"
+# The configured count, through profile.sh like every other knob -- read
+# only when the environment does not say, and a broken or missing profile.sh
+# is the old two, never an error.
+N="${E2E_SLOTS:-}"
+if [ -z "$N" ]; then
+  # shellcheck disable=SC1091
+  N="$( . "$(dirname "$(readlink -f "$0")")/profile.sh" >/dev/null 2>&1; printf '%s' "${MUXTOPUS_E2E_SLOTS:-}" )"
+fi
+case "$N" in ''|*[!0-9]*|0) N=2 ;; esac
+[ "$N" -gt 26 ] && N=26
+A="${E2E_SLOT_LOCK:-/tmp/tp-e2e.lock}"
+# Slot i's name and lock: A is the bare path, the rest a suffix -- which is
+# what the two-slot version called slot B (.b), so both versions on one
+# machine share the same two files.
+LETTERS=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+slot_name() { printf '%s' "${LETTERS:$1:1}"; }
+slot_lock() { if [ "$1" = 0 ]; then printf '%s' "$A"; else printf '%s.%s' "$A" "$(slot_name "$1" | tr A-Z a-z)"; fi; }
+for (( i = 0; i < N; i++ )); do touch "$(slot_lock "$i")"; done
 # lane-dev from beside this script first (a checkout, or the ~/.local/bin link
 # into one), then PATH.
 LANE_DEV="$(dirname "$(readlink -f "$0")")/lane-dev"
 [ -x "$LANE_DEV" ] || LANE_DEV="$(command -v lane-dev 2>/dev/null)"
+
+# lane-dev with every slot's lock descriptor closed (LOCK_FDS): a lane-dev,
+# or a server it left behind, holding one would hold the slot.
+LOCK_FDS=()
+lane_dev() {
+  ( for v in "${LOCK_FDS[@]}"; do eval "exec $v>&-"; done; exec "$LANE_DEV" "$@" )
+}
 
 # The command, with the dev server around it when --dev asked for one. The
 # lock descriptors are closed for lane-dev, and lane-dev closes every other
@@ -44,30 +75,42 @@ run() {
   local rc started=0
   if [ -n "$DEV_DIR" ]; then
     [ -n "$LANE_DEV" ] || { echo "e2e-slot: --dev needs lane-dev, and none was found" >&2; return 2; }
-    if "$LANE_DEV" status "$DEV_PORT" --quiet 8>&- 9>&-; then
+    if lane_dev status "$DEV_PORT" --quiet; then
       echo "e2e-slot: the dev server on $DEV_PORT was already running; leaving it as it is" >&2
     else
-      "$LANE_DEV" start "$DEV_DIR" "$DEV_PORT" 8>&- 9>&- >&2 || return 1
+      lane_dev start "$DEV_DIR" "$DEV_PORT" >&2 || return 1
       started=1
-      trap '"$LANE_DEV" stop "$DEV_PORT" >&2 8>&- 9>&-; exit 130' INT TERM HUP
+      trap 'lane_dev stop "$DEV_PORT" >&2; exit 130' INT TERM HUP
     fi
   fi
   "$@"; rc=$?
   if [ "$started" = 1 ]; then
-    "$LANE_DEV" stop "$DEV_PORT" 8>&- 9>&- >&2
+    lane_dev stop "$DEV_PORT" >&2
     trap - INT TERM HUP
   fi
   return "$rc"
 }
 
+# ONE DESCRIPTOR PER SLOT, opened with {fd} so N is not capped by a list of
+# literal numbers. The command must not inherit them: lane-dev already closes
+# every descriptor for its server, and `run` closes them for lane-dev.
 if [ $EXCL = 1 ]; then
-  exec 8>"$A" 9>"$B"; flock -w "$WAIT" 8 || exit 75; flock -w "$WAIT" 9 || exit 75
-  E2E_SLOT=AB run "$@"; exit $?
+  names=""
+  for (( i = 0; i < N; i++ )); do
+    exec {fd}>"$(slot_lock "$i")"; flock -w "$WAIT" "$fd" || exit 75
+    LOCK_FDS+=("$fd"); names+="$(slot_name "$i")"
+  done
+  E2E_SLOT="$names" run "$@"; exit $?
 fi
 end=$((SECONDS+WAIT))
 while [ $SECONDS -lt $end ]; do
-  exec 8>"$A"; if flock -n 8; then E2E_SLOT=A run "$@"; rc=$?; exec 8>&-; exit $rc; fi; exec 8>&-
-  exec 9>"$B"; if flock -n 9; then E2E_SLOT=B run "$@"; rc=$?; exec 9>&-; exit $rc; fi; exec 9>&-
+  for (( i = 0; i < N; i++ )); do
+    exec {fd}>"$(slot_lock "$i")"
+    if flock -n "$fd"; then
+      LOCK_FDS=("$fd"); E2E_SLOT="$(slot_name "$i")" run "$@"; rc=$?; exec {fd}>&-; exit $rc
+    fi
+    exec {fd}>&-
+  done
   sleep 5
 done
 echo "e2e-slot: timed out waiting for a slot" >&2; exit 75

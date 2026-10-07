@@ -39,6 +39,7 @@
 │    Send /rc to a new window: off                                                                                                                             │
 │    Handovers: show finished rows: off                                                                                                                        │
 │    Handovers: show question rows: ON                                                                                                                         │
+│    Budget ▸                                                                                                                                                  │
 │    Notifications ▸                                                                                                                                           │
 │    Tabs ▸                                                                                                                                                    │
 │    Updates ▸                                                                                                                                                 │

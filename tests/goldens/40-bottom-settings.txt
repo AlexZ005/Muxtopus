@@ -5,7 +5,6 @@
 
 
 
-
                                          ╭─ settings · <SB>/co…ashboard.conf (modal: no room below) ─╮
                                          │    menu layout, defaults for a new window, where a mode is made permanent  │
                                          │  ▸ Menu layout: bottom                                                     │
@@ -19,6 +18,7 @@
                                          │    Send /rc to a new window: off                                           │
                                          │    Handovers: show finished rows: off                                      │
                                          │    Handovers: show question rows: ON                                       │
+                                         │    Budget ▸                                                                │
                                          │    Notifications ▸                                                         │
                                          │    Tabs ▸                                                                  │
                                          │    Updates ▸                                                               │
