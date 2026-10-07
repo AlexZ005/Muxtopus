@@ -174,7 +174,9 @@ open_handover
 WATCHDOG_WOUND_RESUME=off run
 check "nothing was typed into the window"     [ "$(typed)" = 0 ]
 check "no action was recorded"                [ -z "$(acted)" ]
-check "it is simply idle, forever"            [ "$(state)" = idle ]
+# Not typed into, and not idle any more either: a lane at its prompt with an
+# OPEN handover reads `handed-off` (docs/watchdog.md, States and tags).
+check "it is simply handed off, forever"      [ "$(state)" = handed-off ]
 check "and nothing was ever prompted"         [ "$(nprompted)" = 0 ]
 
 echo "== band 1 (soft) is a note about style: it never resumes anything"
@@ -184,7 +186,7 @@ open_handover
 run
 check "a soft wind-down does not arm a resume" [ -z "$(acted)" ]
 check "...and nothing was typed"               [ "$(typed)" = 0 ]
-check "...and the window stays idle"           [ "$(state)" = idle ]
+check "...and the window stays at its prompt, handed off" [ "$(state)" = handed-off ]
 
 echo "== a window that is still WORKING is never typed into"
 reset_state
@@ -238,7 +240,9 @@ open_handover
 run
 check "an epoch in the future does not fire"   [ -z "$(acted)" ]
 check "...and nothing was typed"               [ "$(typed)" = 0 ]
-check "...and the window is plain idle"        [ "$(state)" = idle ]
+# Wound down hard for a window that has not come back: that is `paused`,
+# the state this case is the definition of.
+check "...and the window reads paused"         [ "$(state)" = paused ]
 
 echo "== opted out of restarts (--optout): seen, said, and NOT typed into"
 reset_state

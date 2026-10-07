@@ -183,13 +183,15 @@ under() {  # under NAME FIELD VALUE -- one pending entry, NAME.md
 }
 nl="$(grep -c 'no longer stranded: ➥lane-a' "$ST/log")"
 under kid-w window lane-a; pass
-check "window: lane-a pending under it: not stranded" [ "$(state_of '➥lane-a')" = idle ]
+# Not stranded -- and, with an open handover and a lane pending under it,
+# `orchestrating`: idle on purpose (docs/watchdog.md, States and tags).
+check "window: lane-a pending under it: not stranded" [ "$(state_of '➥lane-a')" = orchestrating ]
 check "..and the log says it is no longer stranded" \
   [ "$(grep -c 'no longer stranded: ➥lane-a' "$ST/log")" = $(( nl + 1 )) ]
 rm -f "$SC/kid-w.md"; under kid-p parent lane-a; pass
-check "parent: lane-a pending under it: not stranded" [ "$(state_of '➥lane-a')" = idle ]
+check "parent: lane-a pending under it: not stranded" [ "$(state_of '➥lane-a')" = orchestrating ]
 rm -f "$SC/kid-p.md"; under kid-m window '➥lane-a'; pass
-check "an old entry's window: ➥lane-a counts too" [ "$(state_of '➥lane-a')" = idle ]
+check "an old entry's window: ➥lane-a counts too" [ "$(state_of '➥lane-a')" = orchestrating ]
 sed -i 's/^status: pending/status: launched/' "$SC/kid-m.md"; pass
 check "once that entry has launched, nothing is pending: stranded" [ "$(state_of '➥lane-a')" = stranded ]
 rm -f "$SC/kid-m.md"; under kid-o window lane-other; pass

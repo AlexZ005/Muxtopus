@@ -1,10 +1,10 @@
-    which is not a repo -- the question is only answerable per TREE. A dirty
-    repo with no dev server would then be invisible, so the system line names
-    those separately. Untracked files are ignored: a scratch file is noise, a
-    modified tracked file is work you could lose.
+    orchestrating handed off on purpose -- its lanes are pending under it
+    done     its handover is in done/; the window is safe to close
 
-    limited  stopped at a usage limit, waiting for the reset
-    due      the reset has passed and it is still sitting there
+    TAGS is everything true at the same time as the state, comma
+    separated: e2e / e2e-wait, test, ci, sleep, job:<name>, serve:<port>,
+    session / week / model (which limit), asking, its priority class,
+    compacting. One state is what the watchdog acts on; tags never trigger.
     stranded NOTHING IS EVER GOING TO TOUCH THIS. A lane, idle past
              WATCHDOG_STRANDED (120m), with an OPEN handover, and no pending
              schedule entry naming it -- not by slug, not by after:, not a
