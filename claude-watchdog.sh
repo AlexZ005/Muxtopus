@@ -88,9 +88,9 @@ NAMES_MIGRATED="$STATE_DIR/names.migrated"
 STATUS="$STATE_DIR/status.tsv"
 # ITS COLUMNS, NAMED ONCE for the two things that print them: --status, whose
 # raw rows had no names at all until SAID made twenty of them, and --dry-run's
-# table. SAID is last in the file and so last here: it is the widest and the
-# least needed, and the end of the line is what a narrow terminal loses first.
-STATUS_COLS=$'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\tMONOPTOUT\tPID\tSAID'
+# table. SAID and then TAGS are last in the file and so last here: each was
+# appended so that every reader of the shorter row keeps reading it.
+STATUS_COLS=$'SESSION\tWINDOW\tPANE\tVER\tCONTEXT\tSTATE\tRESET\tACTION\tRESUMED\tSPENT\tCACHED\tOPTOUT\tMODEL\tIDLE\tJOB\tCWD\tWOUND\tMONOPTOUT\tPID\tSAID\tTAGS'
 PROMPTED="$STATE_DIR/prompted"
 LOG="$STATE_DIR/log"
 MSGFILE="$STATE_DIR/message"
@@ -1981,7 +1981,7 @@ budget_publish() {
     { if ($6 == "working") r++
       else if ($6 == "limited" || $6 == "due") l++
       if ($8 == "queued") q++
-      if ($6 == "idle" && ($1 in wound)) p++ }
+      if ($6 == "paused" || ($6 == "idle" && ($1 in wound))) p++ }
     END { printf "%d\t%d\t%d\t%d", r, l, q, p }' "$wf" "$STATUS" 2>/dev/null)"
   local r=0 l=0 q=0 p=0 prev
   [ -n "$counts" ] && IFS=$'\t' read -r r l q p <<<"$counts"
@@ -2211,6 +2211,248 @@ budget_close_replaced() {
   mux_tmux kill-window -t "$wid" 2>/dev/null && \
     log "schedule $(basename "$f"): closed the old window $wid (pane $opane); its session is on disk -- claude --resume $osid"
   return 0
+}
+
+# ------------------------------------------------------- states and tags
+# ONE STATE, ANY NUMBER OF TAGS (docs/watchdog.md, "States and tags").
+#
+# A window's STATE is the one thing it needs or is doing, and the watchdog
+# acts on it: `due` is typed into, `waiting` pages the phone, `working`
+# counts toward the budget cap. That is why it stays ONE word. Everything
+# that can be true AT THE SAME TIME goes in the TAGS column instead, comma
+# separated: a lane can be `working` and own a dev server and hold an e2e
+# slot, and `done` with a server it forgot to stop.
+#
+# WHY THE PROCESS TREE. MEASURED 2026-10-07 on this box: lane 38-int-a read
+# `idle` while its shell ran `bash ./run-snap2.sh` (a test run), lane
+# 37-int-126 read `idle` while it ran `gh run watch`, and on 2026-10-06 two
+# lanes sat inside `e2e-slot ... sleep 5`, waiting for a Playwright slot,
+# while the dashboard said `working`. Every one of those facts is a child
+# process of the window's claude, and nothing else on the machine says it.
+# An idle claude has NO children (checked across the box's twelve sessions):
+# its tool shells are `/bin/bash -c source .../shell-snapshots/...`, so a
+# live one is a job the turn left running, never furniture.
+#
+# COST. One builtin read of /proc/<pid>/stat per process per pass (~400 on
+# this box, no fork), and a cmdline read only for the descendants of a claude
+# and for dev-server candidates. The pass already walks /proc that way for the
+# memory guard.
+PROC_PPID=(); PROC_KIDS=(); PROC_START=(); PROC_CMDC=()
+PROC_UP=0
+# Seconds each session's e2e-slot has waited, for tag_alerts, this pass only.
+declare -A TAG_WAIT=()
+proc_scan() {
+  local d pid st ppid
+  local -a f
+  PROC_PPID=(); PROC_KIDS=(); PROC_START=(); PROC_CMDC=()
+  read -r PROC_UP _ 2>/dev/null < /proc/uptime; PROC_UP="${PROC_UP%%.*}"
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    read -r st 2>/dev/null < "$d/stat" || continue
+    st="${st##*) }"; read -r -a f <<<"$st"
+    ppid="${f[1]:-0}"
+    PROC_PPID[$pid]="$ppid"; PROC_KIDS[$ppid]+=" $pid"; PROC_START[$pid]="${f[19]:-0}"
+  done
+}
+# A process's argv joined with spaces, read once and cached for the pass.
+proc_cmd() {
+  local pid="$1"; local -a a
+  if [ -z "${PROC_CMDC[$pid]+x}" ]; then
+    mapfile -d '' -t a 2>/dev/null < "/proc/$pid/cmdline"
+    PROC_CMDC[$pid]="${a[*]}"
+  fi
+  printf '%s' "${PROC_CMDC[$pid]}"
+}
+# Seconds a process has been alive (clock ticks are 100/s on Linux).
+proc_age() { printf '%s' $(( PROC_UP - ${PROC_START[$1]:-0} / 100 )); }
+
+# THE TAGS A CLAUDE'S PROCESS TREE CARRIES. Sets W_BG (1: a tool shell is
+# still running) and W_TAGS (comma separated), and W_E2E_WAIT (seconds the
+# e2e-slot has waited, 0 when not waiting).
+#
+# A WRAPPING SHELL IS NEVER CLASSIFIED, only walked through: the tool shell's
+# own argv is `bash -c "source ...; eval '<the whole command>'"`, so the text
+# of every command it will run is in it, and matching that would tag a lane
+# `e2e` for a command that has not started. Only the processes the shell
+# actually started are read, by their own argv.
+#
+#   e2e        an e2e-slot holds a slot (its child is the command)
+#   e2e-wait   an e2e-slot is waiting for one (its child is `sleep 5`)
+#   test       a test runner: npm/pnpm/yarn test or e2e, vitest, jest,
+#              pytest, playwright test, a tests/test_* script, go/cargo test
+#   ci         watching GitHub: gh run watch, gh pr checks
+#   sleep      a `sleep N` (N >= 20) poller outside e2e-slot
+#   job:NAME   any other script or program the turn left running -- only
+#              when the window is NOT working, where it is the whole answer
+#              to "what is it waiting for"
+TAG_TEST_RE='(^| )((npm|pnpm|yarn)( run)? (test|e2e)|npx (vitest|jest|playwright)|vitest|jest|pytest|playwright test|go test|cargo test)( |$)|(^| )python[0-9.]* -m (pytest|unittest)|/tests?/test_[^ ]*'
+TAG_CI_RE='^gh (run watch|pr checks|run view)'
+window_tags() {
+  local pid="$1" working="$2" p c cmd base base1 kid kcmd n=0 waiting
+  local -a queue argv
+  local -A have=() wrap=()
+  W_BG=0; W_TAGS=""; W_E2E_WAIT=0
+  [ -n "$pid" ] || return 0
+  for c in ${PROC_KIDS[$pid]-}; do
+    case "$(proc_cmd "$c")" in *shell-snapshots/snapshot-*) W_BG=1 ;; esac
+  done
+  queue=(${PROC_KIDS[$pid]-})
+  while [ ${#queue[@]} -gt 0 ] && [ "$n" -lt 200 ]; do
+    p="${queue[0]}"; queue=("${queue[@]:1}"); n=$(( n + 1 ))
+    cmd="$(proc_cmd "$p")"
+    [ -n "$cmd" ] || continue
+    read -r -a argv <<<"$cmd"
+    base="${argv[0]##*/}"; base1="${argv[1]:-}"; base1="${base1##*/}"
+    case "$base" in
+      bash|sh|dash|zsh)
+        if [ "${argv[1]:-}" = -c ]; then
+          wrap[$p]=1; queue+=(${PROC_KIDS[$p]-}); continue
+        fi ;;
+    esac
+    # A RECOGNISED PROCESS ENDS THE WALK DOWN ITS BRANCH: what an e2e run or
+    # a test runner starts (a browser, `timeout`, the test files) is its own
+    # business, and naming those would bury the one tag that says it all.
+    if [ "$base" = e2e-slot ] || [ "$base1" = e2e-slot ]; then
+      waiting=1
+      for kid in ${PROC_KIDS[$p]-}; do
+        kcmd="$(proc_cmd "$kid")"
+        [ "$kcmd" = "sleep 5" ] || waiting=0
+      done
+      [ -z "${PROC_KIDS[$p]-}" ] && waiting=1
+      if [ "$waiting" = 1 ]; then have[e2e-wait]=1; W_E2E_WAIT="$(proc_age "$p")"
+      else have[e2e]=1; fi
+      continue
+    fi
+    if [ "$base" = sleep ]; then
+      [ "${PROC_PPID[$p]}" ] && case "$(proc_cmd "${PROC_PPID[$p]}")" in *e2e-slot*) continue ;; esac
+      case "${argv[1]:-}" in ''|*[!0-9]*) ;; *) [ "${argv[1]}" -ge 20 ] && have[sleep]=1 ;; esac
+      continue
+    fi
+    if [[ "$cmd" =~ $TAG_TEST_RE ]]; then have[test]=1; continue; fi
+    if [[ "$cmd" =~ $TAG_CI_RE ]]; then have[ci]=1; continue; fi
+    # Anything else is walked through, and named -- after its script (bash
+    # ./run-snap2.sh) or its program -- only when a SHELL started it: that is
+    # the command the turn ran, not something deep inside it. And only when
+    # the window is not working, where it is the whole answer to "what is it
+    # waiting for".
+    if [ "$working" != 1 ] && [ -n "${wrap[${PROC_PPID[$p]:-0}]-}" ]; then
+      case "$base" in
+        bash|sh|node|python|python3|env) [ -n "$base1" ] && [ "${argv[1]:0:1}" != - ] && have["job:$base1"]=1 ;;
+        *) have["job:$base"]=1 ;;
+      esac
+    fi
+    queue+=(${PROC_KIDS[$p]-})
+  done
+  # e2e carries its test run: `test` beside it says nothing new.
+  [ -n "${have[e2e]-}${have[e2e-wait]-}" ] && unset 'have[test]'
+  local t
+  for t in e2e e2e-wait test ci sleep; do [ -n "${have[$t]-}" ] && W_TAGS+="${W_TAGS:+,}$t"; done
+  for t in "${!have[@]}"; do case "$t" in job:*) W_TAGS+="${W_TAGS:+,}$t" ;; esac; done
+  return 0
+}
+
+# EVERY LANE'S PRIORITY CLASS, from the entry tree.tsv says launched it: one
+# awk per pass for all of them, instead of two forks per window.
+declare -A TAG_PRIO=()
+tag_prio_map() {
+  local slug p
+  TAG_PRIO=()
+  [ -f "$TREE" ] || return 0
+  while IFS=$'\t' read -r slug p; do
+    [ -n "$slug" ] && TAG_PRIO["$slug"]="$(budget_prio_norm "$p")"
+  done < <(awk -F'\t' -v d="$SCHEDULES" '
+    $6 ~ /\.md$/ { f = d "/" $6; p = ""
+      while ((getline l < f) > 0) { if (l == "---") break; if (l ~ /^priority: /) p = substr(l, 11) }
+      close(f); if (p != "") print $1 "\t" p }' "$TREE" 2>/dev/null)
+}
+
+# DEV SERVERS, OWNED BY WINDOW, appended to the TAGS column of the table just
+# written: `serve:5380`. A server started through lane-dev is detached (its
+# parent is init), so the process tree cannot say whose it is; its FOLDER
+# can. A folder named after a lane's slug is that lane's; otherwise it is the
+# window's whose folder is the longest prefix of the server's -- the memory
+# guard's rule (mem_stop_dev), so a deeper lane wins over a parent folder. The
+# port comes from the server's own argv (`--port 5380`, measured: that is how
+# lane-dev and every lane on this box start vite); a server started without
+# one is plain `serve`.
+tag_servers() {
+  local tsv="$1" d pid cmd cwd port list=""
+  local -a a
+  local -A seen=()
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    mapfile -d '' -t a 2>/dev/null < "$d/cmdline" || continue
+    cmd="${a[*]}"
+    case "$cmd" in
+      *node_modules/.bin/vite*|*"vite dev"*|*"npm run dev"*|*"npm exec vite"*) ;;
+      *) continue ;;
+    esac
+    cwd="$(readlink "$d/cwd" 2>/dev/null)" || continue
+    port=""
+    [[ "$cmd" =~ --port[=\ ]([0-9]+) ]] && port="${BASH_REMATCH[1]}"
+    [ -z "${seen[$cwd/$port]-}" ] || continue
+    seen[$cwd/$port]=1
+    list+="S"$'\t'"$cwd"$'\t'"$port"$'\n'
+  done
+  [ -n "$list" ] || return 0
+  { printf '%s' "$list"; cat "$tsv"; } | awk -F'\t' -v OFS='\t' '
+    $1 == "S" { sc[++s] = $2; sp[s] = $3; next }
+    { row[++n] = $0; cw[n] = $16; nm[n] = $2; gsub(/➥/, "", nm[n]) }
+    END {
+      for (i = 1; i <= s; i++) {
+        best = 0
+        # A FOLDER THAT ENDS IN THE SLUG OF A LANE BELONGS TO IT, first:
+        # MEASURED, lane 38-int-a works in theprototype-lane-38-int-a and
+        # its e2e runs a server from run-38-int-a -- no window folder is a
+        # prefix of that one except the shared parent, which would have taken
+        # it. Longest slug wins (38-int-a over int-a).
+        b = sc[i]; sub(/.*\//, "", b)
+        for (j = 1; j <= n; j++) {
+          if (length(nm[j]) < 3 || nm[j] == "-") continue
+          if (b == nm[j] || (length(b) > length(nm[j]) && substr(b, length(b) - length(nm[j])) == "-" nm[j]))
+            if (!best || length(nm[j]) > length(nm[best])) best = j
+        }
+        # ...else the window whose folder is the longest prefix of its own.
+        if (!best) for (j = 1; j <= n; j++) {
+          if (cw[j] == "" || cw[j] == "-") continue
+          if (sc[i] != cw[j] && index(sc[i], cw[j] "/") != 1) continue
+          if (!best || length(cw[j]) > length(cw[best])) best = j
+        }
+        if (best) add[best] = add[best] (add[best] ? "," : "") "serve" (sp[i] != "" ? ":" sp[i] : "")
+      }
+      for (j = 1; j <= n; j++) {
+        if (j in add) { split(row[j], f, "\t"); t = f[21]; f[21] = (t != "" && t != "-") ? t "," add[j] : add[j]
+          o = f[1]; for (k = 2; k <= 21; k++) o = o "\t" f[k]; print o }
+        else print row[j]
+      }
+    }' > "$tsv.serve" && mv "$tsv.serve" "$tsv"
+}
+
+# THE TWO TAG ALERTS (MUXTOPUS_NOTIFY_TAGS, off by default). A tag changes
+# too often to page anybody by itself; these are the two combinations that
+# mean somebody should act:
+#   * e2e-wait for more than 30 minutes -- the slots are taken by something
+#     that is not finishing, and the lane is burning its turn on a poll;
+#   * done (or handed off) with a dev server still running -- the lane is
+#     over and its server is holding memory and a port for nobody.
+# Each is told once and "cleared" once, like every alert here.
+tag_alerts() {
+  local lane sid name state tags waited
+  [ "$NOTIFY_READY" = 1 ] || return 0
+  NOTIFY_FAM[tag]=1
+  while IFS=$'\t' read -r sid name state tags; do
+    waited="${TAG_WAIT[$sid]-0}"
+    lane="$(lane_slug_of "$name")"
+    [ -n "$lane" ] && [ "$lane" != - ] || continue
+    if [[ ",$tags," == *",e2e-wait,"* ]] && [ "${waited:-0}" -ge 1800 ]; then
+      notify_alert "tag:e2ewait:$lane" e2ewait "${MUXTOPUS_NOTIFY_TAGS:-off}" "e2e slot: $name waiting" \
+        "waiting $(dur_hm "$waited") for an e2e slot; every slot is held by something that is not finishing"
+    fi
+    if { [ "$state" = done ] || [ "$state" = handed-off ]; } && [[ ",$tags," == *",serve"* ]]; then
+      notify_alert "tag:doneserve:$lane" doneserve "${MUXTOPUS_NOTIFY_TAGS:-off}" "server left running: $name" \
+        "$state, with a dev server still up ($(tr ',' '\n' <<<"$tags" | grep '^serve' | paste -sd' ' -)); lane-dev stop <port>"
+    fi
+  done < <(awk -F'\t' '{print $1 "\t" $2 "\t" $6 "\t" $21}' "$STATUS" 2>/dev/null)
 }
 
 # Rewrite the status (and stamp launched:) in place. Only the header is
@@ -4536,11 +4778,14 @@ pass() {
 
   local f pid sid pane paneid ver st kind cwd tr ctx name text reset epoch state acted
   local spent rd resumed model optout idle jobid cwd turn_at said wound moptout
-  local prev lane stranded pprev since hkey
+  local prev lane stranded pprev since hkey limkind tags
   # Rebuilt lazily, once per pass at most, by the stranded test below.
   SCHED_NAMED=""; SCHED_UNDER=""
   SNAP_SID=(); SNAP_PID=(); SNAP_CWD=()
   BUDGET_Q=()
+  TAG_WAIT=()
+  proc_scan
+  tag_prio_map
   notify_begin
   # Read once per pass, not once per session: every session is judged against
   # the same account-wide figures.
@@ -4614,13 +4859,14 @@ pass() {
       jobid="$(mux_json -r '.jobId // empty' "$f")"
     fi
 
-    state="idle"; reset="-"; epoch=""
+    state="idle"; reset="-"; epoch=""; limkind=""
     # "esc to interrupt" is the TUI's own marker for a turn in flight. Never
     # type into a window that is working -- the keystrokes would land in
     # whatever prompt it is composing.
     if grep -q "esc to interrupt" <<<"$text"; then
       state="working"
     elif grep -q "hit your session limit" <<<"$text"; then
+      limkind=session
       # THE MINUTES ARE OPTIONAL. A limit that resets on the hour prints
       # "resets 7pm" with no ":00", and requiring H:MM here meant the reset
       # never parsed, the state never left "limited", and every window that hit
@@ -4646,7 +4892,17 @@ pass() {
       reset="$LIM_RESET"; epoch="$LIM_EPOCH"
       state="limited"
       [ "$LIM_DUE" = 1 ] && state="due"
+      limkind="$LIM_KIND"
+      if [ "$limkind" = said ]; then
+        limkind=session
+        [ "${wpct%%.*}" -ge 100 ] 2>/dev/null && limkind=week
+      fi
     fi
+
+    # WHAT ITS PROCESS TREE IS DOING (window_tags): the tags, and whether a
+    # tool shell the turn started is still running.
+    window_tags "$pid" "$([ "$state" = working ] && echo 1)"
+    TAG_WAIT[$sid]="$W_E2E_WAIT"
 
     # FOR THE ALERTS, from what was captured above -- no fork. A pane that
     # carries a session; an auth error or the login screen near the bottom of
@@ -4811,6 +5067,29 @@ pass() {
     elif [ "$prev" = waiting ]; then
       log "no longer waiting: $name is now $state"
     fi
+    # A RESUME THE BUDGET QUEUED reads `queued` until its wave serves it.
+    [ "$acted" = queued ] && state=queued
+
+    # THE REST OF IDLE, part one: the three that must be decided BEFORE the
+    # stranded test, because each is a window that IS going somewhere.
+    #   error       the turn ended on an API error; nothing will retry it
+    #   paused      a hard wind-down stopped it, and the budget window it was
+    #               told about has not come back yet (resume-due once it has)
+    #   background  the turn ended but a tool shell it started still runs --
+    #               a test run, a CI watch, a poller. MEASURED: 38-int-a read
+    #               idle (and would have gone stranded after two hours) while
+    #               its tests ran in the background.
+    if [ "$state" = idle ]; then
+      hkey="$(last_hard_wound "$sid")"
+      if [[ "$said" == "API Error"* ]]; then
+        state=error
+      elif [ -n "$hkey" ] && [ "$hkey" -gt "$now" ] 2>/dev/null; then
+        state=paused; limkind=session
+      elif [ "$W_BG" = 1 ]; then
+        state=background
+      fi
+    fi
+
     stranded=""; lane=""
     if [ "$state" = idle ] && [ "${STRANDED_MIN:-0}" -gt 0 ] 2>/dev/null \
        && [ "$idle" -ge $(( ${STRANDED_MIN:-0} * 60 )) ] 2>/dev/null; then
@@ -4831,6 +5110,42 @@ pass() {
       log "no longer stranded: $name is now $state"
     fi
 
+    # THE REST OF IDLE, part two: what is left once stranded has had its say.
+    # A window whose lane has an OPEN handover and that is idle is HANDED OFF
+    # -- it stopped at a checkpoint and left a note for whoever comes next;
+    # stranded is the same window two hours on with nothing pending for it.
+    # ORCHESTRATING is a handed-off window whose lanes are still pending
+    # under it: idle on purpose. DONE is a lane whose handover is in done/ --
+    # `handover.sh done` was run, the window is safe to close.
+    if [ "$state" = idle ]; then
+      lane="$(lane_slug_of "$name")"
+      if [ -n "$lane" ] && [ "$lane" != - ]; then
+        if [ -f "$HANDOVERS/STATUS-$lane.md" ] && [ ! -f "$HANDOVERS/done/STATUS-$lane.md" ]; then
+          if sched_under_slug "$lane"; then state=orchestrating; else state=handed-off; fi
+        elif [ -f "$HANDOVERS/done/STATUS-$lane.md" ]; then
+          state=done
+        fi
+      fi
+    fi
+
+    # THE TAGS, comma separated, `-` for none: the process tree's (above),
+    # then the facts that are not processes. The dev servers are added after
+    # the loop (tag_servers), because which window owns one depends on all of
+    # them.
+    tags="$W_TAGS"
+    case "$state" in
+      limited|due|queued|resume-due|paused) [ -n "$limkind" ] && tags+="${tags:+,}$limkind" ;;
+    esac
+    lane="$(lane_slug_of "$name")"
+    if [ -n "$lane" ] && [ "$lane" != - ]; then
+      if [ -f "$HANDOVERS/QUESTIONS-$lane.md" ] \
+         && ! grep -qE '^[^A-Za-z0-9_]*ANSWERED([^A-Za-z0-9_]|$)' "$HANDOVERS/QUESTIONS-$lane.md" 2>/dev/null; then
+        tags+="${tags:+,}asking"
+      fi
+      case "${TAG_PRIO[$lane]-p1}" in p1) ;; *) tags+="${tags:+,}${TAG_PRIO[$lane]}" ;; esac
+    fi
+    [[ "$text" == *"Compacting conversation"* ]] && tags+="${tags:+,}compacting"
+
     # PID IS THE LAST COLUMN, and it is there for the dashboard rather than for
     # this daemon. A closed window's row is correct here only until the next
     # pass, so a session that ended a second after one lingered on screen for
@@ -4843,12 +5158,17 @@ pass() {
     # and muxstats.py reads only columns 0 and 2, so an old dashboard on a new
     # file, or a new one on an old file, loses nothing. Being the last column
     # is also why last_turn folds every tab and newline out of it.
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    #
+    # TAGS COMES AFTER SAID, index 20, by the same rule: appended, so every
+    # reader that knew twenty columns keeps reading them. It can hold no tab:
+    # every tag is built here from fixed words, a slug and a port.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$sid" "$name" "$paneid" "$ver" "$ctx" "$state" "$reset" "$acted" \
       "$resumed" "$spent" "$rd" "$optout" "$model" "$idle" "$jobid" \
-      "${cwd:--}" "${wound:--}" "$moptout" "$pid" "${said:--}" >> "$tmp"
+      "${cwd:--}" "${wound:--}" "$moptout" "$pid" "${said:--}" "${tags:--}" >> "$tmp"
   done
 
+  tag_servers "$tmp"
   mv "$tmp" "$STATUS"
   # The resumes the scan queued, served as a wave -- before the launches, so
   # a fresh resume's entry is launched in this same pass when the gate allows.
@@ -4863,6 +5183,7 @@ pass() {
   MEM_STATE=""; MEM_HELD=0
   check_schedules
   NOTIFY_FAM[waiting]=1; NOTIFY_FAM[stranded]=1
+  tag_alerts
   # The guard's own alert: once when it trips, "cleared" once it recovers.
   NOTIFY_FAM[memory]=1
   if [ "$NOTIFY_READY" = 1 ] && [ "$MEM_STATE" = low ]; then
