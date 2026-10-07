@@ -4,6 +4,37 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.7.0 — 2026-10-07
+
+This release says what a window is actually doing. A window used to be `working`, `idle` or `stranded`, and `idle` hid most of what mattered: a lane whose tests were still running in the background, a lane waiting for CI, a lane that had finished, one stopped at a checkpoint, and one that died on an API error. A background test run even went `stranded` after two hours. Each now has a state of its own. A new TAGS column shows everything true at the same time, such as an e2e slot held or waited for, a dev server the lane owns, or the limit that stopped it.
+
+A minor release: new states and a new column in `status.tsv` (appended, so older readers keep working), and a new setting (`MUXTOPUS_NOTIFY_TAGS`). `limited` now reads "limit hit" on screen; the state's name is unchanged. Nothing a user's own files name is renamed or moved.
+
+### Dashboard
+
+#### One state, and tags for everything else
+
+- A window used to be `working`, `idle` or `stranded`, and `idle` hid most of what mattered. It now reads one of:
+  - `background`: the turn ended, but its tests, CI watch or poller still run. Such a lane is never marked `stranded`.
+  - `handed off`: stopped at a checkpoint with an open handover.
+  - `orchestrating`: idle on purpose while its lanes are pending.
+  - `done`: its handover is in `done/`, so the window is safe to close.
+  - `error`: the turn ended on an API error.
+  - `paused`: the watchdog cooled it down before the limit.
+  - `queued`: waiting for its resume wave.
+- `limited` now reads **limit hit**: the window stopped abruptly at the banner.
+- A new **TAGS** column beside STATE shows everything true at the same time, comma separated:
+  - `e2e` / `e2e-wait`: holding an e2e slot, or waiting for one;
+  - `test`, `ci`, `sleep`, `job:<script>`: what a background job is doing;
+  - `serve:<port>`: a dev server the lane owns;
+  - `session` / `week` / `model`: which limit stopped it;
+  - `asking`: an unanswered question;
+  - the lane's priority class;
+  - `compacting`.
+
+  Hide the column and the first tag is shown after the state. The phone's `/windows` lists the tags too.
+- A new opt-in alert, `MUXTOPUS_NOTIFY_TAGS` (Settings ▸ Notifications), tells you when a lane has waited over 30 minutes for an e2e slot, or when a finished lane still has its dev server running.
+
 ## v5.6.0 — 2026-10-07
 
 This release stops a crowd of lanes from spending the whole session budget in a quarter of an hour. On a Max 5x account, nineteen lanes started together after a reset and used 61% of the 5-hour window in about fifteen minutes. Every one of them then stopped at the limit, and resuming them re-read every context uncached. A launch that would overspend the account now waits and says why. After a reset, stopped windows come back a few at a time, most important first. Windows stopped by the weekly or a model limit are now recognised and restarted; they used to look idle.
