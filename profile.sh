@@ -76,6 +76,12 @@ WATCHDOG_USAGE_STALE=180
 WATCHDOG_HEARTBEAT_LOG=60
 WATCHDOG_STRANDED=120
 WATCHDOG_STALL_MIN=15
+WATCHDOG_REPORT=on
+WATCHDOG_REPORT_REPEAT_MIN=60
+WATCHDOG_REPORT_E2E_MIN=300
+WATCHDOG_REPORT_MEM_MIN=30
+WATCHDOG_NUDGE_STALLED=off
+WATCHDOG_CLOSE_FINISHED=off
 WATCHDOG_WOUND_RESUME=on
 WATCHDOG_MEM_GUARD=on
 WATCHDOG_MEM_MIN_GB=4
@@ -357,6 +363,21 @@ mux_key_help() {
                             echo "running (no tool shell, no 'N shells' in its footer) and no pending entry"
                             echo "naming it, before its state becomes 'stalled'. stranded is the same lane"
                             echo "at WATCHDOG_STRANDED. 0 turns it off." ;;
+    WATCHDOG_REPORT)        echo "on|off|notify-only. What a stalled, stranded, finished, asking or"
+                            echo "limit-stuck lane, a long e2e hold or a long memory hold is reported to:"
+                            echo "ONE line typed into the window that spawned the lane (its parent in the"
+                            echo "tree), or the phone when there is none. notify-only: the phone only." ;;
+    WATCHDOG_REPORT_REPEAT_MIN) echo "Minutes before a problem that is still true is reported again." ;;
+    WATCHDOG_REPORT_E2E_MIN) echo "Minutes an e2e slot may be held before its lane's parent is told. 0: never." ;;
+    WATCHDOG_REPORT_MEM_MIN) echo "Minutes the memory guard may hold entries before the windows they would"
+                            echo "open under are told. 0: never." ;;
+    WATCHDOG_NUDGE_STALLED) echo "on|off. on: a stalled lane is typed one line, once per stall: its"
+                            echo "background job has ended, read its log and continue. Never a lane with"
+                            echo "an unanswered QUESTIONS file, and held by the budget cap like a launch." ;;
+    WATCHDOG_CLOSE_FINISHED) echo "off, or minutes: a window whose handover is in done/ and that has been"
+                            echo "idle this long is closed -- unless a pending entry names it or opens"
+                            echo "under it, or a child window of it is still open. claude --resume <id>"
+                            echo "(in the log) brings one back." ;;
     WATCHDOG_WOUND_RESUME)  echo "on|off. A window wound down at the HARD band was told to stop, so it"
                             echo "never prints the limit banner the resume path watches for. With this"
                             echo "on, such a window is sent the continue message once its budget window"
