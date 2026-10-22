@@ -15,6 +15,7 @@ claude-watchdog.sh --once              # one pass, for real
 claude-watchdog.sh --check [name]      # resolve schedule entries, launch nothing
 claude-watchdog.sh --check <slug>-     # ...every entry of a wave (a prefix ending in -)
 claude-watchdog.sh --tree              # the window tree it keeps
+claude-watchdog.sh --health            # what is wrong with the lanes, once; exit 1 if anything
 claude-watchdog.sh --profile work ...  # any account
 claude-watchdog.sh --on | --off        # arm / disarm (or `w` on the dashboard)
 claude-watchdog.sh --reload            # re-read the config now
@@ -29,7 +30,8 @@ It is a `systemd --user` unit where systemd exists (`claude-watchdog.service`, `
 3. When armed, prompts a `due` window — one whose reset time has passed — with the continue message, once per limit. It never types into a window that is working.
 4. Judges every pending [schedule entry](schedules.md) and launches the due ones: the trust dialog, the readiness wait, one bracketed paste, a row in the tree, a log line naming which gate fired.
 5. Writes the **window snapshot** — one row per window of the session, with its Claude session id, cwd, parent and launch flags — or, when the session is gone, freezes the last one instead of overwriting it, and says so once (log and phone). [Restore after a lost server](restore.md) is what that buys.
-6. Publishes the rows, the verdicts, the tree and the heartbeat; refreshes the usage reading when it is older than `WATCHDOG_USAGE_EVERY` minutes; every five minutes collects into [the stats ledger](stats.md); once a day asks whether there is a [newer muxtopus](updates.md); and sends what changed to [the phone](notifications.md).
+6. [Reports](#reports-to-the-parent) what is wrong with each lane to the window that spawned it — one line per parent — or to the phone when there is none.
+7. Publishes the rows, the verdicts, the tree and the heartbeat; refreshes the usage reading when it is older than `WATCHDOG_USAGE_EVERY` minutes; every five minutes collects into [the stats ledger](stats.md); once a day asks whether there is a [newer muxtopus](updates.md); and sends what changed to [the phone](notifications.md).
 
 Every action is logged with the reading that decided it. Disarmed, the panel still reports; nothing is sent to any pane.
 
@@ -103,6 +105,7 @@ What `idle` used to hide, decided in this order:
 | `paused` | a hard wind-down stopped it **before** the limit, and the budget window it was told about has not come back (it becomes `resume due` when it has) |
 | `background` | the turn ended, but a tool shell it started is still running |
 | `stranded` | as below |
+| `stalled` | [below](#stalled): the same as stranded, at `WATCHDOG_STALL_MIN` |
 | `orchestrating` | an open handover, and a pending entry names this window as its `window:` or `parent:` |
 | `handed off` | an open handover: it stopped at a checkpoint |
 | `done` | its handover is in `done/` |
@@ -142,6 +145,55 @@ Not a field: a **state** the watchdog publishes for a window, beside `working`, 
 `idle` is a fact about the last turn — the same word for a lane that finished ten minutes ago and for one that stopped mid-phase three days ago with its handover half-written. Measured: four lanes sat at `idle 3d` with open handovers, nothing pending named any of them, and nothing anywhere said so.
 
 **It is a fact shown to a human, never a trigger.** It is derived only from `idle`, and the restart path only ever acts on `due`, so a stranded window is never prompted by it; the cure is to write an entry for it (or mark the handover done). `WATCHDOG_STRANDED=0` turns it off. One log line when a window becomes stranded and one when it stops being stranded — not one per pass. It is also one of the things [the phone is told](notifications.md).
+
+### `stalled`
+
+The fifteen-minute version of `stranded`, and the one that matters overnight. Measured on 2026-10-22: lanes 50-ar, 51-edit and 51-surface each queued a background e2e job and ended the turn to wait for it. Claude Code compacted them while idle ("Compacted while idle"), and the task notification that should have woken them never came. Each sat 20–30 minutes at an empty prompt, handover open, nothing running, until the orchestrator typed into it by hand. `stranded` would have said so after two hours, on a dashboard nobody watches at night.
+
+A window reads `stalled` when all of these hold:
+
+- it is idle at its own prompt — not working, not `waiting` at a question;
+- for at least `WATCHDOG_STALL_MIN` minutes (default 15);
+- with an **open** handover, and no pending entry naming it or opening under it (stranded's rules);
+- and **nothing running for it**: no live tool shell (that is `background`), and no `N shell(s)` in Claude Code's footer. The footer is Claude Code's own count of background shells, read from the last two lines of the pane; the `← 1 agent` beside it is on every pane, working or not, and is not read.
+
+A lane legitimately waiting on its own job is therefore `background`, not stalled. Past `WATCHDOG_STRANDED` the same window reads `stranded`. `WATCHDOG_STALL_MIN=0` turns it off.
+
+Not to be confused with the **entry** verdict `stalled` in `sched-why.tsv` (an entry the scheduler cannot judge, [`MUXTOPUS_NOTIFY_STALLED`](notifications.md#alerts-when-lanes-silently-stop)): that one is about a schedule entry; this one is about a window.
+
+## Reports to the parent
+
+Every state on this page is published, and the dashboard draws it — for a person who is looking. With eight lanes running unattended nobody is, and the window that spawned them is an orchestrator that could act on one sentence. The tree already records that window as each lane's **parent**. So once a pass, after the states and the schedules are judged, each parent is typed **one line** naming what is wrong with its lanes:
+
+| kind | when | repeated |
+|---|---|---|
+| `stalled` / `stranded` | the state — idle at its prompt, handover open, nothing running | yes |
+| `prompt` | the state is `waiting` (`needs you`): a question nobody answers | yes |
+| `limit` | its reset passed more than `WATCHDOG_STALL_MIN` ago and it has not resumed — `due`, `queued` or `resume due` that long, or still at the banner after the continue message was typed | yes |
+| `finished` | the state is `done` and the window is still open | once |
+| `e2e` | an `e2e-slot` run has held a slot longer than `WATCHDOG_REPORT_E2E_MIN` (300 min). Timed from when the run's command started, not from when it began queueing | yes |
+| `memory` | the [memory guard](#the-memory-guard) has held entries longer than `WATCHDOG_REPORT_MEM_MIN` (30 min); told to the window each held entry would open under | yes |
+
+The line reads like this, and says it is not the owner speaking:
+
+```
+MUXTOPUS watchdog (00:12), a machine report for theprototype-41, not the owner: 2 problem(s) with your lanes -- stalled 51-edit (claude:21): idle 22m at its prompt, handover open, nothing running; finished 50-ar (claude:18): finished (its handover is in done/), window still open. Act on it (nudge, answer, close or re-plan); claude-watchdog.sh --health lists them.
+```
+
+- **Deduped per (kind, window)** in `reports` in the state directory; a problem still true is said again after `WATCHDOG_REPORT_REPEAT_MIN` (60), with `(still, since HH:MM)`. One that ends is forgotten, and comes back as new.
+- **Typed** with `send-keys -l` and then a separate `Enter`: text and Enter in one call stay unsent in the prompt (measured 2026-10-11).
+- **Never into a parent that cannot take it**: one at a question prompt (the Enter would answer it), at a limit, `queued`, `paused` or `resume due` (a typed line would start a turn the budget is being saved from), an opted-out session, a parent whose window is gone — or any parent while the watchdog is disarmed or in `--dry-run`, which prints `WOULD-REPORT` instead. A **working** parent is fine: Claude Code queues a line typed during a turn.
+- **Otherwise the phone**, through the [notification channel](notifications.md), for the kinds the phone has not already heard: `stalled`, `limit`, `e2e`, `memory`. `finished`, `prompt` and `stranded` have alerts of their own (`MUXTOPUS_NOTIFY_DONE`, `_WAITING`, `_STRANDED`), so with no parent they are only logged.
+- `WATCHDOG_REPORT=notify-only` sends everything to the phone and types into no pane; `off` reports nothing (the states are still published).
+
+**`--health`** asks the same questions once, reads what the last pass published, sends nothing and writes nothing: a table of KIND, WINDOW, PARENT, how long, when it was reported (or `in 9m`, or `phone has it`), and the detail — plus a line when the daemon itself has stopped passing. It exits 1 while anything is wrong and prints `all good` and exits 0 when nothing is, so an orchestrator or a cron line can ask it.
+
+### Two opt-in actions
+
+- **`WATCHDOG_NUDGE_STALLED=on`** types a stalled lane one line, once per stall episode: its background job has ended, read its output or log and continue from the handover's next step. The report says it did (`-- nudged it`) or why not (`-- not nudged: …`). Never a lane with an unanswered QUESTIONS file — it is waiting for an answer, not a job — never one opted out, and a nudge starts a turn, so the [budget cap](budget.md) holds it the way it holds a launch.
+- **`WATCHDOG_CLOSE_FINISHED=N`** closes a `done` window once it has been idle N minutes, under the sweep's [closure rule](orchestration.md#the-closure-rule): its handover is in `done/` (re-read at the moment of closing), no pending entry names it in `window:`, `parent:` or `after:`, and no child window of it is still open. The log line names the `claude --resume <id>` that brings it back. `off` by default — it is the one action here that cannot be taken back.
+
+A finished lane no longer counts toward the [budget cap](budget.md) even while its pane still reads `working`: what is left of its turn is the closing summary. Measured 2026-10-22: finished lanes kept their windows and queued entries were held behind them.
 
 ### The memory guard
 
@@ -194,6 +246,7 @@ All of it in `~/.local/state/claude-watchdog[-<account>]/`, read by the dashboar
 | `optout`, `monitor-optout` | the session ids excluded from each |
 | `prompted`, `wound` | which limit each session was last prompted for, and when each was last asked to wrap up |
 | `notify/` | what the phone has already been told, so nothing is said twice |
+| `reports` | what each parent has been [told](#reports-to-the-parent), and when: `kind:window:pane`, first seen, last sent |
 | `log`, `usage.log`, `notify.log` | the record: every action with the reading that decided it |
 
 The [release check](updates.md) is the one thing on that list it does **not** keep here: there is a single installed tree, so its answer lives in `~/.local/state/muxtopus-update/` with no account suffix, and whichever account's daemon gets there first does the asking.

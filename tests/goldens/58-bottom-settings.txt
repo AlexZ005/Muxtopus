@@ -41,12 +41,12 @@
 │    Handovers: show finished rows: off                                                                                                                        │
 │    Handovers: show question rows: ON                                                                                                                         │
 │    Budget ▸                                                                                                                                                  │
+│    Reports ▸                                                                                                                                                 │
 │    Notifications ▸                                                                                                                                           │
 │    Tabs ▸                                                                                                                                                    │
 │    Updates ▸                                                                                                                                                 │
 │    Columns ▸                                                                                                                                                 │
-│    Panels ▸                                                                                                                                                  │
-│    ▼ 3 more                                                                                                                                                  │
+│    ▼ 4 more                                                                                                                                                  │
 │    table: under the panel · modal: centred · bottom: the footer                                                                                              │
 │    ↑↓ pick · enter change · esc back                                                                                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

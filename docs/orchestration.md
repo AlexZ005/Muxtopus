@@ -114,6 +114,12 @@ lane-dev stop <port|dir>
 
 > Start your dev server only for a proof run: `lane-dev start <worktree> <your port>`, or `e2e-slot --dev <worktree> <your port> -- <e2e command>`, which starts it for the run and stops it after. `lane-dev stop <your port>` the moment the proof is taken; the idle watcher stops a forgotten one after 15 minutes. Never leave a browser open on it.
 
+## Machine reports
+
+A lane that stalls, finishes, waits at a prompt, stays stuck after its limit reset or holds an e2e slot for hours is [reported to its parent](watchdog.md#reports-to-the-parent): the watchdog types one line into the window that spawned it, starting `MUXTOPUS watchdog (HH:MM), a machine report for <slug>, not the owner`. For a wave that window is the orchestrator — which has ended its turn, so the line is what wakes it. `orchestrate.md` tells it what to do with one: in one short turn, nudge a stalled lane with one line (`tmux send-keys -t <win> -l '<text>'`, then a separate `tmux send-keys -t <win> Enter`), close a finished one under the closure rule above, list a prompt or a long hold for the owner, then end the turn again. It is still not waiting: the watchdog is the one watching, for free, and a turn is spent only when something is wrong.
+
+`claude-watchdog.sh --health` prints the same verdicts on demand. With no orchestrator to hear them — a lane whose parent is gone, or a root window — the phone is told instead.
+
 ## What an orchestrator never does
 
 - **Release.** It never runs `release.sh`, never tags, never publishes, never merges a release PR (a `release/*` branch, or one that bumps `VERSION`) and never edits `VERSION`. Those are the owner's, every time; `preview-gate` exists to stop *before* them.

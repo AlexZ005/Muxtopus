@@ -176,6 +176,15 @@ work on this account only: its tmux session, its windows, {{SCHEDULES}} and
    `handover.sh done {{SLUG}}` when the whole item is finished: the whole
    item is finished when the integrate window says so, and it runs that.
 
+MACHINE REPORTS. A line typed into this window that starts "MUXTOPUS
+watchdog" is the watchdog reporting on your lanes, not the owner. Act on it
+in ONE short turn, then end your turn again: a stalled lane gets one line
+telling it to continue its brief (`tmux send-keys -t <win> -l '<text>'`, then
+a separate `tmux send-keys -t <win> Enter`); a finished lane's window is
+closed only if its handover is in done/ and no pending entry names it; a
+prompt, a limit or a long e2e or memory hold is listed in {{HANDOVER}} for
+the owner. Never answer a permission prompt for a lane.
+
 ROUND 2 IS A NEW WAVE, NOT A RESUME. When the owner answers a preview with
 fixes, write a new wave -- new lane slugs, new entries -- whose rules file
 names the owner's feedback as its acceptance test, and every brief names it.

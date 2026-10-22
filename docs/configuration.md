@@ -33,6 +33,13 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `WATCHDOG_USAGE_STALE` | `180` | minutes after which a budget *reading* is too old to fire `at: reset`'s first gate |
 | `WATCHDOG_HEARTBEAT_LOG` | `60` | minutes between the daemon's "still here" log lines |
 | `WATCHDOG_STRANDED` | `120` | minutes a lane may sit idle with an open handover and nothing pending naming it before its state reads `stranded`; `0` turns it off |
+| `WATCHDOG_STALL_MIN` | `15` | minutes a lane may sit idle **at its prompt**, with an open handover, nothing running (no tool shell, no `N shells` in its footer) and nothing pending naming it, before its state reads [`stalled`](watchdog.md#stalled); `0` turns it off |
+| `WATCHDOG_REPORT` | `on` | [reports to the parent](watchdog.md#reports-to-the-parent): one line typed into the window that spawned a lane when the lane is stalled, stranded, finished, asking, stuck at a limit, holding an e2e slot or held by memory — the phone when no parent can hear it. `notify-only`: the phone only; `off`: nobody |
+| `WATCHDOG_REPORT_REPEAT_MIN` | `60` | minutes before a problem that still holds is reported again; a new one is reported at once |
+| `WATCHDOG_REPORT_E2E_MIN` | `300` | minutes an e2e slot may be held before the holding lane's parent is told; `0` never |
+| `WATCHDOG_REPORT_MEM_MIN` | `30` | minutes the memory guard may hold entries before the windows they would open under are told; `0` never |
+| `WATCHDOG_NUDGE_STALLED` | `off` | `on`: a stalled lane is typed one line, once per stall — its background job has ended, read its log and continue. Never a lane whose QUESTIONS file is unanswered; held by the budget cap like a launch |
+| `WATCHDOG_CLOSE_FINISHED` | `off` | `off`, or minutes: a `done` window idle this long is closed, unless a pending entry names it or opens under it, or a child window of it is still open. The log names the `claude --resume` that brings it back |
 | `WATCHDOG_WOUND_RESUME` | `on` | send the continue message to a window that a **hard** wind-down told to stop, once its budget window has come back and while its handover is still open; `off` leaves it stopped |
 | `WATCHDOG_MEM_GUARD` | `on` | the [memory guard](watchdog.md#the-memory-guard): while memory is low, a schedule entry that is due is **held** (`held` in the schedules tab, a red `MEMORY` badge on the deck panel) and launches by itself once memory recovers; `off` never holds |
 | `WATCHDOG_MEM_MIN_GB` | `4` | whole GB; memory is low while `MemAvailable` is under this, and recovers 0.5 GB above it. `0` turns this half off |

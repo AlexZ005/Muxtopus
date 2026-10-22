@@ -68,7 +68,7 @@ ok(got["c"].tags == (), "a twenty-field row (an older watchdog) has no tags")
 ok(got["a"].said == "-", "SAID is still read where it was")
 
 print("== the states")
-for st in ("queued", "paused", "error", "background", "orchestrating", "handed-off", "done"):
+for st in ("queued", "paused", "error", "background", "orchestrating", "handed-off", "done", "stalled"):
     ok(st in STATES, "%s has a label and a colour" % st)
 ok(STATES["limited"][0] == "limit hit", "limited reads 'limit hit'")
 ok(STATES["limited"][2] is True, "..and still carries its reset time")
@@ -85,9 +85,9 @@ ok(tags_text(()).plain == "—", "no tags: a dash, like every unknown cell")
 print("== the phone")
 words = dict(muxtelegram.STATE_WORDS)
 ok(words["limited"] == "limit hit" and words["handed-off"] == "handed off", "/windows says the new words")
-ok(all(st in words for st in ("paused", "queued", "error", "background", "orchestrating", "done")),
+ok(all(st in words for st in ("paused", "queued", "error", "background", "orchestrating", "done", "stalled")),
    "/windows knows every new state")
-ok(set(muxtelegram.AT_PROMPT) == {"idle", "handed-off", "orchestrating", "done"},
+ok(set(muxtelegram.AT_PROMPT) == {"idle", "handed-off", "stalled", "orchestrating", "done"},
    "a 'questions answered' line may go to a window at its prompt -- never a background one")
 ok("tags" in muxtelegram.STATUS_COLS and muxtelegram.STATUS_COLS.index("tags") == 20,
    "the phone reads TAGS at index 20")

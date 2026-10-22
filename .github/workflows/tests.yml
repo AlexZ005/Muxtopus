@@ -78,6 +78,8 @@ jobs:
         run: python3 tests/test_budget_view.py
       - name: one state, any number of tags -- the TAGS column, the words, the phone
         run: python3 tests/test_window_tags_view.py
+      - name: the reports to a lane's parent -- Settings ▸ Reports
+        run: python3 tests/test_reports_menu.py
       - name: handover.sh -- the marker, and what done carries with it
         run: bash tests/test_handover_sh.sh
       - name: every tmux call names its socket; no bare kill-server anywhere

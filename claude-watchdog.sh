@@ -7,6 +7,7 @@
 #   claude-watchdog.sh --daemon      poll forever (the systemd unit uses this)
 #   claude-watchdog.sh --status      print the state table it publishes
 #   claude-watchdog.sh --tree        the window tree this scheduler keeps
+#   claude-watchdog.sh --health      what is wrong with the lanes, once (exit 1 if anything)
 #   claude-watchdog.sh --restore [F] rebuild the windows of a frozen snapshot
 #                                    (windows.last.tsv, or F) in the session
 #   claude-watchdog.sh --check [NAME] resolve schedule entries; launch nothing
@@ -248,6 +249,48 @@ USAGE_STALE="${WATCHDOG_USAGE_STALE:-180}"
 # `idle` is a fact about the last turn, `stranded` is a fact about the future.
 # 0 turns it off.
 STRANDED_MIN="${WATCHDOG_STRANDED:-120}"
+# STALLED: THE SAME TEST AN HOUR AND THREE QUARTERS SOONER, and the one that
+# matters overnight. MEASURED 2026-10-22: lanes 50-ar, 51-edit and 51-surface
+# each queued a background e2e job and ended the turn to wait for it; Claude
+# Code compacted them while idle ("Compacted while idle"), and the task
+# notification that should have woken them never came. 20-30 minutes at an
+# empty prompt, open handover, nothing running, until the orchestrator typed
+# into each by hand. `stranded` would have said so after two hours, on a
+# dashboard nobody watches at night. 0 turns it off.
+STALL_MIN="${WATCHDOG_STALL_MIN:-15}"
+# REPORTS TO THE PARENT (report_pass; docs/watchdog.md, "Reports"). The tree
+# already knows which window spawned each lane, and that window is an
+# orchestrator that can act on a sentence; the phone is where a report goes
+# when there is no such window. MEASURED 2026-10-22 on this box: with eight
+# lanes running unattended, every stall above was found by the orchestrator
+# only when a human asked it to look. on | off | notify-only (the phone, never
+# a pane).
+REPORT="${WATCHDOG_REPORT:-on}"
+# The same problem is said again at most this often while it lasts. A problem
+# that ends and comes back is new, and is said at once.
+REPORT_REPEAT_MIN="${WATCHDOG_REPORT_REPEAT_MIN:-60}"
+# An e2e slot held longer than this is a run that is not finishing. MEASURED
+# 2026-10-05: an --exclusive hold whose owner had moved on blocked every
+# lane's e2e for 1.5 h. 0 turns this report off.
+REPORT_E2E_MIN="${WATCHDOG_REPORT_E2E_MIN:-300}"
+# Entries held by the memory guard for longer than this are reported to the
+# windows they would have opened under: the guard releases them by itself,
+# but only once somebody frees memory. 0 turns this report off.
+REPORT_MEM_MIN="${WATCHDOG_REPORT_MEM_MIN:-30}"
+# OPT-IN, LIKE EVERY POWER HERE THAT STARTS A TURN NOBODY ASKED FOR: a
+# stalled lane is sent one short line, once per stall episode.
+NUDGE_STALLED="${WATCHDOG_NUDGE_STALLED:-off}"
+NUDGE_MSG="Your background job has ended, but its notification did not reach you (this window has been idle with your handover open and nothing running). Read its output or log, then continue your brief from your handover's next step."
+# off, or minutes: a `done` window idle this long is closed, under the
+# sweep's closure rule (report_close). off by default: closing is the one
+# thing here that cannot be taken back.
+CLOSE_FINISHED="${WATCHDOG_CLOSE_FINISHED:-off}"
+# THE LEDGER of what has been reported:  key <TAB> first-seen <TAB> last-sent
+# A key is kind:window:pane. Rewritten every pass with only the keys still
+# true, so a problem that ends is forgotten and comes back as new.
+REPORTS="$STATE_DIR/reports"
+# What /proc/uptime says, as a file: a test makes every process older with it.
+UPTIME_FILE="${MUX_UPTIME:-/proc/uptime}"
 # A HARD WIND-DOWN IS NOT A ONE-WAY DOOR. Band 2 tells a window to land its
 # step, write a handoff and STOP -- and nothing here used to start it again,
 # because the resume path fires only for a pane whose text says "hit your
@@ -373,6 +416,26 @@ prompt_scan() {
   return 0
 }
 
+# IS THE FOOTER COUNTING BACKGROUND WORK? Claude Code's status line names its
+# running background shells: `⏵⏵ bypass permissions on · 1 shell · ← 1 agent`
+# (read off this box's panes, 2026-10-22). "← 1 agent" is on every pane,
+# working or not, so it is NOT read. Only the last two non-blank lines: a
+# transcript further up that quotes "2 shells" is not a footer. Builtins only;
+# it runs for every idle pane old enough to be stalled.
+pane_footer_busy() {
+  local -a L=()
+  local i n seen=0
+  mapfile -t L <<<"$1"
+  n=${#L[@]}
+  for (( i = n - 1; i >= 0 && seen < 2; i-- )); do
+    [[ "${L[$i]}" =~ ^[[:space:]]*$ ]] && continue
+    seen=$(( seen + 1 ))
+    [[ "${L[$i]}" =~ (^|[·[:space:]])[0-9]+\ shells?([[:space:]·]|$) ]] && return 0
+    [[ "${L[$i]}" == *"esc to interrupt"* ]] && return 0
+  done
+  return 1
+}
+
 # THE RUNNING DAEMON'S PID, wherever it was started from: the systemd unit's
 # MainPID, else the pid file the no-systemd path writes (muxtopus, watchdog_up).
 # Prints it and returns 0, or returns 1 when nothing is running.
@@ -492,6 +555,8 @@ case "${1:---once}" in
              printf 'sha\t%s\nyes\t%s\nquestion\t%s\n%s\n' "$PROMPT_SHA" "$PROMPT_YES" "$PROMPT_Q" "$PROMPT_BOX"
              exit 0 ;;
   --tree)    MODE=tree ;;
+  # THE REPORTS' VERDICTS, once, sending nothing (report_health).
+  --health)  MODE=health ;;
   # THE BUDGET GUARD'S PICTURE, computed now (read-only: nothing is held,
   # launched or published by asking).
   --budget)  MODE=budget ;;
@@ -507,7 +572,7 @@ case "${1:---once}" in
              case "${2:-}" in --body) CHECK_ARG=""; CHECK_BODY=1 ;; esac
              case "${3:-}" in --body) CHECK_BODY=1 ;; esac ;;
   --install|--uninstall) MODE="${1#--}" ;;
-  -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
   *) echo "unknown option: $1" >&2; exit 2 ;;
 esac
 
@@ -1832,7 +1897,21 @@ budget_check() {
   budget_resolve
   BG_ON=0; [ "$BUDGET" = on ] && BG_ON=1
   BG_NOW="$now"
-  BG_WORKING="$(awk -F'\t' '$6 == "working" {n++} END {print n+0}' "$STATUS" 2>/dev/null)"
+  # A FINISHED LANE IS NOT ONE OF THE CAP'S WINDOWS, even while its pane still
+  # reads working: `handover.sh done` was run, and what is left of its turn is
+  # the closing summary. MEASURED 2026-10-22: finished lanes (53-scale,
+  # 49-int) kept their windows, and queued entries were held behind them.
+  # getline on the done/ file is a test for its existence that forks nothing.
+  BG_WORKING="$(awk -F'\t' -v h="$HANDOVERS" '
+    $6 != "working" { next }
+    { s = $2; gsub(/➥/, "", s); fin = 0
+      if (s != "" && s != "-" && (getline l < (h "/STATUS-" s ".md")) < 0) {
+        if ((getline l < (h "/done/STATUS-" s ".md")) >= 0) fin = 1
+        close(h "/done/STATUS-" s ".md")
+      }
+      close(h "/STATUS-" s ".md")
+      if (!fin) n++ }
+    END {print n+0}' "$STATUS" 2>/dev/null)"
   BG_WORKING="${BG_WORKING:-0}"
   st_at="$(stat -c %Y "$STATUS" 2>/dev/null || echo 0)"
   BG_RUNNING=$(( BG_WORKING + $(awk -F'\t' -v t="$st_at" '$1 + 0 > t {n++} END {print n+0}' "$BUDGET_STARTS" 2>/dev/null || echo 0) ))
@@ -2245,7 +2324,7 @@ proc_scan() {
   local d pid st ppid
   local -a f
   PROC_PPID=(); PROC_KIDS=(); PROC_START=(); PROC_CMDC=()
-  read -r PROC_UP _ 2>/dev/null < /proc/uptime; PROC_UP="${PROC_UP%%.*}"
+  read -r PROC_UP _ 2>/dev/null < "$UPTIME_FILE"; PROC_UP="${PROC_UP%%.*}"
   for d in /proc/[0-9]*; do
     pid="${d#/proc/}"
     read -r st 2>/dev/null < "$d/stat" || continue
@@ -4770,6 +4849,448 @@ stats_collect() {
   return 0
 }
 
+# ------------------------------------------------- reports to the parent
+# WHAT THE ORCHESTRATOR IS TOLD (docs/watchdog.md, "Reports to the parent").
+#
+# Every state above is published, and a dashboard draws it -- for a human who
+# is looking. MEASURED 2026-10-22, eight lanes unattended: three sat stalled
+# 20-30 minutes, two finished lanes held their windows, and the window that
+# had spawned all of them, an orchestrator that could have acted on one
+# sentence, heard nothing until the owner asked it to look. The tree already
+# records that window as each lane's PARENT. So once a pass, after the states
+# and the schedules are judged, the problems are collected (report_collect)
+# and each parent is typed ONE line naming its lanes' (report_deliver).
+#
+# WHAT IS A PROBLEM, and from what -- nothing here re-derives a state:
+#   stalled   state stalled or stranded                      status.tsv
+#   prompt    state waiting: a question nobody answers       status.tsv
+#   limit     the reset passed WATCHDOG_STALL_MIN ago and it  status.tsv
+#             still has not resumed (due, queued, resume due,
+#             or limited after its prompt was already typed)
+#   finished  state done, window still open (said once)      status.tsv
+#   e2e       an e2e-slot has held a slot past               the process tree
+#             WATCHDOG_REPORT_E2E_MIN
+#   memory    entries held by the memory guard past           memory, sched-why.tsv
+#             WATCHDOG_REPORT_MEM_MIN, told to the windows
+#             they would open under
+#
+# ONE LINE PER PARENT PER PASS, not one per problem: an orchestrator reads a
+# line as a turn, and five lines are five turns. Deduped per (kind, window)
+# in $REPORTS, repeated at most every WATCHDOG_REPORT_REPEAT_MIN while it lasts.
+#
+# report_collect fills REPORT_ROWS, one problem a line:
+#   kind <TAB> key <TAB> window <TAB> pane <TAB> parent-slug <TAB> min-age-s <TAB> detail
+# An empty field is written `-`: a tab is whitespace to `read`, so two tabs
+# in a row are ONE separator, and every field after an empty one would move.
+# It reads only what is published, so --health asks it the same questions a
+# pass does and gets the same answers.
+declare -A RP_STATE=() RP_SID=() RP_OPT=() RP_NAME=() RP_TAGS=() RP_IDLE=() RP_PIDPANE=()
+declare -A RP_TPAR=() RP_TPANE=() RP_TWID=()
+REPORT_ROWS=""
+report_load() {
+  local sid name pane st act idle opt pid tags slug par wid tpane _r
+  RP_STATE=(); RP_SID=(); RP_OPT=(); RP_NAME=(); RP_TAGS=(); RP_IDLE=(); RP_PIDPANE=()
+  RP_TPAR=(); RP_TPANE=(); RP_TWID=()
+  # Empty fields filled with `-` on the way in, for the reason above.
+  if [ -f "$STATUS" ]; then
+    while IFS=$'\t' read -r sid name pane _r _r st _r _r _r _r _r opt _r idle _r _r _r _r pid _r tags; do
+      [ -n "$pane" ] && [ "$pane" != - ] || continue
+      RP_STATE[$pane]="$st"; RP_SID[$pane]="$sid"; RP_OPT[$pane]="$opt"; RP_NAME[$pane]="$name"
+      RP_TAGS[$pane]="$tags"; RP_IDLE[$pane]="$idle"
+      [ -n "$pid" ] && RP_PIDPANE[$pid]="$pane"
+    done < <(awk -F'\t' -v OFS='\t' '{for (i = 1; i <= 21; i++) if ($i == "") $i = "-"; print}' "$STATUS")
+  fi
+  if [ -f "$TREE" ]; then
+    while IFS=$'\t' read -r slug par wid tpane _r; do
+      [ -n "$slug" ] || continue
+      [ "$par" = - ] && par=""
+      RP_TPAR[$slug]="$par"; RP_TWID[$slug]="$wid"; RP_TPANE[$slug]="$tpane"
+    done < <(awk -F'\t' -v OFS='\t' '{for (i = 1; i <= 6; i++) if ($i == "") $i = "-"; print}' "$TREE")
+  fi
+}
+
+# One problem. Tabs and newlines folded out: the detail ends up in one typed line.
+report_add() {
+  local d="${7//$'\t'/ }"; d="${d//$'\n'/ }"
+  REPORT_ROWS+="$1"$'\t'"$2"$'\t'"${3:--}"$'\t'"${4:--}"$'\t'"${5:--}"$'\t'"$6"$'\t'"$d"$'\n'
+}
+
+# THE e2e-slot RUNS HOLDING A SLOT, and since when. A holder is an e2e-slot
+# whose child is the command it runs; a waiter's only child is `sleep 5` (or a
+# `flock` an --exclusive run is blocked in). The hold began when that child
+# started, NOT when e2e-slot did: a run can queue for hours first. Not the
+# lock files: the pid in /proc/locks is the `flock` process that took the
+# lock and exited, so it names nobody (checked on this box, 2026-10-22).
+# Prints: pid <TAB> held-seconds <TAB> owning-pane-or-empty <TAB> command
+report_e2e_holders() {
+  local d pid kid kc age best up hops owner
+  local -a a k
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    mapfile -d '' -t a 2>/dev/null < "$d/cmdline" || continue
+    [ ${#a[@]} -gt 0 ] || continue          # a kernel thread has no argv
+    # `e2e-slot ...` or `bash /path/e2e-slot ...` (its shebang runs it so).
+    case "${a[0]##*/}/${a[1]:-}" in e2e-slot/*|*/e2e-slot) ;; *) continue ;; esac
+    # A subshell e2e-slot forks (lane_dev) carries the same argv; it is not
+    # a second run. By the parent's own argv, never a substring of it: the
+    # tool shell that started the real one has "e2e-slot" in its -c text.
+    read -r -a k <<<"$(proc_cmd "${PROC_PPID[$pid]:-0}")"
+    case "${k[0]##*/}/${k[1]:-}" in e2e-slot/*|*/e2e-slot) continue ;; esac
+    best=-1
+    for kid in ${PROC_KIDS[$pid]-}; do
+      mapfile -d '' -t k 2>/dev/null < "/proc/$kid/cmdline" || continue
+      kc="${k[*]}"
+      [ "$kc" = "sleep 5" ] && continue
+      [ "${k[0]##*/}" = flock ] && continue
+      age="$(proc_age "$kid")"
+      [ "$age" -gt "$best" ] && best="$age"
+    done
+    [ "$best" -ge 0 ] || continue
+    owner=""; up="$pid"; hops=0
+    while [ -n "$up" ] && [ "$up" != 0 ] && [ "$hops" -lt 40 ]; do
+      [ -n "${RP_PIDPANE[$up]-}" ] && { owner="${RP_PIDPANE[$up]}"; break; }
+      up="${PROC_PPID[$up]-}"; hops=$(( hops + 1 ))
+    done
+    printf '%s\t%s\t%s\t%s\n' "$pid" "$best" "$owner" "${a[*]:0:12}"
+  done
+}
+
+# The parent slug of a window, from the tree. Empty for a root.
+report_parent_of() {
+  local slug; slug="$(lane_slug_of "$1")"
+  [ -n "$slug" ] && [ "$slug" != - ] || return 0
+  printf '%s' "${RP_TPAR[$slug]-}"
+}
+
+report_collect() {
+  local now="$1" pane name st idle tags slug lane d grace pid held owner cmd f v why p
+  REPORT_ROWS=""
+  [ "$REPORT" = off ] && return 0
+  report_load
+  grace=$(( ${STALL_MIN:-15} * 60 )); [ "$grace" -gt 0 ] || grace=900
+  for pane in "${!RP_STATE[@]}"; do
+    name="${RP_NAME[$pane]}"; st="${RP_STATE[$pane]}"; idle="${RP_IDLE[$pane]}"; tags="${RP_TAGS[$pane]}"
+    case "$idle" in ''|*[!0-9]*) idle=0 ;; esac
+    lane="$(lane_slug_of "$name")"
+    case "$st" in
+      # Stranded is a stall two hours on, and its own kind -- a new key, so
+      # the parent hears the change once more -- but not the phone's: the
+      # phone has its own stranded alert (MUXTOPUS_NOTIFY_STRANDED).
+      stalled|stranded)
+        d="idle $(dur_hm "$idle") at its prompt, handover open, nothing running"
+        [ "$st" = stranded ] && d+=", and nothing pending will touch it"
+        [[ ",$tags," == *",asking,"* ]] && d+="; its QUESTIONS file is unanswered"
+        report_add "$st" "$st:$name:$pane" "$name" "$pane" "$(report_parent_of "$name")" 0 "$d" ;;
+      waiting)
+        report_add prompt "prompt:$name:$pane" "$name" "$pane" "$(report_parent_of "$name")" 0 \
+          "waits at a permission or question prompt nobody has answered" ;;
+      due|queued|resume-due)
+        report_add limit "limit:$name:$pane" "$name" "$pane" "$(report_parent_of "$name")" "$grace" \
+          "its usage limit has reset and it has not resumed ($st)" ;;
+      limited)
+        # Prompted already and still sitting at the banner: the continue
+        # message did not take. Read from the ACTION column, field 8.
+        if awk -F'\t' -v p="$pane" '$3 == p && $8 == "already-prompted" {f=1} END{exit !f}' "$STATUS" 2>/dev/null; then
+          report_add limit "limit:$name:$pane" "$name" "$pane" "$(report_parent_of "$name")" "$grace" \
+            "was sent the continue message after its limit reset and is still at the limit banner"
+        fi ;;
+      done)
+        d="finished (its handover is in done/), window still open"
+        case "$CLOSE_FINISHED" in
+          ''|*[!0-9]*) ;;
+          *) d+="; closing it once idle ${CLOSE_FINISHED}m (WATCHDOG_CLOSE_FINISHED)" ;;
+        esac
+        report_add finished "finished:$name:$pane" "$name" "$pane" "$(report_parent_of "$name")" 0 "$d" ;;
+    esac
+  done
+  # The slots. PROC_* is this pass's process walk (proc_scan).
+  if [ "${REPORT_E2E_MIN:-0}" -gt 0 ] 2>/dev/null; then
+    while IFS=$'\t' read -r pid held owner cmd; do
+      [ -n "$pid" ] && [ "$held" -ge $(( REPORT_E2E_MIN * 60 )) ] || continue
+      name="-"; p=""
+      if [ -n "$owner" ]; then name="${RP_NAME[$owner]:--}"; p="$(report_parent_of "$name")"; fi
+      report_add e2e "e2e:$pid" "$name" "$owner" "$p" 0 \
+        "an e2e slot held $(dur_hm "$held") by pid $pid: ${cmd:0:100}"
+    done < <(report_e2e_holders)
+  fi
+  # Memory: the guard's own verdict, and the entries it is holding.
+  if [ "${REPORT_MEM_MIN:-0}" -gt 0 ] 2>/dev/null && [ -f "$MEMORY" ] && [ -f "$SCHED_WHY" ]; then
+    local mst msince mreason
+    IFS=$'\t' read -r _ _ _ mst msince mreason < "$MEMORY"
+    if [ "$mst" = low ] && [ -n "$msince" ] && [ $(( now - msince )) -ge $(( REPORT_MEM_MIN * 60 )) ]; then
+      local -A held_under=()
+      while IFS=$'\t' read -r f v why _; do
+        [ "$v" = held ] && [[ "$why" == "held: memory"* ]] || continue
+        p="$(sched_field "$SCHEDULES/$f" parent)"
+        [ -n "$p" ] || p="$(lane_slug_of "$(sched_field "$SCHEDULES/$f" window)")"
+        held_under[${p:--}]+="${held_under[${p:--}]:+, }$(sched_slug "$SCHEDULES/$f")"
+      done < "$SCHED_WHY"
+      for p in "${!held_under[@]}"; do
+        report_add memory "memory:$p" "-" "" "${p#-}" 0 \
+          "memory has been low for $(dur_hm $(( now - msince ))) ($mreason), holding ${held_under[$p]}"
+      done
+    fi
+  fi
+  return 0
+}
+
+# WHERE A REPORT CAN BE TYPED. 0 and REPORT_TO=<pane> when the parent is a
+# live claude session that may be typed into now; 1 otherwise, with
+# REPORT_WHY saying why not. The rules are the resume path's: never into a
+# window that is asking a question (an Enter would answer it), never into one
+# stopped at a limit or paused by a wind-down (it would start a turn the
+# budget is being saved from), never into an opted-out session, and never
+# while disarmed or in a dry run. A WORKING parent is fine: Claude Code queues
+# a line typed during a turn and reads it when the turn reaches it.
+report_target() {
+  local parent="$1" enabled="$2" pane st text
+  REPORT_TO=""; REPORT_WHY=""
+  if [ -z "$parent" ]; then REPORT_WHY="no parent"; return 1; fi
+  if [ "$REPORT" = notify-only ]; then REPORT_WHY="WATCHDOG_REPORT=notify-only"; return 1; fi
+  pane="${RP_TPANE[$parent]-}"
+  if [ -z "$pane" ] || [ -z "${RP_STATE[$pane]-}" ]; then REPORT_WHY="parent $parent has no live session"; return 1; fi
+  st="${RP_STATE[$pane]}"
+  case "$st" in
+    waiting|limited|due|queued|resume-due|paused)
+      REPORT_WHY="parent $parent is $st"; return 1 ;;
+  esac
+  if [ "${RP_OPT[$pane]-0}" = 1 ]; then REPORT_WHY="parent $parent is opted out"; return 1; fi
+  if [ "$enabled" != 1 ]; then REPORT_WHY="the watchdog is disarmed"; return 1; fi
+  # One capture, at the moment of typing: the state is up to a pass old.
+  text="$(mux_tmux capture-pane -p -t "$pane" 2>/dev/null)" || { REPORT_WHY="parent pane $pane is gone"; return 1; }
+  if prompt_scan "$text"; then REPORT_WHY="parent $parent is at a prompt"; return 1; fi
+  REPORT_TO="$pane"
+  return 0
+}
+
+# A line, typed: the text LITERALLY (-l, so nothing in it is read as a key
+# name), then Enter as a call of its own. MEASURED 2026-10-11: text and Enter
+# in ONE send-keys left the text sitting unsent in the prompt -- the Enter is
+# swallowed by the paste detection.
+report_type() {
+  mux_tmux send-keys -t "$1" -l "$2" 2>/dev/null || return 1
+  sleep 1
+  mux_tmux send-keys -t "$1" Enter 2>/dev/null
+}
+
+# Where a window is, as a person types it: claude:21.
+report_where() {
+  [ -n "$1" ] || return 0
+  mux_tmux display-message -p -t "$1" '#{session_name}:#{window_index}' 2>/dev/null
+}
+
+# THE OPT-IN NUDGE (WATCHDOG_NUDGE_STALLED). Once per stall episode: the
+# ledger key lives exactly as long as the stall does. 0 when it typed.
+report_nudge() {
+  local pane="$1" name="$2" enabled="$3" lane text prio
+  NUDGE_WHY=""
+  lane="$(lane_slug_of "$name")"
+  [ "$enabled" = 1 ] || { NUDGE_WHY="disarmed"; return 1; }
+  [ "${RP_OPT[$pane]-0}" = 1 ] && { NUDGE_WHY="opted out"; return 1; }
+  # A lane that ended its turn on an unanswered question is waiting for an
+  # ANSWER; "your job has ended" would be the wrong thing to tell it.
+  [[ ",${RP_TAGS[$pane]-}," == *",asking,"* ]] && { NUDGE_WHY="its QUESTIONS file is unanswered"; return 1; }
+  # A nudge starts a turn, so it is one more working window: the cap and the
+  # session line hold it the way they hold a launch.
+  if [ "$BUDGET" = on ]; then
+    prio="${TAG_PRIO[$lane]-p1}"
+    budget_gate "$prio" 0 || { NUDGE_WHY="${BG_HOLD_WHY:-held by the budget}"; return 1; }
+  fi
+  text="$(mux_tmux capture-pane -p -t "$pane" 2>/dev/null)" || { NUDGE_WHY="pane gone"; return 1; }
+  if grep -q "esc to interrupt" <<<"$text" || prompt_scan "$text"; then
+    NUDGE_WHY="no longer at its prompt"; return 1
+  fi
+  report_type "$pane" "$NUDGE_MSG" || { NUDGE_WHY="send-keys failed"; return 1; }
+  [ "$BUDGET" = on ] && budget_started nudge "$lane"
+  log "nudged $name (pane $pane): stalled, WATCHDOG_NUDGE_STALLED=on"
+  return 0
+}
+
+# WATCHDOG_CLOSE_FINISHED: the sweep's closure rule (docs/orchestration.md),
+# applied by the daemon. 0 when it closed the window.
+report_close() {
+  local pane="$1" name="$2" enabled="$3" lane wid s live
+  lane="$(lane_slug_of "$name")"
+  [ "$enabled" = 1 ] && [ "$DRY" != 1 ] || return 1
+  [ "${RP_OPT[$pane]-0}" = 1 ] && return 1
+  [ "${RP_STATE[$pane]-}" = done ] || return 1
+  # Its handover is in done/ and not open again: re-read, it may have been
+  # reopened since the status row was written.
+  [ -f "$HANDOVERS/done/STATUS-$lane.md" ] && [ ! -f "$HANDOVERS/STATUS-$lane.md" ] || return 1
+  # Nothing pending names it, or will open under it -- otherwise a late lane
+  # would launch under a window that no longer exists and be drawn as a root.
+  sched_names_slug "$lane" && return 1
+  sched_under_slug "$lane" && return 1
+  # No open window of its own children: closing a parent strands its lanes'
+  # reports with nobody to hear them.
+  live=",$(tree_live_windows | paste -sd, -),"
+  for s in "${!RP_TPAR[@]}"; do
+    [ "${RP_TPAR[$s]}" = "$lane" ] || continue
+    [[ "$live" == *",${RP_TWID[$s]-x},"* ]] && return 1
+  done
+  wid="$(mux_tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)" || return 1
+  [ -n "$wid" ] || return 1
+  mux_tmux kill-window -t "$wid" 2>/dev/null || return 1
+  log "closed finished window $name ($wid, pane $pane): handover in done/, idle $(dur_hm "${RP_IDLE[$pane]:-0}"), WATCHDOG_CLOSE_FINISHED=$CLOSE_FINISHED -- claude --resume ${RP_SID[$pane]} reopens it"
+  return 0
+}
+
+# Which kinds go to the phone when no parent can hear them. `finished`,
+# `prompt` and `stranded` do not: the phone was told those already
+# (MUXTOPUS_NOTIFY_DONE, _WAITING, _STRANDED), and a second message for the
+# same news is noise -- on this box, four lanes stranded for weeks would have
+# been one message an hour, forever.
+report_phone_kind() { case "$1" in stalled|limit|e2e|memory) return 0 ;; esac; return 1; }
+
+# Once a pass, after the states and the schedules are judged.
+report_pass() {
+  local now="$1" enabled="$2" kind key name pane parent minage detail first last
+  local due item where dest line n nudged
+  local -A first_of=() last_of=() keep=() lines=() count=() dests=()
+  [ "$REPORT" = off ] && { [ "$DRY" = 1 ] || rm -f "$REPORTS"; return 0; }
+  report_collect "$now"
+  if [ -f "$REPORTS" ]; then
+    while IFS=$'\t' read -r key first last; do
+      [ -n "$key" ] && { first_of[$key]="$first"; last_of[$key]="$last"; }
+    done < "$REPORTS"
+  fi
+  while IFS=$'\t' read -r kind key name pane parent minage detail; do
+    [ -n "$kind" ] || continue
+    [ "$pane" = - ] && pane=""; [ "$parent" = - ] && parent=""
+    first="${first_of[$key]:-$now}"; last="${last_of[$key]-}"
+    keep[$key]="$first"$'\t'"$last"
+    [ $(( now - first )) -ge "$minage" ] || continue
+    due=""; nudged=""
+    # THE NUDGE, before the report, so the report can say it happened.
+    if { [ "$kind" = stalled ] || [ "$kind" = stranded ]; } && [ "$NUDGE_STALLED" = on ] && [ "$DRY" != 1 ] && [ -n "$pane" ]; then
+      if [ -z "${first_of[nudge:$key]+x}" ]; then
+        if report_nudge "$pane" "$name" "$enabled"; then
+          nudged=1; keep[nudge:$key]="$now"$'\t'"$now"
+          detail+=" -- nudged it to continue (WATCHDOG_NUDGE_STALLED)"
+        else
+          detail+=" -- not nudged: $NUDGE_WHY"
+        fi
+      else
+        keep[nudge:$key]="${first_of[nudge:$key]}"$'\t'"${last_of[nudge:$key]}"
+      fi
+    fi
+    if [ -z "$last" ] || [ -n "$nudged" ]; then
+      due=new
+    elif [ "$kind" != finished ] && [ "${REPORT_REPEAT_MIN:-0}" -gt 0 ] 2>/dev/null \
+         && [ $(( now - last )) -ge $(( REPORT_REPEAT_MIN * 60 )) ]; then
+      due=still
+    fi
+    # Closing is its own clock (the window's idle time), whether or not the
+    # finished line is due this pass.
+    if [ "$kind" = finished ] && [ -n "$pane" ]; then
+      case "$CLOSE_FINISHED" in
+        ''|*[!0-9]*) ;;
+        *) if [ "${RP_IDLE[$pane]:-0}" -ge $(( CLOSE_FINISHED * 60 )) ] 2>/dev/null \
+              && report_close "$pane" "$name" "$enabled"; then
+             detail="finished (its handover is in done/); closed its window (WATCHDOG_CLOSE_FINISHED)"
+             unset 'keep[$key]'
+             [ -n "$last" ] && continue
+             due=new
+           fi ;;
+      esac
+    fi
+    [ -n "$due" ] || continue
+    where=""; [ -n "$pane" ] && [ "$name" != - ] && where="$(report_where "$pane")"
+    if [ "$name" = - ]; then item="$kind: $detail"
+    else item="$kind ${name}${where:+ ($where)}: $detail"; fi
+    [ "$due" = still ] && item+=" (still, since $(date -d "@$first" '+%H:%M' 2>/dev/null))"
+    if report_target "$parent" "$enabled"; then
+      dest="$REPORT_TO"
+    elif report_phone_kind "$kind"; then
+      dest=phone
+    else
+      log "report: $item -- not sent ($REPORT_WHY; the phone already hears of this)"
+      [ "$DRY" = 1 ] || keep[$key]="$first"$'\t'"$now"
+      continue
+    fi
+    lines[$dest]+="${lines[$dest]:+; }$item"
+    count[$dest]=$(( ${count[$dest]:-0} + 1 ))
+    dests[$dest]="${dests[$dest]:-$parent}"
+    [ "$dest" = phone ] && [ -n "$REPORT_WHY" ] && dests[$dest]="$REPORT_WHY"
+    [ "$DRY" = 1 ] || keep[$key]="$first"$'\t'"$now"
+  done <<<"$REPORT_ROWS"
+
+  for dest in "${!lines[@]}"; do
+    n="${count[$dest]}"
+    if [ "$dest" = phone ]; then
+      line="${lines[$dest]}"
+      if [ "$DRY" = 1 ]; then echo "WOULD-REPORT to the phone: $line"; continue; fi
+      if [ "$NOTIFY_READY" = 1 ]; then
+        notify_send "" "" "$n lane problem(s)" "$line"$'\n\n'"claude-watchdog.sh --health lists them."
+        log "report to the phone (${dests[$dest]}): $line"
+      else
+        log "report: nowhere to send it (${dests[$dest]}, and no phone is configured): $line"
+      fi
+      continue
+    fi
+    line="MUXTOPUS watchdog ($(date +%H:%M)), a machine report for ${dests[$dest]}, not the owner: $n problem(s) with your lanes -- ${lines[$dest]}. Act on it (nudge, answer, close or re-plan); claude-watchdog.sh --health lists them."
+    [ ${#line} -gt 1500 ] && line="${line:0:1496} ..."
+    if [ "$DRY" = 1 ]; then echo "WOULD-REPORT to $dest: $line"; continue; fi
+    if report_type "$dest" "$line"; then
+      log "report to ${dests[$dest]} (pane $dest): ${lines[$dest]}"
+    else
+      log "report to ${dests[$dest]} (pane $dest) FAILED to type: ${lines[$dest]}"
+    fi
+  done
+
+  [ "$DRY" = 1 ] && return 0
+  : > "$REPORTS.tmp"
+  for key in "${!keep[@]}"; do printf '%s\t%s\n' "$key" "${keep[$key]}" >> "$REPORTS.tmp"; done
+  mv "$REPORTS.tmp" "$REPORTS"
+  return 0
+}
+
+# --health: THE SAME VERDICTS, ONCE, for a person or an orchestrator. Reads
+# what the last pass published (and walks the process tree for the slots),
+# sends nothing and writes nothing. Exit 0 when all is well, 1 when not.
+report_health() {
+  local now hb age kind key name pane parent minage detail first last state n=0 rows=""
+  now="$(date +%s)"
+  proc_scan
+  tag_prio_map
+  report_collect "$now"
+  echo "# account=$MUX_LABEL report=$REPORT stall=${STALL_MIN}m repeat=${REPORT_REPEAT_MIN}m e2e=${REPORT_E2E_MIN}m memory=${REPORT_MEM_MIN}m nudge=$NUDGE_STALLED close-finished=$CLOSE_FINISHED"
+  hb=""; [ -f "$HEARTBEAT" ] && read -r hb _ < "$HEARTBEAT"
+  case "$hb" in ''|*[!0-9]*) age=-1 ;; *) age=$(( now - hb )) ;; esac
+  if [ "$age" -lt 0 ] || [ "$age" -gt $(( INTERVAL * 2 + 15 )) ]; then
+    rows+="watchdog"$'\t'"-"$'\t'"-"$'\t'"-"$'\t'"-"$'\t'"$([ "$age" -lt 0 ] && echo 'has never run' || echo "last pass $(dur_hm "$age") ago: not running")"$'\n'
+    n=$(( n + 1 ))
+  fi
+  local -A first_of=() last_of=()
+  if [ -f "$REPORTS" ]; then
+    while IFS=$'\t' read -r key first last; do
+      [ -n "$key" ] && { first_of[$key]="$first"; last_of[$key]="$last"; }
+    done < "$REPORTS"
+  fi
+  while IFS=$'\t' read -r kind key name pane parent minage detail; do
+    [ -n "$kind" ] || continue
+    [ "$parent" = - ] && parent=""
+    first="${first_of[$key]:-$now}"; last="${last_of[$key]-}"
+    if [ -z "$parent" ] && ! report_phone_kind "$kind"; then
+      state="phone has it"
+    elif [ $(( now - first )) -lt "$minage" ]; then
+      state="in $(dur_hm $(( minage - now + first )))"
+    elif [ -n "$last" ]; then
+      state="$(date -d "@$last" '+%H:%M' 2>/dev/null)"
+    else
+      state="next pass"
+    fi
+    rows+="$kind"$'\t'"$name"$'\t'"${parent:--}"$'\t'"$(dur_hm $(( now - first )))"$'\t'"$state"$'\t'"$detail"$'\n'
+    n=$(( n + 1 ))
+  done <<<"$REPORT_ROWS"
+  if [ "$n" = 0 ]; then
+    echo "all good: no stalled, finished, prompting or limit-stuck lane, no long e2e hold, no long memory hold"
+    return 0
+  fi
+  { printf 'KIND\tWINDOW\tPARENT\tFOR\tREPORTED\tDETAIL\n'; printf '%s' "$rows"; } | column -t -s $'\t'
+  return 1
+}
+
 pass() {
   local enabled=0; [ -f "$ENABLED" ] && enabled=1
   local msg; msg="$(head -1 "$MSGFILE" 2>/dev/null)"; msg="${msg:-$DEFAULT_MSG}"
@@ -5110,6 +5631,31 @@ pass() {
       log "no longer stranded: $name is now $state"
     fi
 
+    # STALLED: what stranded says at two hours, said at WATCHDOG_STALL_MIN.
+    # Every condition stranded has -- an open handover, idle long enough, no
+    # pending entry naming it or opening under it -- plus the two that tell a
+    # lane waiting ON PURPOSE from one that has been forgotten:
+    #   * nothing running. A live tool shell made it `background` above; the
+    #     footer's "N shell(s)" is asked as well, because it is Claude Code's
+    #     own count and covers a shell this pass's process walk did not see
+    #     (pane_footer_busy);
+    #   * a pane, at its own prompt: `waiting` (a question) was decided above.
+    # Like stranded it is a FACT, and on its own it types nothing: what the
+    # orchestrator is told, and the opt-in nudge, are report_pass's.
+    if [ "$state" = idle ] && [ -n "$paneid" ] && [ "${STALL_MIN:-0}" -gt 0 ] 2>/dev/null \
+       && [ "$idle" -ge $(( ${STALL_MIN:-0} * 60 )) ] 2>/dev/null; then
+      lane="$(lane_slug_of "$name")"
+      if [ -n "$lane" ] && [ "$lane" != - ] && [ -f "$HANDOVERS/STATUS-$lane.md" ] \
+         && [ ! -f "$HANDOVERS/done/STATUS-$lane.md" ] \
+         && ! sched_names_slug "$lane" && ! sched_under_slug "$lane" \
+         && ! pane_footer_busy "$text"; then
+        state=stalled
+      fi
+    fi
+    if [ "$state" = stalled ] && [ "$prev" != stalled ]; then
+      log "stalled: $name idle $(dur_hm "$idle") at its prompt with an open handover ($HANDOVERS/STATUS-$lane.md) and nothing running"
+    fi
+
     # THE REST OF IDLE, part two: what is left once stranded has had its say.
     # A window whose lane has an OPEN handover and that is idle is HANDED OFF
     # -- it stopped at a checkpoint and left a note for whoever comes next;
@@ -5126,6 +5672,11 @@ pass() {
           state=done
         fi
       fi
+    fi
+    # Said here, after the idle states are all decided, so the line names the
+    # one it became (handed off, done) rather than the `idle` on the way.
+    if [ "$prev" = stalled ] && [ "$state" != stalled ] && [ "$state" != stranded ]; then
+      log "no longer stalled: $name is now $state"
     fi
 
     # THE TAGS, comma separated, `-` for none: the process tree's (above),
@@ -5198,6 +5749,9 @@ pass() {
     notify_limits
   fi
   notify_sessions
+  # After every state and every verdict this pass publishes, and before
+  # notify_end, which writes the phone's ledger the fallback adds to.
+  report_pass "$now" "$enabled"
   check_update "$now"
   notify_end
   heartbeat "$(grep -c '' "$STATUS" 2>/dev/null)"
@@ -5277,6 +5831,11 @@ if [ "$MODE" = budget ]; then
     else printf '%-16s %s\n' "gate $_p" "$BG_HOLD_WHY"; fi
   done
   exit 0
+fi
+
+if [ "$MODE" = health ]; then
+  report_health
+  exit $?
 fi
 
 if [ "$MODE" = check ]; then
