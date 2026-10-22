@@ -69,7 +69,9 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | after a limit: weekly / model / "said so" stops, resumes in waves in priority order, a big context resumed fresh from its handover (and the old window closed), in place without one, `--dry-run` | `tests/test_budget_resume.sh` | no — local |
 | `b` and Settings ▸ Budget ▸: the summary, blind and stale, the windows table by class, the knobs' refusals, the footer note | `tests/test_budget_view.py` | yes |
 | `e2e-slot`'s slot count: the default two, `MUXTOPUS_E2E_SLOTS`, `E2E_SLOTS`, `--exclusive` holds every slot | `tests/test_e2e_slots.sh` | no — local |
-| one state, any number of tags: background (test, ci, sleep, job), e2e / e2e-wait, handed off, orchestrating, done, error, paused, `serve:<port>` by folder, never stranded while a job runs, the tag alert | `tests/test_window_states.sh` | no — local |
+| one state, any number of tags: background (test, ci, sleep, job), e2e / e2e-wait, handed off, stalled, orchestrating, done (and out of the budget cap), error, paused, `serve:<port>` by folder, never stranded while a job runs, the tag alert | `tests/test_window_states.sh` | no — local |
+| `stalled` and the reports to the parent: one line per parent, deduped and repeated, the phone when no parent can hear (gone, disarmed, notify-only), `--health`, `--dry-run`, the nudge (once per episode, never an asking lane), closing a finished window under the closure rule, an e2e hold, a memory hold, a limit that did not resume | `tests/test_stall_reports.sh` | no — local |
+| Settings ▸ Reports ▸: the knobs' refusals, their defaults said, the two that are off reading off | `tests/test_reports_menu.py` | yes |
 | the TAGS column, the new states' words and colours, the phone's words and who may be typed into | `tests/test_window_tags_view.py` | yes |
 | `lane-dev`: start, stop, refusals, the idle watcher, no inherited descriptors; `e2e-slot --dev` | `tests/test_lane_dev.sh` | no — local |
 | `install.sh` links `lane-dev` and `e2e-slot`, never over a file of yours | `tests/test_install_lanetools.sh` | no — local |

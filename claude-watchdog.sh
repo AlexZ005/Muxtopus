@@ -7,6 +7,7 @@
 #   claude-watchdog.sh --daemon      poll forever (the systemd unit uses this)
 #   claude-watchdog.sh --status      print the state table it publishes
 #   claude-watchdog.sh --tree        the window tree this scheduler keeps
+#   claude-watchdog.sh --health      what is wrong with the lanes, once (exit 1 if anything)
 #   claude-watchdog.sh --restore [F] rebuild the windows of a frozen snapshot
 #                                    (windows.last.tsv, or F) in the session
 #   claude-watchdog.sh --check [NAME] resolve schedule entries; launch nothing
@@ -571,7 +572,7 @@ case "${1:---once}" in
              case "${2:-}" in --body) CHECK_ARG=""; CHECK_BODY=1 ;; esac
              case "${3:-}" in --body) CHECK_BODY=1 ;; esac ;;
   --install|--uninstall) MODE="${1#--}" ;;
-  -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
   *) echo "unknown option: $1" >&2; exit 2 ;;
 esac
 
