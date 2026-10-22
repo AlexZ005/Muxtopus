@@ -4,6 +4,23 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.8.0 — 2026-10-23
+
+This release makes a lane that has silently stopped somebody's problem within minutes. With eight lanes running unattended, three sat 20-30 minutes at an empty prompt after Claude Code compacted them while idle and their background job's notification never came; finished lanes kept their windows and held queued entries behind them; and `stranded` only said so after two hours, on a dashboard nobody watches at night. A lane now reads `stalled` after fifteen minutes, and the watchdog types one line about it into the window that spawned it — an orchestrator that can act — or tells the phone when there is none.
+
+A minor release: a new window state (`stalled`), seven new settings (`WATCHDOG_STALL_MIN`, `WATCHDOG_REPORT`, `WATCHDOG_REPORT_REPEAT_MIN`, `WATCHDOG_REPORT_E2E_MIN`, `WATCHDOG_REPORT_MEM_MIN`, `WATCHDOG_NUDGE_STALLED`, `WATCHDOG_CLOSE_FINISHED`), a new state file (`reports`) and a new option, `claude-watchdog.sh --health`. The two settings that act on a window — the nudge and the close — are off by default. Nothing is renamed or moved.
+
+### Watchdog
+
+#### A stalled lane is reported to the window that spawned it, within minutes
+
+- New window state **`stalled`**: a lane idle at its own prompt for `WATCHDOG_STALL_MIN` (15) minutes with an open handover and nothing running for it — no tool shell, no "N shells" in Claude Code's footer. A lane waiting on its own background job still reads `background`. `stranded` is the same lane at two hours.
+- **Reports to the parent.** Once a pass the watchdog types one line into the window that spawned each lane (its parent in the tree) naming what is wrong: stalled or stranded, waiting at a prompt, a limit that reset without a resume, finished with its window open, an e2e slot held past `WATCHDOG_REPORT_E2E_MIN` (300 min), entries held by the memory guard past `WATCHDOG_REPORT_MEM_MIN` (30 min). Said once, repeated at most every `WATCHDOG_REPORT_REPEAT_MIN` (60). Never typed into a parent at a prompt, at a limit or opted out, nor while disarmed; then — or with no parent — the phone hears it instead. `WATCHDOG_REPORT=on | notify-only | off`.
+- `claude-watchdog.sh --health` prints the same verdicts once, sends nothing, and exits 1 while anything is wrong.
+- Opt-in: `WATCHDOG_NUDGE_STALLED=on` sends a stalled lane one "your job has ended, read its log and continue" line per stall; `WATCHDOG_CLOSE_FINISHED=<minutes>` closes a finished window under the sweep's closure rule.
+- A finished lane (handover in `done/`) no longer counts toward the budget cap of working windows, even while its pane still reads working.
+- dashboard: `stalled` is drawn red; **esc ▸ Settings ▸ Reports ▸** holds every knob above. The orchestrator template now says what to do with a `MUXTOPUS watchdog` line.
+
 ## v5.7.0 — 2026-10-07
 
 This release says what a window is actually doing. A window used to be `working`, `idle` or `stranded`, and `idle` hid most of what mattered: a lane whose tests were still running in the background, a lane waiting for CI, a lane that had finished, one stopped at a checkpoint, and one that died on an API error. A background test run even went `stranded` after two hours. Each now has a state of its own. A new TAGS column shows everything true at the same time, such as an e2e slot held or waited for, a dev server the lane owns, or the limit that stopped it.
