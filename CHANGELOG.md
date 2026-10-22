@@ -4,6 +4,16 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.8.1 — 2026-10-23
+
+A patch release, one fix to v5.8.0's reports to the parent, found while installing it.
+
+### Watchdog
+
+#### A report never lands in a window that only inherited its parent's pane id
+
+- After a tmux server restart, pane ids start again from `%0`, and the tree can still name a parent by a pane id that now belongs to some other lane's window. The watchdog now types a report into the parent only when that pane's window is still the parent's; otherwise it treats the parent as gone and the phone hears instead.
+
 ## v5.8.0 — 2026-10-23
 
 This release makes a lane that has silently stopped somebody's problem within minutes. With eight lanes running unattended, three sat 20-30 minutes at an empty prompt after Claude Code compacted them while idle and their background job's notification never came; finished lanes kept their windows and held queued entries behind them; and `stranded` only said so after two hours, on a dashboard nobody watches at night. A lane now reads `stalled` after fifteen minutes, and the watchdog types one line about it into the window that spawned it — an orchestrator that can act — or tells the phone when there is none.
