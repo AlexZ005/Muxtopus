@@ -5049,6 +5049,13 @@ report_target() {
   if [ "$REPORT" = notify-only ]; then REPORT_WHY="WATCHDOG_REPORT=notify-only"; return 1; fi
   pane="${RP_TPANE[$parent]-}"
   if [ -z "$pane" ] || [ -z "${RP_STATE[$pane]-}" ]; then REPORT_WHY="parent $parent has no live session"; return 1; fi
+  # The tree's pane id outlives the tmux server that issued it: after a
+  # restart the parent's old %N can belong to some other lane's window, and a
+  # report typed there is read by the wrong session as its own instruction.
+  # So the pane must still be the parent's window, by name.
+  if [ "$(lane_slug_of "${RP_NAME[$pane]-}")" != "$parent" ]; then
+    REPORT_WHY="parent $parent has no live session (its pane $pane is now ${RP_NAME[$pane]-another window})"; return 1
+  fi
   st="${RP_STATE[$pane]}"
   case "$st" in
     waiting|limited|due|queued|resume-due|paused)

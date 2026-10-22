@@ -147,6 +147,19 @@ tmux kill-window -t claude:orch
 sleep 1; pass
 check "stl's stall goes to the phone instead" grep -q 'stalled stl' <<<"$(phone | tail -3)"
 check "..saying why" grep -q 'stalled stl' "$ST/log" && grep -q 'report to the phone (parent orch has no live session)' "$ST/log"
+
+echo "== the parent's old pane id now belongs to another window"
+# A tmux restart reissues pane ids from %0: the tree's row for orch can name a
+# pane that is now some other lane's. That lane must not be typed into.
+lane other listen; sleep 2
+tree other
+opane="$(awk -F'\t' '$1=="other"{print $4}' "$ST/tree.tsv")"
+awk -F'\t' -v OFS='\t' -v p="$opane" '$1=="orch"{$4=p} {print}' "$ST/tree.tsv" > "$ST/tree.tsv.t" && mv "$ST/tree.tsv.t" "$ST/tree.tsv"
+age_ledger; pass
+check "the other window heard nothing" [ "$(nheard other)" = 0 ]
+check "..the phone heard about stl instead" grep -q 'stalled stl' <<<"$(phone | tail -3)"
+check "..and the log says the pane is someone else's" grep -q "parent orch has no live session (its pane $opane is now other)" "$ST/log"
+tmux kill-window -t claude:other
 lane orch listen; sleep 2
 sed -i '/^orch\t/d' "$ST/tree.tsv"; tree orch
 
