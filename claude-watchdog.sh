@@ -248,6 +248,15 @@ USAGE_STALE="${WATCHDOG_USAGE_STALE:-180}"
 # `idle` is a fact about the last turn, `stranded` is a fact about the future.
 # 0 turns it off.
 STRANDED_MIN="${WATCHDOG_STRANDED:-120}"
+# STALLED: THE SAME TEST AN HOUR AND THREE QUARTERS SOONER, and the one that
+# matters overnight. MEASURED 2026-10-22: lanes 50-ar, 51-edit and 51-surface
+# each queued a background e2e job and ended the turn to wait for it; Claude
+# Code compacted them while idle ("Compacted while idle"), and the task
+# notification that should have woken them never came. 20-30 minutes at an
+# empty prompt, open handover, nothing running, until the orchestrator typed
+# into each by hand. `stranded` would have said so after two hours, on a
+# dashboard nobody watches at night. 0 turns it off.
+STALL_MIN="${WATCHDOG_STALL_MIN:-15}"
 # A HARD WIND-DOWN IS NOT A ONE-WAY DOOR. Band 2 tells a window to land its
 # step, write a handoff and STOP -- and nothing here used to start it again,
 # because the resume path fires only for a pane whose text says "hit your
@@ -371,6 +380,26 @@ prompt_scan() {
   done <<<"$out"
   PROMPT_BOX="${PROMPT_BOX%$'\n'}"
   return 0
+}
+
+# IS THE FOOTER COUNTING BACKGROUND WORK? Claude Code's status line names its
+# running background shells: `⏵⏵ bypass permissions on · 1 shell · ← 1 agent`
+# (read off this box's panes, 2026-10-22). "← 1 agent" is on every pane,
+# working or not, so it is NOT read. Only the last two non-blank lines: a
+# transcript further up that quotes "2 shells" is not a footer. Builtins only;
+# it runs for every idle pane old enough to be stalled.
+pane_footer_busy() {
+  local -a L=()
+  local i n seen=0
+  mapfile -t L <<<"$1"
+  n=${#L[@]}
+  for (( i = n - 1; i >= 0 && seen < 2; i-- )); do
+    [[ "${L[$i]}" =~ ^[[:space:]]*$ ]] && continue
+    seen=$(( seen + 1 ))
+    [[ "${L[$i]}" =~ (^|[·[:space:]])[0-9]+\ shells?([[:space:]·]|$) ]] && return 0
+    [[ "${L[$i]}" == *"esc to interrupt"* ]] && return 0
+  done
+  return 1
 }
 
 # THE RUNNING DAEMON'S PID, wherever it was started from: the systemd unit's
@@ -1832,7 +1861,21 @@ budget_check() {
   budget_resolve
   BG_ON=0; [ "$BUDGET" = on ] && BG_ON=1
   BG_NOW="$now"
-  BG_WORKING="$(awk -F'\t' '$6 == "working" {n++} END {print n+0}' "$STATUS" 2>/dev/null)"
+  # A FINISHED LANE IS NOT ONE OF THE CAP'S WINDOWS, even while its pane still
+  # reads working: `handover.sh done` was run, and what is left of its turn is
+  # the closing summary. MEASURED 2026-10-22: finished lanes (53-scale,
+  # 49-int) kept their windows, and queued entries were held behind them.
+  # getline on the done/ file is a test for its existence that forks nothing.
+  BG_WORKING="$(awk -F'\t' -v h="$HANDOVERS" '
+    $6 != "working" { next }
+    { s = $2; gsub(/➥/, "", s); fin = 0
+      if (s != "" && s != "-" && (getline l < (h "/STATUS-" s ".md")) < 0) {
+        if ((getline l < (h "/done/STATUS-" s ".md")) >= 0) fin = 1
+        close(h "/done/STATUS-" s ".md")
+      }
+      close(h "/STATUS-" s ".md")
+      if (!fin) n++ }
+    END {print n+0}' "$STATUS" 2>/dev/null)"
   BG_WORKING="${BG_WORKING:-0}"
   st_at="$(stat -c %Y "$STATUS" 2>/dev/null || echo 0)"
   BG_RUNNING=$(( BG_WORKING + $(awk -F'\t' -v t="$st_at" '$1 + 0 > t {n++} END {print n+0}' "$BUDGET_STARTS" 2>/dev/null || echo 0) ))
@@ -5110,6 +5153,31 @@ pass() {
       log "no longer stranded: $name is now $state"
     fi
 
+    # STALLED: what stranded says at two hours, said at WATCHDOG_STALL_MIN.
+    # Every condition stranded has -- an open handover, idle long enough, no
+    # pending entry naming it or opening under it -- plus the two that tell a
+    # lane waiting ON PURPOSE from one that has been forgotten:
+    #   * nothing running. A live tool shell made it `background` above; the
+    #     footer's "N shell(s)" is asked as well, because it is Claude Code's
+    #     own count and covers a shell this pass's process walk did not see
+    #     (pane_footer_busy);
+    #   * a pane, at its own prompt: `waiting` (a question) was decided above.
+    # Like stranded it is a FACT, and on its own it types nothing: what the
+    # orchestrator is told, and the opt-in nudge, are report_pass's.
+    if [ "$state" = idle ] && [ -n "$paneid" ] && [ "${STALL_MIN:-0}" -gt 0 ] 2>/dev/null \
+       && [ "$idle" -ge $(( ${STALL_MIN:-0} * 60 )) ] 2>/dev/null; then
+      lane="$(lane_slug_of "$name")"
+      if [ -n "$lane" ] && [ "$lane" != - ] && [ -f "$HANDOVERS/STATUS-$lane.md" ] \
+         && [ ! -f "$HANDOVERS/done/STATUS-$lane.md" ] \
+         && ! sched_names_slug "$lane" && ! sched_under_slug "$lane" \
+         && ! pane_footer_busy "$text"; then
+        state=stalled
+      fi
+    fi
+    if [ "$state" = stalled ] && [ "$prev" != stalled ]; then
+      log "stalled: $name idle $(dur_hm "$idle") at its prompt with an open handover ($HANDOVERS/STATUS-$lane.md) and nothing running"
+    fi
+
     # THE REST OF IDLE, part two: what is left once stranded has had its say.
     # A window whose lane has an OPEN handover and that is idle is HANDED OFF
     # -- it stopped at a checkpoint and left a note for whoever comes next;
@@ -5126,6 +5194,11 @@ pass() {
           state=done
         fi
       fi
+    fi
+    # Said here, after the idle states are all decided, so the line names the
+    # one it became (handed off, done) rather than the `idle` on the way.
+    if [ "$prev" = stalled ] && [ "$state" != stalled ] && [ "$state" != stranded ]; then
+      log "no longer stalled: $name is now $state"
     fi
 
     # THE TAGS, comma separated, `-` for none: the process tree's (above),

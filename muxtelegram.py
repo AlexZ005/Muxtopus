@@ -559,14 +559,15 @@ STATUS_COLS = ("sid", "name", "pane", "ver", "ctx", "state", "reset", "action", 
                "spent", "cached", "optout", "model", "idle", "job", "cwd", "wound", "moptout", "pid",
                "said", "tags")
 STATE_WORDS = (("working", "working"), ("waiting", "needs you"), ("idle", "idle"),
-               ("limited", "limit hit"), ("due", "due"), ("stranded", "stranded"),
+               ("limited", "limit hit"), ("due", "due"), ("stalled", "stalled"), ("stranded", "stranded"),
                ("paused", "paused"), ("queued", "queued"), ("error", "error"),
                ("background", "background"), ("orchestrating", "orchestrating"),
                ("handed-off", "handed off"), ("done", "done"))
 # AT ITS PROMPT, NOTHING RUNNING: the states a line may be typed into. `idle`
 # alone used to be all of them; a lane with an open handover now reads
 # `handed off`, and that is exactly the lane a "questions answered" is for.
-AT_PROMPT = ("idle", "handed-off", "orchestrating", "done")
+# `stalled` is a handed-off lane that has sat there past WATCHDOG_STALL_MIN.
+AT_PROMPT = ("idle", "handed-off", "stalled", "orchestrating", "done")
 
 
 def register_commands(force: bool = False):

@@ -228,6 +228,11 @@ STATES: dict[str, tuple[str, str, bool]] = {
     # it is a fact about the last turn and usually means finished; stranded is
     # a fact about the FUTURE, so it is the one idle state worth a colour.
     "stranded": ("stranded", RED, False),
+    # The same lane at WATCHDOG_STALL_MIN (15m) rather than two hours, and
+    # only when nothing is running for it: no tool shell, no "N shells" in its
+    # footer. Red for the same reason -- nothing on this machine is going to
+    # touch it -- unless WATCHDOG_NUDGE_STALLED is on.
+    "stalled": ("stalled", RED, False),
     # A WINDOW THE DAEMON ITSELF TOLD TO STOP, whose budget window has come
     # back. Yellow rather than red: unlike `stranded` this one IS going to be
     # touched -- it is the state a row wears for the pass or two between the

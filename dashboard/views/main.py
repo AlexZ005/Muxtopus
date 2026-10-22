@@ -1616,6 +1616,8 @@ HELP_DIRTY = f"""
     separated: e2e / e2e-wait, test, ci, sleep, job:<name>, serve:<port>,
     session / week / model (which limit), asking, its priority class,
     compacting. One state is what the watchdog acts on; tags never trigger.
+    [{RED}]stalled[/]  a lane at its prompt past WATCHDOG_STALL_MIN (15m), handover
+             open, nothing running: its parent window is told
     [{RED}]stranded[/] NOTHING IS EVER GOING TO TOUCH THIS. A lane, idle past
              WATCHDOG_STRANDED (120m), with an OPEN handover, and no pending
              schedule entry naming it -- not by slug, not by after:, not a

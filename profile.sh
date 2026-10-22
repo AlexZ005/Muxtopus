@@ -75,6 +75,7 @@ WATCHDOG_USAGE_EVERY=60
 WATCHDOG_USAGE_STALE=180
 WATCHDOG_HEARTBEAT_LOG=60
 WATCHDOG_STRANDED=120
+WATCHDOG_STALL_MIN=15
 WATCHDOG_WOUND_RESUME=on
 WATCHDOG_MEM_GUARD=on
 WATCHDOG_MEM_MIN_GB=4
@@ -352,6 +353,10 @@ mux_key_help() {
                             echo "pending schedule entry naming it before its state becomes 'stranded'"
                             echo "instead of 'idle' -- nothing is ever going to touch that window."
                             echo "0 turns it off. It is a fact shown to a human, never a trigger." ;;
+    WATCHDOG_STALL_MIN)     echo "Minutes a lane may sit idle AT ITS PROMPT, with an open handover, nothing"
+                            echo "running (no tool shell, no 'N shells' in its footer) and no pending entry"
+                            echo "naming it, before its state becomes 'stalled'. stranded is the same lane"
+                            echo "at WATCHDOG_STRANDED. 0 turns it off." ;;
     WATCHDOG_WOUND_RESUME)  echo "on|off. A window wound down at the HARD band was told to stop, so it"
                             echo "never prints the limit banner the resume path watches for. With this"
                             echo "on, such a window is sent the continue message once its budget window"

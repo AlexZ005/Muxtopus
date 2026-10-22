@@ -49,6 +49,10 @@ case "\$3" in
   e2e)   bash -c "$SNAP; $REPO/e2e-slot -- sleep 600; :" & ;;
 esac
 printf '● ready\\n❯ \\n'
+case "\$3" in
+  footer) printf '  ⏵⏵ bypass permissions on · 1 shell · ← 1 agent · ↓ to manage\\n' ;;
+  busy)   printf '✻ Working… (esc to interrupt)\\n' ;;
+esac
 exec sleep 900
 EOF
 chmod +x "$SB/lane.sh"
@@ -87,6 +91,19 @@ mkdir -p "$WK/run-serverlane"
 ( cd "$WK/run-serverlane" && exec -a "node $WK/run-serverlane/node_modules/.bin/vite dev --port 5390 --strictPort" sleep 600 ) &
 SB_PIDS+=($!)
 lane parentdir none "$WK"
+# STALLED: an open handover and a last turn half an hour ago. Only `stall` has
+# nothing at all running for it.
+old_turn() {  # old_turn SID MINUTES
+  printf '{"type":"assistant","timestamp":"%s","message":{"model":"x","content":[{"type":"text","text":"waiting for the e2e job"}],"usage":{"input_tokens":1}}}\n' \
+    "$(date -u -d "-$2 minutes" +%FT%T.000Z)" > "$HOME/.claude/projects/p/sid-$1.jsonl"
+}
+for l in stall stallfoot stallbg stallnamed stallfresh; do printf '# %s\nnext: wait for e2e\n' "$l" > "$HO/STATUS-$l.md"; done
+lane stall; lane stallfoot footer; lane stallbg poll; lane stallnamed; lane stallfresh
+old_turn stall 30; old_turn stallfoot 30; old_turn stallbg 30; old_turn stallnamed 30; old_turn stallfresh 5
+printf 'type: work\nat: 2099-01-01 00:00\nslug: stallnamed\ncwd: %s\nstatus: pending\n---\nx\n' "$HOME" > "$SC/resume-stallnamed.md"
+# THE CAP: a finished lane whose pane still reads working is not one of its windows.
+printf '# donework\n' > "$HO/done/STATUS-donework.md"; printf '# livework\n' > "$HO/STATUS-livework.md"
+lane donework busy; lane livework busy
 sleep 3
 pass
 
@@ -111,6 +128,24 @@ check "a turn that ended on an API error: error" [ "$(state crashed)" = error ]
 check "wound down hard, its budget window still ahead: paused" [ "$(state pausedw)" = paused ]
 check "..tagged with the budget that paused it" has_tag pausedw session
 check "nothing at all: still plain idle, no tags" bash -c "[ '$(state plain)' = idle ] && [ '$(tags plain)' = - ]"
+
+echo "== stalled (WATCHDOG_STALL_MIN, 15 by default)"
+check "idle 30m at its prompt, handover open, nothing running: stalled" [ "$(state stall)" = stalled ]
+check "..the same with '1 shell' in its footer: not stalled" [ "$(state stallfoot)" = handed-off ]
+check "..the same with a tool shell running: background" [ "$(state stallbg)" = background ]
+check "..the same with a pending entry for it: not stalled" [ "$(state stallnamed)" = handed-off ]
+check "..idle only 5m: handed off" [ "$(state stallfresh)" = handed-off ]
+check "the log says so once" [ "$(grep -c 'stalled: stall idle' "$ST/log")" = 1 ]
+pass
+check "..and only once" [ "$(grep -c 'stalled: stall idle' "$ST/log")" = 1 ]
+setkey WATCHDOG_STALL_MIN 0; pass
+check "WATCHDOG_STALL_MIN=0: off" [ "$(state stall)" = handed-off ]
+check "..and the log says it ended" grep -q 'no longer stalled: stall is now handed-off' "$ST/log"
+setkey WATCHDOG_STALL_MIN 15; pass
+
+echo "== the budget cap counts working windows, not finished ones"
+check "both panes read working" bash -c "[ '$(state donework)' = working ] && [ '$(state livework)' = working ]"
+check "--budget counts one" grep -qE '^windows +1 working' <<<"$("$W" --budget)"
 
 echo "== dev servers"
 check "a server from run-serverlane belongs to serverlane: serve:5390" has_tag serverlane serve:5390
