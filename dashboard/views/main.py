@@ -225,6 +225,19 @@ class MainView(View):
         if j is not None:
             self.cursor = self.sids[j]
 
+    def _elsewhere(self) -> str:
+        """For a session on ANOTHER HOST (its pane written host:%N), the one
+        honest answer, else "". Every action below drives THIS machine's tmux
+        or this watchdog's files; on a pc row the first would hit whatever
+        local session is called "pc", and the second would change nothing the
+        far watchdog reads. So none of them runs: the row says where it is."""
+        pane = self.panes.get(self.cursor, "")
+        if ":%" not in pane:
+            return ""
+        host = pane.split(":", 1)[0]
+        return (f"{self.windows.get(self.cursor, 'this window')} runs on {host}: "
+                f"ssh to it and `tmux attach` there (its watchdog handles it)")
+
     def open_selected(self) -> str:
         """Jump the tmux client to the selected session's window.
 
@@ -236,6 +249,8 @@ class MainView(View):
             return self.toggle_extras()
         if self.cursor.startswith(LANE_PREFIX):
             return self.toggle_lanes()
+        if self._elsewhere():
+            return self._elsewhere()
         pane = self.panes.get(self.cursor, "")
         if not pane:
             job = self.jobs.get(self.cursor, "")
@@ -278,6 +293,8 @@ class MainView(View):
             return [{"label": ("Show this account's lanes only" if self.lanes_all
                                else "Show every account's lanes"),
                      "act": self.toggle_lanes}]
+        if self._elsewhere():
+            return [{"label": self._elsewhere(), "act": lambda: ""}]
         win = self.windows.get(sid, "")
         has_pane = bool(self.panes.get(sid))
         skipped = sid in opted_out()
@@ -347,6 +364,8 @@ class MainView(View):
 
     def act_mon_window(self) -> str:
         """Exempt THIS session from wind-downs, or put it back in scope."""
+        if self._elsewhere():
+            return self._elsewhere()
         if not self.cursor:
             return "no session selected"
         try:
@@ -373,6 +392,8 @@ class MainView(View):
         return ""
 
     def _do_rename(self, text: str) -> str:
+        if self._elsewhere():
+            return self._elsewhere()
         name = text.strip()
         if not name:
             return "rename cancelled"
@@ -393,6 +414,8 @@ class MainView(View):
         return ""
 
     def _do_close(self) -> str:
+        if self._elsewhere():
+            return self._elsewhere()
         pane = self.panes.get(self.cursor, "")
         if not pane:
             return "no window to close"
@@ -409,6 +432,8 @@ class MainView(View):
         This is the same channel the watchdog uses, so a hand-driven wind-down
         and an automatic one are indistinguishable to the session -- which is
         the point: it is told what to do, never why."""
+        if self._elsewhere():
+            return self._elsewhere()
         if not self.cursor:
             return "no session selected"
         u = usage_limits()
@@ -427,6 +452,8 @@ class MainView(View):
             return "could not queue: %s" % exc
 
     def _send(self, text: str) -> str:
+        if self._elsewhere():
+            return self._elsewhere()
         pane = self.panes.get(self.cursor, "")
         if not pane:
             return "no window to type into"
@@ -579,6 +606,8 @@ class MainView(View):
         restart and applies whether or not this screen is open. Absent from
         the file means enabled, so a brand new session is covered without
         anyone having to opt it in."""
+        if self._elsewhere():
+            return self._elsewhere()
         if not self.cursor:
             return "no session selected"
         try:
@@ -881,6 +910,12 @@ class MainView(View):
             # 20 -- and a digest longer than its cell ends in an ellipsis.
             ("SAID", {"width": max(20, min(80, self.app.console.size.width - 33))}, None),
         ]
+        # HOST, after WINDOW, only while another host's sessions are on the
+        # table (docs/pc-host.md): a machine with none draws exactly the
+        # columns it always did.
+        with_host = any(s.host for s in sessions)
+        if with_host:
+            ct_cols.insert(3, ("HOST", {"width": 8}, None))
         ct_rows: list[list] = []
         ct_cur = -1
 
@@ -920,7 +955,8 @@ class MainView(View):
             else:
                 idle_style = DIM if (s.idle < 900 or s.state == "working") else YELLOW
                 idle_txt = Text(human_age(s.idle), style=idle_style)
-            s.dirty = dirty_for(s.cwd, dirty_list)
+            # Another host's tree is not this machine's repo sweep to judge.
+            s.dirty = 0 if s.host else dirty_for(s.cwd, dirty_list)
             dirty_txt = (Text(str(s.dirty), style=YELLOW) if s.dirty
                          else Text("—", style=FRAME))
             # Two scopes, and the row shows the ANSWER rather than just its own
@@ -953,7 +989,7 @@ class MainView(View):
                 wtx.append_text(badge)
             if s.sid == self.cursor:
                 ct_cur = len(ct_rows)
-            ct_rows.append([mark, mon_txt, wtx, Text(s.model, style=DIM), bar,
+            row = [mark, mon_txt, wtx, Text(s.model, style=DIM), bar,
                        Text(human_tokens(s.spent), style=DIM), idle_txt, st_txt,
                        tags_txt, dirty_txt,
                        Text(when(s.wound), style=DIM if s.wound else FRAME),
@@ -961,7 +997,10 @@ class MainView(View):
                        # `-` is "not known" (no transcript, or a watchdog too
                        # old to publish it), drawn as every unknown here is.
                        (Text(s.said, style=DIM) if s.said != "-"
-                        else Text("—", style=FRAME))])
+                        else Text("—", style=FRAME))]
+            if with_host:
+                row.insert(3, Text(s.host, style="bold #c9a0dc") if s.host else Text("here", style=DIM))
+            ct_rows.append(row)
 
         if not sessions:
             ct_rows.append(["", "", Text("—", style=DIM), "",

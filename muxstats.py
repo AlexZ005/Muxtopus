@@ -1854,6 +1854,49 @@ muxtopus stats -- what was used, from the ledger (counts only)
 """
 
 
+# ------------------------------------------------------- tokens by lane
+# ONE FILE FOR THE ACCOUNT, EVERY HOST (docs/pc-host.md, "Token use"). The
+# account-wide session and week figures already come from one place (the
+# usage probe here, which the limits are), but which LANE spent the tokens
+# lives in each machine's own ledger, since each reads its own transcripts.
+# The watchdog brings a lane host's ledger.tsv back every pass
+# ($STATE_DIR/hosts/<host>/ledger.tsv), and this writes the two together:
+#
+#   {"date": "2026-10-23", "host": "pc", "slug": "57-clips", "roadmap": "57",
+#    "spent": 123456, "cached": 9876543}
+#
+# one line per (day, host, lane), sorted, the whole file rewritten each time
+# -- so "today" is always the day so far and every earlier day is final.
+# spent is the watchdog's SPENT (input + cache writes + output, the parts
+# billed at or above full rate) and cached its CACHED (cache reads), summed
+# over models and subagents, from the ledger -- deduplicated per message,
+# which the per-session counters in status.tsv are not (a resumed session
+# copies its predecessor's messages into a new file). A session that is not
+# a lane is slug "-". roadmap is the slug's leading number, "" for none.
+def tokens_by_lane(sources: list[tuple[str, pathlib.Path]], out: pathlib.Path) -> int:
+    agg: dict[tuple[str, str, str], list[int]] = {}
+    for host, path in sources:
+        for d in _read_tsv(path, LEDGER_COLS):
+            r = _row_from_tsv(d)
+            if r.get("coarse"):
+                continue        # a backfilled day has no lanes and no split
+            slug = r["lane"] or "-"
+            a = agg.setdefault((r["day"], host, slug), [0, 0])
+            a[0] += r["in"] + r["out"] + r["cache_w5m"] + r["cache_w1h"]
+            a[1] += r["cache_read"]
+    lines = []
+    for (day, host, slug), (spent, cached) in sorted(agg.items()):
+        rm = ""
+        for ch in slug:
+            if not ch.isdigit():
+                break
+            rm += ch
+        lines.append(json.dumps({"date": day, "host": host, "slug": slug, "roadmap": rm,
+                                 "spent": spent, "cached": cached}, sort_keys=False))
+    _write_if_changed(out, "".join(l + "\n" for l in lines))
+    return len(lines)
+
+
 def main(argv=None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--profile", default=argparse.SUPPRESS, help="account name ('' = default)")
@@ -1865,6 +1908,10 @@ def main(argv=None) -> int:
                                  description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("collect", parents=[common], help="read new transcript bytes into the ledger")
+    tp = sub.add_parser("tokens-by-lane", parents=[common],
+                        help="this ledger and the lane hosts' -> tokens-by-lane.jsonl")
+    tp.add_argument("--host-name", default="", help="this machine's name in the file (default: hostname)")
+    tp.add_argument("--out", default="", help="default: the watchdog dir's tokens-by-lane.jsonl")
     sp = sub.add_parser("stats", parents=[common], help="the report", add_help=False)
     sp.add_argument("-h", "--help", action="store_true")
     per = sp.add_mutually_exclusive_group()
@@ -1888,6 +1935,14 @@ def main(argv=None) -> int:
 
     if a.cmd == "collect":
         _collect_cli(a)
+        return 0
+    if a.cmd == "tokens-by-lane":
+        _, st, wd = _paths(a)
+        me = a.host_name or os.uname().nodename.split(".")[0]
+        sources = [(me, st / "ledger.tsv")]
+        sources += [(p.parent.name, p) for p in sorted((wd / "hosts").glob("*/ledger.tsv"))]
+        n = tokens_by_lane(sources, pathlib.Path(a.out) if a.out else wd / "tokens-by-lane.jsonl")
+        print("%d rows from %s" % (n, ", ".join(h for h, _ in sources)))
         return 0
     if a.cmd != "stats":
         ap.print_help()

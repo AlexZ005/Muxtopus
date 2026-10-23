@@ -150,6 +150,47 @@ swapFile=E:\\muxtopus-wsl\\swap.vhdx
 
 **Then, on the test machine**, add the host's section to `hosts.conf`, check it with `ssh` once (accept the host key), and set `MUXTOPUS_E2E_PC`.
 
+## Lanes on the pc host
+
+A pc host can also **run lanes**: windows of their own in its own tmux, under muxtopus installed there. This machine stays the **one scheduler**: its schedules, its budget guard, its dependency checks and its reports decide. The pc host only opens windows when told to and keeps them running.
+
+```ini
+# hosts.conf: the same section, one more key
+[pc]
+ssh = alice@192.0.2.10
+lanes = 4                   # how many lanes it may run at once
+```
+
+**Which entries go there.** An entry's `host:` header (`host: pc`, or `host: local` to keep it here), and otherwise `MUXTOPUS_LANE_HOST`:
+
+```bash
+# ~/.config/muxtopus/config
+MUXTOPUS_LANE_HOST=pc        # every new lane on pc
+MUXTOPUS_LANE_HOST=pc:held   # on pc only while this machine's memory guard holds launches
+```
+
+**What happens when one is due.** This watchdog does what it always does (the time, `after:`, the budget), except that this machine's memory guard does not hold an entry for another host. That host's `lanes` and whether it answers do. Then it **hands the entry over**. A copy goes into the host's schedules folder, due now, with this machine's slug pinned and without `host:` and `after:`, which were judged here. The templates folder goes with it. The host's watchdog is woken, and its own launcher opens the window with the same code, flags, identity, trust answer and footer as here. The entry here is marked `launched` with `host: pc`, and the tree gets the lane's row under its parent. An entry the far side fails to launch is marked `error` here.
+
+**What this machine sees, every pass**, for each host that answers:
+
+- its `status.tsv` and `tree.tsv`, into `~/.local/state/claude-watchdog/hosts/<host>/`. The dashboard's claude table lists those sessions with a **HOST** column, which appears only while there are any. `claude-watchdog.sh --status` appends a `HOST` column and lists every host's rows after this machine's. `--health` names each host, its lanes and the age of its status, and its rows have a `HOST` column. A host's pane is written `<host>:%N` wherever this machine keeps one, so nothing here types into the wrong server. A status older than three passes is a host asleep, and its rows are neither drawn nor judged.
+- **reports to the parent** across hosts: a pc lane that stalls, waits at a prompt, sticks at a limit or finishes is reported to its parent wherever the parent is, as `stalled 57-x (pc claude:4): …`. A nudge (`WATCHDOG_NUDGE_STALLED`) or a close (`WATCHDOG_CLOSE_FINISHED`) is typed into the pc's tmux over ssh. Set `WATCHDOG_REPORT=off` on the pc host, so its own watchdog does not report as well.
+- **the handover folder**, kept the same on both machines (`muxhosts.py sync`). Each file is compared with a manifest of the last sync, and whichever side changed wins. A new or edited file is copied, and a removed one is removed, so `handover.sh done` on either machine moves the file into `done/` on both. Both sides changed: the newer wins. Nothing is ever deleted without a manifest. A mount was the alternative, but the pc would have to log into this machine with a key that opens the whole account, and every lane there would hang whenever this machine slept.
+
+On the dashboard, a pc row's actions (open, rename, close, send, the opt-outs) are refused with a line that says where the window is. Each of them drives this machine's tmux or this watchdog's files.
+
+**Setting it up**, after the pc slot setup above: in the distro, install muxtopus at the **same path** as here, with the same account. The state, schedules and handover folders are then at the same places relative to `HOME`. Then log Claude Code in there (`claude`, then the URL it prints), start `muxtopus -d` so its tmux session exists, arm its watchdog, and set `WATCHDOG_REPORT=off` in its config. A lane there runs its e2e through that machine's own `e2e-slot`, on local slots of its own. Clone the lanes' repositories there as you would here. Its git credentials are its own.
+
+## Token use
+
+The account-wide session and week figures are one reading for the whole account, wherever its lanes run. Which lane spent the tokens is in each machine's own ledger (`muxtopus stats`), and the watchdog brings each lane host's ledger back with its status. Every five minutes it writes `~/.local/state/claude-watchdog/tokens-by-lane.jsonl`, one line per day, host and lane:
+
+```json
+{"date": "2026-10-23", "host": "pc", "slug": "57-clips", "roadmap": "57", "spent": 1234567, "cached": 98765432}
+```
+
+`spent` is SPENT (input, cache writes and output, the parts billed at or above full rate) and `cached` is CACHED (cache reads), summed over models and subagents, from the ledger, which counts each message once. The per-session counters in `status.tsv` count a resumed session's copied messages again. `slug` is `-` for a session that is no lane, and `roadmap` is the slug's leading number. The file is rewritten whole, so today's lines are the day so far and earlier days are final. `MUXTOPUS_HOST_NAME` names this machine in it, and its hostname is the default.
+
 ## Security
 
 - **ssh, key only.** sshd in the distro takes one user's public key: no passwords, no root. The port is firewalled to the one test machine (`-Allow`), and a port proxy is the only way in from the LAN.
@@ -158,4 +199,6 @@ swapFile=E:\\muxtopus-wsl\\swap.vhdx
 - **The distro cannot reach Windows.** Drives are not mounted and Windows programs cannot be started from it. The GPU is reached through `/dev/dxg` and the driver folder WSL provides, not through a drive.
 - **The user has passwordless sudo inside the distro.** That is the price of `playwright install-deps`. Anyone holding the ssh key is root in the distro, so guard the key like the machine.
 - A pc run writes only under `HOME` and `/tmp` there, and only where nothing of the host's own is (the marker rule above). It copies back only under `HOME` and `/tmp` here.
+- **Only this machine opens connections.** The pc host has no key to this machine. The handover sync, the status pull and every report go out from here over the one ssh connection.
+- **Credentials for lanes there are that machine's.** Claude Code logs in there with its own login. Git credentials are given to it separately, and muxtopus copies none.
 {% endraw %}

@@ -18,6 +18,7 @@
 #   key = ~/.ssh/muxtopus-pc    # optional; IdentitiesOnly when given
 #   e2e_slots = 2               # pc e2e slots this machine sends there (default 1)
 #   gpu = auto                  # pc slots: auto (d3d12 when the host has /dev/dxg), d3d12, cpu
+#   lanes = 4                   # lanes it may run at once (docs/pc-host.md, lanes on the pc host)
 #
 # WHY A FILE OF ITS OWN AND NOT config KEYS. muxtopus is published, and its
 # config keys have defaults written in the repository; an address, a user
