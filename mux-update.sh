@@ -181,7 +181,7 @@ resolve_tag() {
 }
 
 # Is $1 newer than $2? `sort -V` is the same comparison pacman and dpkg reach
-# for, and it gets 5.10.0 > 5.9.0 right, which a string compare does not.
+# for, and it gets 1.10.0 > 1.9.0 right, which a string compare does not.
 newer_than() {
   [ "$1" = "$2" ] && return 1
   [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]
