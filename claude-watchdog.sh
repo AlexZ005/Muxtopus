@@ -474,8 +474,24 @@ case "${1:---once}" in
              echo "# account=$MUX_LABEL restart=$r monitor=$m soft=$SOFT_PCT% hard=$HARD_PCT% interval=${INTERVAL}s usage-every=${USAGE_EVERY}m scanned=$hb"
              # A comment line, like the one above, so a reader that skips
              # `#` lines still gets exactly the rows the file holds.
-             echo "# $STATUS_COLS"
-             [ -f "$STATUS" ] && cat "$STATUS"; exit 0 ;;
+             # WITH LANE HOSTS, A HOST COLUMN, appended like every column
+             # before it: `local` for this machine's rows, then every lane
+             # host's, from the copy of its status file this daemon brought
+             # back (hosts_pass), with how old that copy is. Its panes are
+             # THAT host's. Without any, the output is what it always was.
+             if compgen -G "$STATE_DIR/hosts/*/status.tsv" >/dev/null; then
+               echo "# $STATUS_COLS"$'\tHOST'
+               [ -f "$STATUS" ] && awk -v OFS='\t' '{print $0, "local"}' "$STATUS"
+               for _hf in "$STATE_DIR"/hosts/*/status.tsv; do
+                 _h="$(basename "$(dirname "$_hf")")"
+                 echo "# host=$_h status $(( $(date +%s) - $(stat -c %Y "$_hf") ))s old"
+                 awk -v OFS='\t' -v h="$_h" '{print $0, h}' "$_hf"
+               done
+             else
+               echo "# $STATUS_COLS"
+               [ -f "$STATUS" ] && cat "$STATUS"
+             fi
+             exit 0 ;;
   # ARM AND DISARM ARE DECISIONS, and they are now RECORDED as such
   # (ARMED_ONCE). Whether this install has ever had one made is what tells a
   # box that was never armed -- the no-systemd start path used to skip it --
@@ -3949,7 +3965,7 @@ check_schedules() {
   if [ ! -d "$SCHEDULES" ]; then budget_publish 0; return 0; fi
   # sched-why.tsv is fresh this pass: the notifications may judge it.
   SCHED_RAN=1
-  local f now st type at cwd rc probe=0 after dep_ok prio waved why bheld=0 bwhy=""
+  local f now st type at cwd rc probe=0 after dep_ok prio waved why bheld=0 bwhy="" host
   local -a due=()
   now="$(date +%s)"
   : > "$SCHED_WHY.tmp"
@@ -3965,7 +3981,10 @@ check_schedules() {
       plan|work) ;;
       *) sched_note "$f" stalled "STALLED: type must be plan or work, not \"${type:-}\""; continue ;;
     esac
-    if [ -z "$cwd" ] || [ ! -d "$cwd" ]; then
+    host="$(sched_host "$f")"
+    # A folder on another host is that host's to have; host_handoff's launch
+    # there says so if it does not.
+    if [ -z "$cwd" ] || { [ "$host" = local ] && [ ! -d "$cwd" ]; }; then
       sched_note "$f" stalled "STALLED: cwd \"${cwd:-}\" is not a directory"; continue
     fi
     if [ "$type" = work ] && ! sched_has_prompt "$f"; then
@@ -3996,12 +4015,16 @@ check_schedules() {
     # HELD IS ASKED LAST, of an entry that would otherwise launch now. An
     # entry still waiting for its time or its dependency says that instead,
     # which is the more useful sentence; this one only replaces "due".
-    if [ "$MEM_HELD" = 1 ]; then
+    # ANOTHER HOST: this machine's memory is not what holds it; that host's
+    # lane count and whether it answers are.
+    if [ "$host" != local ]; then
+      host_capacity "$host" || { sched_note "$f" held "held: $HOST_WHY"; continue; }
+    elif [ "$MEM_HELD" = 1 ]; then
       sched_note "$f" held "$MEM_WHY"; continue
     fi
     # DUE: judged by the budget below, in priority order, not here.
     prio="$(budget_prio_of_entry "$f")"
-    due+=("$(budget_prio_rank "$prio")"$'\t'"$prio"$'\t'"$f"$'\t'"$SCHED_WHY_TXT${dep_ok:+; $dep_ok}")
+    due+=("$(budget_prio_rank "$prio")"$'\t'"$prio"$'\t'"$f"$'\t'"$SCHED_WHY_TXT${dep_ok:+; $dep_ok}"$'\t'"$host")
   done
   # THE DUE ENTRIES IN PRIORITY ORDER -- release first, p2 last; within a
   # class the file order the loop used to launch in. The budget is asked
@@ -4010,7 +4033,7 @@ check_schedules() {
   if [ ${#due[@]} -gt 0 ]; then
     # fd 9, not stdin: the launcher runs tmux and claude, and anything in
     # it that reads stdin would eat the rest of this list.
-    while IFS=$'\t' read -r -u 9 _ prio f why; do
+    while IFS=$'\t' read -r -u 9 _ prio f why host; do
       [ -n "$f" ] || continue
       at="$(sched_field "$f" at)"
       waved=0
@@ -4021,7 +4044,12 @@ check_schedules() {
         continue
       fi
       sched_note "$f" due "$why"
-      if launch_schedule "$f" "$why"; then
+      if [ "${host:-local}" != local ]; then
+        if host_handoff "$f" "$host" "$why"; then
+          [ "$waved" = 1 ] && budget_started wave "$(sched_slug "$f")" \
+                           || budget_started launch "$(sched_slug "$f")"
+        fi
+      elif launch_schedule "$f" "$why"; then
         [ "$waved" = 1 ] && budget_started wave "$(sched_slug "$f")" \
                          || budget_started launch "$(sched_slug "$f")"
       fi
@@ -4876,6 +4904,13 @@ stats_collect() {
     log "stats collect failed (rc $rc): $(tail -1 "$STATS_ERR" 2>/dev/null). The ledger is unchanged; the next attempt is in ${STATS_EVERY}s."
   else
     rm -f "$STATS_ERR"
+    # tokens-by-lane.jsonl: this ledger and every lane host's, by day, host
+    # and lane (muxstats.py says how). MUXTOPUS_HOST_NAME names this machine
+    # in it; its hostname otherwise.
+    timeout "$STATS_TIMEOUT" "$MUX_PYTHON" "$SCRIPT_DIR/muxstats.py" \
+      ${MUX_PROFILE:+--profile "$MUX_PROFILE"} tokens-by-lane ${MUXTOPUS_HOST_NAME:+--host-name "$MUXTOPUS_HOST_NAME"} \
+      >/dev/null 2>"$STATS_ERR.tokens" && rm -f "$STATS_ERR.tokens" \
+      || log "tokens-by-lane failed: $(tail -1 "$STATS_ERR.tokens" 2>/dev/null)"
   fi
   return 0
 }
@@ -4931,6 +4966,22 @@ report_load() {
       [ -n "$pid" ] && RP_PIDPANE[$pid]="$pane"
     done < <(awk -F'\t' -v OFS='\t' '{for (i = 1; i <= 21; i++) if ($i == "") $i = "-"; print}' "$STATUS")
   fi
+  # THE OTHER HOSTS' LANES, their panes written <host>:%N. A far status that
+  # is older than three of ITS passes is a host asleep or unreachable: its
+  # rows are not judged at all -- "stalled" read off a frozen file would be
+  # a report about nothing.
+  local hf hst
+  for hf in "$HOSTS_DIR"/*/status.tsv; do
+    [ -f "$hf" ] || continue
+    hst="$(basename "$(dirname "$hf")")"
+    [ -n "$(find "$hf" -mmin -$(( (INTERVAL * 3 + 59) / 60 + 1 )) 2>/dev/null)" ] || continue
+    while IFS=$'\t' read -r sid name pane _r _r st _r _r _r _r _r opt _r idle _r _r _r _r pid _r tags; do
+      [ -n "$pane" ] && [ "$pane" != - ] || continue
+      pane="$hst:$pane"
+      RP_STATE[$pane]="$st"; RP_SID[$pane]="$sid"; RP_OPT[$pane]="$opt"; RP_NAME[$pane]="$name"
+      RP_TAGS[$pane]="$tags"; RP_IDLE[$pane]="$idle"
+    done < <(awk -F'\t' -v OFS='\t' '{for (i = 1; i <= 21; i++) if ($i == "") $i = "-"; print}' "$hf")
+  done
   if [ -f "$TREE" ]; then
     while IFS=$'\t' read -r slug par wid tpane _r; do
       [ -n "$slug" ] || continue
@@ -5104,7 +5155,7 @@ report_target() {
   if [ "${RP_OPT[$pane]-0}" = 1 ]; then REPORT_WHY="parent $parent is opted out"; return 1; fi
   if [ "$enabled" != 1 ]; then REPORT_WHY="the watchdog is disarmed"; return 1; fi
   # One capture, at the moment of typing: the state is up to a pass old.
-  text="$(mux_tmux capture-pane -p -t "$pane" 2>/dev/null)" || { REPORT_WHY="parent pane $pane is gone"; return 1; }
+  text="$(pane_tmux "$pane" capture-pane -p 2>/dev/null)" || { REPORT_WHY="parent pane $pane is gone"; return 1; }
   if prompt_scan "$text"; then REPORT_WHY="parent $parent is at a prompt"; return 1; fi
   REPORT_TO="$pane"
   return 0
@@ -5115,15 +5166,20 @@ report_target() {
 # in ONE send-keys left the text sitting unsent in the prompt -- the Enter is
 # swallowed by the paste detection.
 report_type() {
-  mux_tmux send-keys -t "$1" -l "$2" 2>/dev/null || return 1
+  pane_tmux "$1" send-keys -l "$2" 2>/dev/null || return 1
   sleep 1
-  mux_tmux send-keys -t "$1" Enter 2>/dev/null
+  pane_tmux "$1" send-keys Enter 2>/dev/null
 }
 
 # Where a window is, as a person types it: claude:21.
 report_where() {
   [ -n "$1" ] || return 0
-  mux_tmux display-message -p -t "$1" '#{session_name}:#{window_index}' 2>/dev/null
+  # A pane on another host is said with the host first, "pc claude:4": the
+  # parent reaching it types `ssh <host> tmux ...`, not into its own server.
+  case "$1" in
+    *:%*) local w; w="$(pane_tmux "$1" display-message -p '#{session_name}:#{window_index}' 2>/dev/null)"             && printf '%s %s' "${1%%:*}" "$w" ;;
+    *) mux_tmux display-message -p -t "$1" '#{session_name}:#{window_index}' 2>/dev/null ;;
+  esac
 }
 
 # THE OPT-IN NUDGE (WATCHDOG_NUDGE_STALLED). Once per stall episode: the
@@ -5143,7 +5199,7 @@ report_nudge() {
     prio="${TAG_PRIO[$lane]-p1}"
     budget_gate "$prio" 0 || { NUDGE_WHY="${BG_HOLD_WHY:-held by the budget}"; return 1; }
   fi
-  text="$(mux_tmux capture-pane -p -t "$pane" 2>/dev/null)" || { NUDGE_WHY="pane gone"; return 1; }
+  text="$(pane_tmux "$pane" capture-pane -p 2>/dev/null)" || { NUDGE_WHY="pane gone"; return 1; }
   if grep -q "esc to interrupt" <<<"$text" || prompt_scan "$text"; then
     NUDGE_WHY="no longer at its prompt"; return 1
   fi
@@ -5174,10 +5230,15 @@ report_close() {
   for s in "${!RP_TPAR[@]}"; do
     [ "${RP_TPAR[$s]}" = "$lane" ] || continue
     [[ "$live" == *",${RP_TWID[$s]-x},"* ]] && return 1
+    # A child on another host is open while that host still lists its pane.
+    case "${RP_TWID[$s]-}" in *:*) [ -n "${RP_STATE[${RP_TPANE[$s]-x}]-}" ] && return 1 ;; esac
   done
-  wid="$(mux_tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)" || return 1
+  wid="$(pane_tmux "$pane" display-message -p '#{window_id}' 2>/dev/null)" || return 1
   [ -n "$wid" ] || return 1
-  mux_tmux kill-window -t "$wid" 2>/dev/null || return 1
+  case "$pane" in
+    *:%*) host_sh "${pane%%:*}" "mux_tmux kill-window -t $wid" >/dev/null 2>&1 || return 1 ;;
+    *) mux_tmux kill-window -t "$wid" 2>/dev/null || return 1 ;;
+  esac
   log "closed finished window $name ($wid, pane $pane): handover in done/, idle $(dur_hm "${RP_IDLE[$pane]:-0}"), WATCHDOG_CLOSE_FINISHED=$CLOSE_FINISHED -- claude --resume ${RP_SID[$pane]} reopens it"
   return 0
 }
@@ -5322,10 +5383,21 @@ report_health() {
   tag_prio_map
   report_collect "$now"
   echo "# account=$MUX_LABEL report=$REPORT stall=${STALL_MIN}m repeat=${REPORT_REPEAT_MIN}m e2e=${REPORT_E2E_MIN}m memory=${REPORT_MEM_MIN}m nudge=$NUDGE_STALLED close-finished=$CLOSE_FINISHED"
+  # The lane hosts: up or not, their lanes, how old their last status is.
+  local lh lf hcol=""
+  [ -n "$(lane_hosts)" ] && hcol=1
+  for lh in $(lane_hosts); do
+    lf="$HOSTS_DIR/$lh/status.tsv"
+    if [ -f "$lf" ]; then
+      echo "# host=$lh lanes=$(mux_host_get "$lh" lanes 0) sessions=$(grep -c '' "$lf") status=$(( now - $(stat -c %Y "$lf") ))s old$([ -n "$(find "$lf" -mmin -$(( (INTERVAL * 3 + 59) / 60 + 1 )))" ] || echo ' (too old to judge: its lanes are not reported)')"
+    else
+      echo "# host=$lh lanes=$(mux_host_get "$lh" lanes 0): no status from it yet"
+    fi
+  done
   hb=""; [ -f "$HEARTBEAT" ] && read -r hb _ < "$HEARTBEAT"
   case "$hb" in ''|*[!0-9]*) age=-1 ;; *) age=$(( now - hb )) ;; esac
   if [ "$age" -lt 0 ] || [ "$age" -gt $(( INTERVAL * 2 + 15 )) ]; then
-    rows+="watchdog"$'\t'"-"$'\t'"-"$'\t'"-"$'\t'"-"$'\t'"$([ "$age" -lt 0 ] && echo 'has never run' || echo "last pass $(dur_hm "$age") ago: not running")"$'\n'
+    rows+="watchdog"$'\t'"-"$'\t'"${hcol:+local}"$'\t'"-"$'\t'"-"$'\t'"-"$'\t'"$([ "$age" -lt 0 ] && echo 'has never run' || echo "last pass $(dur_hm "$age") ago: not running")"$'\n'
     n=$(( n + 1 ))
   fi
   local -A first_of=() last_of=()
@@ -5347,15 +5419,207 @@ report_health() {
     else
       state="next pass"
     fi
-    rows+="$kind"$'\t'"$name"$'\t'"${parent:--}"$'\t'"$(dur_hm $(( now - first )))"$'\t'"$state"$'\t'"$detail"$'\n'
+    rows+="$kind"$'\t'"$name"$'\t'"${hcol:+$(case "$pane" in *:%*) echo "${pane%%:*}" ;; *) echo local ;; esac)}"$'\t'"${parent:--}"$'\t'"$(dur_hm $(( now - first )))"$'\t'"$state"$'\t'"$detail"$'\n'
     n=$(( n + 1 ))
   done <<<"$REPORT_ROWS"
   if [ "$n" = 0 ]; then
     echo "all good: no stalled, finished, prompting or limit-stuck lane, no long e2e hold, no long memory hold"
     return 0
   fi
-  { printf 'KIND\tWINDOW\tPARENT\tFOR\tREPORTED\tDETAIL\n'; printf '%s' "$rows"; } | column -t -s $'\t'
+  # The HOST column only with lane hosts; without, it is dropped whole.
+  { printf 'KIND\tWINDOW\t%sPARENT\tFOR\tREPORTED\tDETAIL\n' "${hcol:+HOST$'\t'}"; printf '%s' "$rows"; } \
+    | { if [ -n "$hcol" ]; then cat; else sed 's/\t\t/\t/'; fi; } | column -t -s $'\t'
   return 1
+}
+
+# ------------------------------------------------------------ other hosts
+# LANES ON ANOTHER MACHINE (docs/pc-host.md, "Lanes on the pc host"). A host in
+# hosts.conf with `lanes = N` runs muxtopus of its own -- tmux, claude, a
+# watchdog -- and THIS daemon stays the one scheduler: an entry whose host is
+# that machine is HANDED to it when it comes due (host_handoff: the entry
+# copied there, due now, its watchdog woken), and that machine's own launcher
+# opens the window, with the same templates and the same code as here. Each
+# pass this daemon then brings back what it needs to see the lane as one of
+# its own (hosts_pass): the host's status.tsv and tree.tsv, its stats ledger,
+# and the handover folder, kept the same on both sides (muxhosts.py sync).
+#
+# THE SAME LAYOUT ON BOTH. The far account has this HOME (lib/e2e-pc.sh
+# checks it), and muxtopus there is installed at the same path with the
+# same profile, so every path below -- the state folder, the schedules, the
+# handovers, the checkout -- is the same relative to HOME there.
+#
+# A PANE THERE IS WRITTEN <host>:%N, here and everywhere this daemon keeps
+# one (the tree, the reports). A bare %N is this machine's: the two tmux
+# servers number their panes independently, and a report typed into "%12"
+# here when it meant the pc's %12 would be read by the wrong session as its
+# own instruction. pane_tmux runs tmux where the pane is.
+# shellcheck source=lib/hosts.sh
+. "$WD_SRC/lib/hosts.sh"
+HOSTS_DIR="$STATE_DIR/hosts"
+# The far side's folders: these, relative to HOME.
+rel_home() { case "$1" in "$HOME"/*) printf '%s' "${1#"$HOME"/}" ;; *) printf '%s' "$1" ;; esac; }
+# The same place as the far shell names it, double-quoted: "$HOME/<rel>" for
+# a path under HOME (that account's HOME, which is ours), the path itself for
+# one outside it (an install in /opt is at /opt there too).
+far_path() { case "$1" in "$HOME"/*) printf '"$HOME/%s"' "${1#"$HOME"/}" ;; *) printf '"%s"' "$1" ;; esac; }
+
+# Hosts that take lanes: `lanes` > 0 in hosts.conf.
+lane_hosts() {
+  local h n
+  for h in $(mux_host_names); do
+    n="$(mux_host_get "$h" lanes 0)"
+    case "$n" in ''|*[!0-9]*|0) ;; *) printf '%s\n' "$h" ;; esac
+  done
+}
+
+# Is HOST up (one ssh call over its control socket), remembered for a minute
+# when it is not -- a sleeping PC costs the connect timeout, and a pass must
+# not pay it for every lane. The reason is in HOST_WHY.
+declare -A HOST_DOWN_UNTIL=()
+host_up() {
+  local h="$1" now; now="$(date +%s)"
+  HOST_WHY=""
+  if [ "${HOST_DOWN_UNTIL[$h]:-0}" -gt "$now" ]; then HOST_WHY="$h does not answer"; return 1; fi
+  if mux_host_master "$h" && "${MUX_HOST_SSH[@]}" true </dev/null 2>/dev/null; then return 0; fi
+  HOST_WHY="$h does not answer"; HOST_DOWN_UNTIL[$h]=$(( now + 60 ))
+  return 1
+}
+
+# One command on HOST, with its muxtopus loaded: the far profile.sh, so
+# mux_tmux there names ITS tmux socket.
+host_sh() {
+  local h="$1"; shift
+  mux_host_ssh "$h" || return 1
+  "${MUX_HOST_SSH[@]}" ". $(far_path "$SCRIPT_DIR/profile.sh") >/dev/null 2>&1; $*" </dev/null
+}
+
+# tmux where PANE is: `pane_tmux %3 capture-pane -p` here, `pane_tmux pc:%3 ...`
+# on pc. The pane goes in as the -t of the subcommand.
+pane_tmux() {
+  local pane="$1" sub="$2"; shift 2
+  case "$pane" in
+    *:%*) host_sh "${pane%%:*}" "mux_tmux $sub -t ${pane#*:} $(printf '%q ' "$@")" ;;
+    *) mux_tmux "$sub" -t "$pane" "$@" ;;
+  esac
+}
+
+# Which host an entry runs on: its own `host:` (local, or a name), else
+# MUXTOPUS_LANE_HOST -- a name, or name:held for "there while this machine's
+# memory guard holds launches, here otherwise". Called after mem_check.
+sched_host() {
+  local h; h="$(sched_field "$1" host)"
+  [ -n "$h" ] || h="${MUXTOPUS_LANE_HOST:-}"
+  case "$h" in
+    ''|-|local) printf 'local' ;;
+    *:held) if [ "${MEM_HELD:-0}" = 1 ]; then printf '%s' "${h%:held}"; else printf 'local'; fi ;;
+    *) printf '%s' "$h" ;;
+  esac
+}
+
+# May HOST take one more lane now? 0, or 1 with HOST_WHY. Its lanes are the
+# claude sessions in its last status.tsv (the dashboard window aside).
+host_capacity() {
+  local h="$1" cap n f="$HOSTS_DIR/$1/status.tsv"
+  cap="$(mux_host_get "$h" lanes 0)"
+  case "$cap" in ''|*[!0-9]*|0) HOST_WHY="$h takes no lanes (lanes = in hosts.conf)"; return 1 ;; esac
+  host_up "$h" || return 1
+  n=0; [ -f "$f" ] && n="$(awk -F'\t' '$2 != "status" && $2 != "-"' "$f" | grep -c '')"
+  if [ "$n" -ge "$cap" ]; then HOST_WHY="$h runs $n of its $cap lanes"; return 1; fi
+  return 0
+}
+
+# HAND AN ENTRY OVER. The copy is due NOW and carries no host and no after:
+# this daemon judged both, and the far one must neither hand it back nor wait
+# for a lane it cannot see. It is the far watchdog's launch from there on;
+# this entry is marked launched, with host: set, and the tree gets the row
+# its pane fills in once the far tree has it (hosts_pass).
+host_handoff() {
+  local f="$1" h="$2" why="$3" name tmp sched_rel slug parent
+  name="$(basename "$f")"
+  sched_rel="$(rel_home "$SCHEDULES")"
+  if ! host_sh "$h" "[ -f $(far_path "$STATE_DIR/enabled") ] && mux_tmux has-session -t \"=\$MUX_TMUX\"" >/dev/null 2>&1; then
+    sched_note "$f" held "held: $h is up, but its muxtopus session or armed watchdog is not (start muxtopus there)"
+    return 1
+  fi
+  tmp="$(mktemp "$STATE_DIR/handoff.XXXXXX")" || return 1
+  awk -v at="$(date '+%Y-%m-%d %H:%M')" -v from="$(hostname -s 2>/dev/null || echo here)" '
+    !hdr { print; next }
+    /^---$/ { print "handed-from: " from; hdr = 0; print; next }
+    /^(host|after|status|at|launched|slug): / { next }
+    { print }
+    END { }
+    BEGIN { hdr = 1 }' "$f" > "$tmp"
+  # status and at go first, as a hand-written entry has them.
+  # The slug PINNED to this daemon's: the far one derives it the same way,
+  # but the handover path both sides use is built from it, and a lane named
+  # differently there would write a file nothing here watches.
+  sed -i "1i slug: $(sched_slug "$f")" "$tmp"
+  sed -i "1i status: pending" "$tmp"; sed -i "1i at: $(date '+%Y-%m-%d %H:%M')" "$tmp"
+  mux_host_ssh "$h"
+  local rsh; rsh="$(printf '%q ' "${MUX_HOST_SSH[@]:0:${#MUX_HOST_SSH[@]}-1}")"
+  if ! { "${MUX_HOST_SSH[@]}" "mkdir -p $(printf %q "$sched_rel")/templates" </dev/null \
+         && { [ ! -d "$SCHEDULES/templates" ] || rsync -a -e "$rsh" "$SCHEDULES/templates/" "${MUX_HOST_SSH[-1]}:$sched_rel/templates/"; } \
+         && rsync -a -e "$rsh" "$tmp" "${MUX_HOST_SSH[-1]}:$sched_rel/$name"; } >/dev/null 2>&1; then
+    rm -f "$tmp"
+    sched_note "$f" held "held: could not copy the entry to $h"
+    return 1
+  fi
+  rm -f "$tmp"
+  host_sh "$h" "$(far_path "$SCRIPT_DIR/claude-watchdog.sh") --nudge" >/dev/null 2>&1
+  sched_mark "$f" launched
+  if grep -q '^host: ' <(sed '/^---$/q' "$f"); then sed -i "0,/^host: .*/s//host: $h/" "$f"
+  else sed -i "0,/^---$/s//host: $h\n---/" "$f"; fi
+  slug="$(sched_slug "$f")"; parent="$(sched_parent "$f")"
+  tree_record "$slug" "$parent" "$h:-" "$h:-" "$f"
+  log "schedule $name: handed to $h (its watchdog opens the window) slug=$slug${parent:+ parent=$parent} -- ${why:-due}"
+  return 0
+}
+
+# EVERY PASS, for each lane host that answers: its status, tree and stats
+# ledger into $HOSTS_DIR/<host>/ (rsync -a keeps their mtimes, so a reader
+# can tell how old the far pass is), the handover folder synced, the tree
+# rows of its lanes given their panes there, and an entry it failed to launch
+# marked failed here. A host that does not answer keeps its last files: the
+# readers judge them by age, and say so.
+hosts_pass() {
+  local h d rsh tgt srel strel line slug wid pane f
+  [ "$DRY" = 1 ] && return 0
+  for h in $(lane_hosts); do
+    d="$HOSTS_DIR/$h"; mkdir -p "$d"
+    host_up "$h" || continue
+    rsh="$(printf '%q ' "${MUX_HOST_SSH[@]:0:${#MUX_HOST_SSH[@]}-1}")"; tgt="${MUX_HOST_SSH[-1]}"
+    srel="$(rel_home "$STATE_DIR")"
+    strel="$(rel_home "${XDG_STATE_HOME:-$HOME/.local/state}/muxtopus/stats$MUX_SUFFIX")"
+    timeout 60 rsync -a -e "$rsh" "$tgt:$srel/status.tsv" "$tgt:$srel/tree.tsv" "$tgt:$srel/heartbeat" "$d/" 2>/dev/null
+    timeout 60 rsync -a -e "$rsh" "$tgt:$strel/ledger.tsv" "$d/" 2>/dev/null
+    timeout 120 "$MUX_PYTHON" "$SCRIPT_DIR/muxhosts.py" sync "$h" "$MUX_HANDOVERS" "$d/handovers.manifest" \
+      >> "$d/sync.log" 2>&1 || log "host $h: the handover sync failed (rc $?): $(tail -1 "$d/sync.log")"
+    # Keep the log to its last thousand lines.
+    [ "$(grep -c '' "$d/sync.log" 2>/dev/null)" -gt 2000 ] && { tail -1000 "$d/sync.log" > "$d/sync.log.tmp"; mv "$d/sync.log.tmp" "$d/sync.log"; }
+    # The panes of its lanes, into this tree.
+    if [ -f "$d/tree.tsv" ] && [ -f "$TREE" ]; then
+      while IFS=$'\t' read -r slug _ wid pane _; do
+        [ -n "$slug" ] || continue
+        awk -F'\t' -v s="$slug" -v h="$h:" '$1 == s && index($3, h) == 1 {f = 1} END {exit !f}' "$TREE" || continue
+        awk -F'\t' -v OFS='\t' -v s="$slug" -v w="$h:$wid" -v p="$h:$pane" \
+          '$1 == s { $3 = w; $4 = p } { print }' "$TREE" > "$TREE.tmp" && mv "$TREE.tmp" "$TREE"
+      done < "$d/tree.tsv"
+    fi
+    # The entries handed there in the last day: the far copy's status, when
+    # it is a failure, is this entry's.
+    for f in "$SCHEDULES"/*.md; do
+      [ -f "$f" ] || continue
+      [ "$(sched_field "$f" host)" = "$h" ] && [ "$(sched_field "$f" status)" = launched ] || continue
+      [ -n "$(find "$f" -mmin -1440 2>/dev/null)" ] || continue
+      line="$(host_sh "$h" "sed -n 's/^status: //p;/^---\$/q' $(far_path "$SCHEDULES/$(basename "$f")")" 2>/dev/null | head -1)"
+      case "$line" in
+        error|stalled)
+          sched_mark "$f" "$line"
+          log "schedule $(basename "$f"): $h could not launch it ($line); see its watchdog log" ;;
+      esac
+    done
+    date +%s > "$d/seen"
+  done
 }
 
 pass() {
@@ -5788,6 +6052,8 @@ pass() {
 
   tag_servers "$tmp"
   mv "$tmp" "$STATUS"
+  # The other hosts' lanes, before anything below judges or reports them.
+  hosts_pass
   # The resumes the scan queued, served as a wave -- before the launches, so
   # a fresh resume's entry is launched in this same pass when the gate allows.
   budget_resume_wave "$msg"

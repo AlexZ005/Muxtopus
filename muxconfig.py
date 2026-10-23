@@ -94,6 +94,9 @@ KEYS = {
     "MUXTOPUS_E2E_REMOTE": None,
     "MUXTOPUS_E2E_PREFER": "remote",
     "MUXTOPUS_E2E_PC": None,
+    # Where a scheduled entry without a `host:` runs: here (unset), a host
+    # from hosts.conf, or name:held -- there while the memory guard holds.
+    "MUXTOPUS_LANE_HOST": None,
     "CLAUDE_USAGE_MAX_AGE": "20",
     "CLAUDE_USAGE_MODEL": None,
     "CLAUDE_CONTEXT_WINDOW": "1000000",

@@ -46,6 +46,7 @@ The new window opens right after its `window:` target, named for its slug, and t
 | `after` | no | slugs, comma or space separated | hold until [every named lane is done](#after-slug-slug) |
 | `parent` | no | a slug | [draw this window under that one](#parent-slug--draw-this-window-under-that-one); usually derived from `window:` |
 | `cwd` | yes | an existing directory | where the session starts |
+| `host` | no | `local` · a host from `hosts.conf` | [run the lane on another machine](pc-host.md#lanes-on-the-pc-host): when it is due, this machine hands it to that host's watchdog, which opens the window there. Absent is `MUXTOPUS_LANE_HOST` (unset: here). The executor writes it on a lane it handed over |
 | `template` | no | a file in `templates/`, without `.md` | pasted first, then the body (then, for `work`, the footer). Read at paste time, so an edit to the template reaches every entry that names it. A name with no file is a warning in `--check` and nothing is prepended. `resume-status` stays a `plan` template in practice: its `{{STATUS_FILE}}` is filled by the dashboard when it writes the entry, not by the executor |
 | `model` | no | `fable` · `opus` · `sonnet` · a full model id | [`claude --model`](#model-and-effort); absent is the account default |
 | `effort` | no | `low` · `medium` · `high` · `xhigh` · `max` | `claude --effort` |

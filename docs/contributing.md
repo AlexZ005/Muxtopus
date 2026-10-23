@@ -30,6 +30,7 @@ tests/                  what CI runs, and the sandbox that runs locally
 seeds/                  options.md and prices.md, copied once by install.sh
 docs/                   this manual, and the design plans beside it
 changes/                one changelog fragment per lane
+muxhosts.py             hosts.conf from python, and the handover sync between hosts
 lib/                    files another program loads: the remote e2e slot's shim and server,
                         the pc slot's two halves and GPU shim, hosts.conf's reader, the pc host's setup
 ```
@@ -74,6 +75,9 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | the remote browser: the shim's connect (args kept, local paths dropped, `exposeNetwork`, local fallback, persistent contexts local) and `pw-remote-server.cjs` (a backend per version, stripped options, refused switches) | `tests/test_pw_remote.sh` | no — local |
 | pc slots: the letters and the order, `--local`/`--exclusive`, a dead host or a refused run going local, the environment sent and not sent, the exit code, the lifeline, `node_modules` by lockfile, the dev server from `APP_URL` and `--dev`, the claim, the copy-back list | `tests/test_e2e_pc.sh` | no — local |
 | no LAN address, MAC address or home folder (or a word from your local `private-words`) in any tracked file | `tests/test_no_private.py` | yes |
+| lanes on another host: which host an entry runs on, the hand-over, the far status, tree panes and handovers brought back, a far lane reported to a parent here, the HOST columns, the lane cap, an asleep host, a far launch that failed, the far ledger in tokens-by-lane | `tests/test_pc_lanes.sh` | no — local |
+| `hosts.conf` read alike by `lib/hosts.sh` and `muxhosts.py`, the handover sync's decisions and whole syncs, `tokens-by-lane.jsonl` | `tests/test_hosts.py` | yes |
+| `profile.sh`'s key list survives a comment on a key's line | `tests/test_profile_keys.py` | yes |
 | one state, any number of tags: background (test, ci, sleep, job), e2e / e2e-wait, handed off, stalled, orchestrating, done (and out of the budget cap), error, paused, `serve:<port>` by folder, never stranded while a job runs, the tag alert | `tests/test_window_states.sh` | no — local |
 | `stalled` and the reports to the parent: one line per parent, deduped and repeated, the phone when no parent can hear (gone, disarmed, notify-only), `--health`, `--dry-run`, the nudge (once per episode, never an asking lane), closing a finished window under the closure rule, an e2e hold, a memory hold, a limit that did not resume | `tests/test_stall_reports.sh` | no — local |
 | Settings ▸ Reports ▸: the knobs' refusals, their defaults said, the two that are off reading off | `tests/test_reports_menu.py` | yes |

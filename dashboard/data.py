@@ -190,7 +190,7 @@ def ports_for(pids: list[int], inodes: dict[int, int]) -> dict[int, int]:
 class ClaudeSession:
     __slots__ = ("sid", "window", "pane", "ver", "ctx", "state", "reset", "action",
                  "resumed", "spent", "cached", "optout", "model", "idle", "job",
-                 "cwd", "wound", "dirty", "moptout", "pid", "said", "tags")
+                 "cwd", "wound", "dirty", "moptout", "pid", "said", "tags", "host")
 
     def __init__(self, sid, window, pane, ver, ctx, state, reset, action,
                  resumed=0, spent=0, cached=0, optout=False, model="-", idle=-1, job="",
@@ -205,6 +205,7 @@ class ClaudeSession:
         self.said = said
         self.tags = tuple(tags)
         self.dirty = 0          # filled in from the repo sweep at render time
+        self.host = ""          # another host's session (claude_sessions); "" is this machine
 
 
 def claude_sessions() -> tuple[list[ClaudeSession], float]:
@@ -220,6 +221,34 @@ def claude_sessions() -> tuple[list[ClaudeSession], float]:
         age = time.time() - WATCHDOG_STATUS.stat().st_mtime
     except OSError:
         return [], -1.0
+    out = _rows(raw)
+    # THE OTHER HOSTS' SESSIONS (docs/pc-host.md): the copy of each lane host's
+    # status.tsv the watchdog brings back every pass, its pane written
+    # host:%N so nothing here mistakes it for one of this machine's. A copy
+    # older than STALE_HOST_S is a host asleep or out of reach, and its rows
+    # are left out rather than drawn as if they were current.
+    for hf in sorted((WATCHDOG_DIR / "hosts").glob("*/status.tsv")):
+        try:
+            if time.time() - hf.stat().st_mtime > STALE_HOST_S:
+                continue
+            rows = _rows(hf.read_text())
+        except OSError:
+            continue
+        for r in rows:
+            r.host = hf.parent.name
+            r.pane = f"{r.host}:{r.pane}" if r.pane and r.pane != "-" else ""
+            r.pid = 0           # that machine's pid: never looked up in this /proc
+        out += rows
+    return out, age
+
+
+# Three far passes and a margin: the far watchdog's interval is the same
+# knob's default (30 s), and a pass on a loaded box takes ten seconds more.
+STALE_HOST_S = 180
+
+
+def _rows(raw: str) -> list:
+    """status.tsv rows, as ClaudeSessions."""
     def num(fields, i):
         try:
             return int(fields[i])
@@ -251,7 +280,7 @@ def claude_sessions() -> tuple[list[ClaudeSession], float]:
             # none, and an older watchdog's row has none.
             tuple(t for t in (f[20] if len(f) > 20 else "").split(",") if t and t != "-"),
         ))
-    return out, age
+    return out
 
 
 def drop_dead(sessions: list[ClaudeSession],
@@ -277,7 +306,7 @@ def drop_dead(sessions: list[ClaudeSession],
     the fallback is the previous behaviour, never a table that empties itself.
     """
     live = {p.pid for p in procs}
-    return [s for s in sessions if not s.pid or s.pid in live]
+    return [s for s in sessions if s.host or not s.pid or s.pid in live]
 
 
 def opted_out() -> set[str]:
