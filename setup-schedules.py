@@ -316,7 +316,7 @@ Format:
     after: 24-c1-schema, 24-c2-rows (optional: hold until ALL of those have finished)
     parent: 24-c1-schema            (optional: draw this window under that one)
     window: plan1-fixes            (optional: insert the new window after this one)
-    cwd: /home/deck/.code/theprototype-app/core
+    cwd: ~/code/project/core
     template: resume-status        (optional; a file in templates/, pasted before the body)
     model: opus                    (optional: fable | opus | sonnet | full id; default from settings.json)
     effort: high                   (optional: low | medium | high | xhigh | max -> claude --effort)

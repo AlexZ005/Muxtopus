@@ -1,7 +1,7 @@
 ────────────────────────────────────────────────────────────────────────────────
  Do you trust the files in this folder?
 
- /home/deck/.code/lanes/notify-core
+ /home/user/.code/lanes/notify-core
 
  Claude Code may read, write, or execute files contained in this directory. This
  can pose security risks, so only use files from trusted sources.
