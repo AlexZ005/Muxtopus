@@ -3289,12 +3289,26 @@ sched_send_rc() {
 # way -- trust is per exact path in ~/.claude.json and none of the lane
 # worktrees carry it, so the dialog is the common case, not an edge.
 # PANE_TRUSTED is left set when it was.
+#
+# THE BYPASS WARNING IS NOT ANSWERED, and is never mistaken for a prompt. A
+# claude started with --permission-mode bypassPermissions on a machine that
+# has not accepted that mode yet (no skipDangerousModePermissionPrompt in
+# ~/.claude/settings.json -- a new lane host, typically) first draws a
+# warning whose menu cursor is the same ❯ as the prompt's, sitting on
+# `No, exit`. Taken for a prompt, the body was pasted into it and its Enter
+# quit claude: the window vanished and the entry read `launched`. Accepting
+# it is the owner's call, once per machine, so this returns 2 with
+# PANE_BYPASS_ASK set and leaves the window on the warning for a person.
 pane_ready() {
   local pane="$1" tries="${2:-60}" i txt
-  PANE_TRUSTED=""
+  PANE_TRUSTED="" PANE_BYPASS_ASK=""
   for i in $(seq 1 "$tries"); do
     sleep 0.5
     txt="$(mux_tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
+    if grep -q "Bypass Permissions mode" <<<"$txt" && grep -q "Yes, I accept" <<<"$txt"; then
+      PANE_BYPASS_ASK=1
+      return 2
+    fi
     if [ -z "$PANE_TRUSTED" ] && grep -q "trust this folder" <<<"$txt"; then
       PANE_TRUSTED=1
       mux_tmux send-keys -t "$pane" Down 2>/dev/null; sleep 0.4
@@ -3482,7 +3496,11 @@ launch_schedule() {
   # Wait for a prompt, answering the trust dialog on the way (pane_ready).
   if ! pane_ready "$pane"; then
     sched_mark "$f" error
-    log "schedule $(basename "$f"): claude never reached a prompt in $wname"
+    if [ -n "$PANE_BYPASS_ASK" ]; then
+      log "schedule $(basename "$f"): claude in $wname asks to accept Bypass Permissions mode on this machine -- not answered, nothing pasted; accept it once in that window (or set skipDangerousModePermissionPrompt in ~/.claude/settings.json) and launch again"
+    else
+      log "schedule $(basename "$f"): claude never reached a prompt in $wname"
+    fi
     rm -f "$bodyf"; return 1
   fi
 
@@ -3686,7 +3704,7 @@ restore_windows() {
       k=$(( k + 1 ))
       log "restore: ${R_NAME[$i]}: resumed ${R_SID[$i]:0:8} in win ${R_WID[$i]} pane ${R_PANE[$i]}${PANE_TRUSTED:+ (trusted the folder)}"
     else
-      log "restore: ${R_NAME[$i]}: claude never reached a prompt in win ${R_WID[$i]}; left as it is"
+      log "restore: ${R_NAME[$i]}: claude never reached a prompt in win ${R_WID[$i]}${PANE_BYPASS_ASK:+ (it asks to accept Bypass Permissions mode)}; left as it is"
       rc=1
     fi
   done

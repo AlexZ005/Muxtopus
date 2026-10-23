@@ -123,4 +123,19 @@ check "the log said why, once" test "$(grep -c 'does not list --append-system-pr
 check "no --settings either: the paste already shows the identity" \
   bash -c '! grep -q -- "--settings" <<<"$1"' _ "$(argv_of)"
 
+echo "== the Bypass Permissions warning: never answered, never taken for a prompt"
+# A new lane host that has not accepted the mode draws this before any
+# prompt; its menu cursor is the prompt's ❯, on `No, exit`. Taken for a
+# prompt, the paste's Enter quit claude and the entry still read launched.
+printf '  WARNING: Claude Code running in Bypass Permissions mode\n  ❯ No, exit\n    Yes, I accept\n' > "$HOME/fake-screen"
+entry lane-bypass work "bypass-body"
+rm -f "$HOME/fake-claude.keys" "$HOME/fake-claude.argv"
+"$W" --once >/dev/null 2>&1
+for i in $(seq 40); do grep -q '^status: error' "$SC/lane-bypass.md" && break; sleep 0.25; done
+check "marked error, not launched" grep -q '^status: error' "$SC/lane-bypass.md"
+sleep 2  # the previous section's paste may still be arriving: look for this body, not for silence
+check "nothing was pasted into it" bash -c '! grep -q bypass-body <<<"$1"' _ "$(keys)"
+check "the log says it asks to accept the mode" grep -q 'lane-bypass.md: claude in .* asks to accept Bypass Permissions mode' "$ST/log"
+printf '● ready\n❯ \n' > "$HOME/fake-screen"
+
 sb_done

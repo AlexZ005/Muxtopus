@@ -1,0 +1,3 @@
+## schedules: the Bypass Permissions warning is no longer taken for a prompt
+
+- A lane launched with `permission-mode: bypassPermissions` on a machine that has not yet accepted that mode (a new lane host, typically) meets Claude Code's one-time warning first. The launcher took its menu cursor for the prompt and pasted the body into it, and the paste's Enter chose `No, exit`. The window vanished and the entry said `launched`. Now the warning is left unanswered and nothing is pasted. The entry is marked `error`, and the log says to accept the mode once in that window. Accepting it stays the owner's call. A restored window that meets the warning is logged the same way.
