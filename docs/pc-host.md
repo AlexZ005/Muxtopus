@@ -73,7 +73,7 @@ The command is run **as given**, in the same folder, and the same paths mean the
 |---|---|
 | this machine and session | `PATH HOME USER LOGNAME SHELL PWD OLDPWD SHLVL TERM* COLORTERM TMPDIR LANG LANGUAGE LC_* TMUX* SSH_* DISPLAY WAYLAND_* XAUTHORITY XDG_* DBUS_* LD_* MAIL HOSTNAME EDITOR VISUAL PAGER LS_COLORS LESS* PS1-4 PROMPT_COMMAND HIST*`, desktop and session variables (`DESKTOP_SESSION GTK_* QT_* KDE_* GNOME_* SDL_* STEAM* PULSE_* PIPEWIRE_* XCURSOR_* MOZ_* KONSOLE_* VTE_* WINDOWID INVOCATION_ID JOURNAL_STREAM SYSTEMD_* MANAGERPID MEMORY_PRESSURE_* DEBUGINFOD_* GPG_* SUDO_* OTEL_*`) |
 | tools of this machine | `NODE_OPTIONS PLAYWRIGHT_BROWSERS_PATH PW_REMOTE_* npm_* NVM_*` |
-| this machine's muxtopus and Claude | `CLAUDE* ANTHROPIC_* MUXTOPUS_* WATCHDOG_*` |
+| this machine's muxtopus and Claude | `CLAUDE* ANTHROPIC_* MUXTOPUS_* WATCHDOG_*`, and the slot choice made here: `E2E_SLOTS E2E_SLOT_LOCK E2E_PREFER E2E_REMOTE E2E_PC` (the host's own `e2e-slot` uses its own) |
 | credentials | `GH_* GITHUB_* AWS_*`, and any name containing `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `API_KEY`, `PRIVATE_KEY` or `CREDENTIAL` |
 
 `E2E_PC_ENV="NAME OTHER"` sends those names anyway. `LANG` is `C.UTF-8` there. The command also sees `E2E_SLOT`, `E2E_SLOT_PC=<host>` and an empty `E2E_SLOT_REMOTE`. Its stdin is not forwarded.

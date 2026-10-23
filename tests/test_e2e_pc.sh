@@ -115,6 +115,8 @@ out="$(MY_API_KEY=s2 E2E_PC_ENV="MY_API_KEY" "$ES" -- bash -c 'echo "${MY_API_KE
 check "..E2E_PC_ENV sends a name anyway" [ "$out" = s2 ]
 out="$(NODE_OPTIONS=--foo "$ES" -- bash -c 'echo "${NODE_OPTIONS:-}"' 2>/dev/null)"
 check "NODE_OPTIONS is not sent (it names files here)" [ -z "$out" ]
+out="$(E2E_PC=pc E2E_SLOTS=2 E2E_PREFER=remote E2E_REMOTE= "$ES" -- bash -c 'echo "${E2E_PC-u}|${E2E_SLOTS-u}|${E2E_PREFER-u}|${E2E_REMOTE-u}|${E2E_SLOT_LOCK-u}|$E2E_SLOT_PC"' 2>/dev/null)"
+check "the slot choice made here is not sent (the host's e2e-slot uses its own)" [ "$out" = "u|u|u|u|u|pc" ]
 
 echo "== refusals: the run goes local"
 mkdir -p "$HOME/work/mine/.git" && echo '{}' > "$HOME/work/mine/package.json" && echo x > "$HOME/work/mine/f"

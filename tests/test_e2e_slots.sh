@@ -35,6 +35,11 @@ hold() { local i; : > "$T/got"; HOLDS=()
   sleep 1.5; }
 unhold() { wait "${HOLDS[@]}"; }
 
+echo "== --help prints the header, and takes no slot"
+out="$("$ES" --help 2>&1)"; rc=$?
+check "--help exits 0 with the usage line" bash -c '[ "$1" = 0 ] && grep -q "e2e-slot \[--exclusive\]" <<<"$2"' _ "$rc" "$out"
+check "..and ran nothing (no lock file made)" [ ! -e "$T/lock" ]
+
 echo "== the default is two: A and B, and a third waits"
 hold 2
 check "two runs got A and B" [ "$(sort "$T/got" | paste -sd, -)" = "A,B" ]
