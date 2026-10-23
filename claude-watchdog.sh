@@ -5286,6 +5286,26 @@ report_pass() {
   done
 
   [ "$DRY" = 1 ] && return 0
+  # A PROBLEM THIS PASS DID NOT SEE IS NOT FORGOTTEN AT ONCE. The ledger used
+  # to be exactly this pass's rows, so one pass that missed a row -- an e2e
+  # holder the process walk did not catch, a status file between writes --
+  # dropped its key, and the next pass that saw it again called it NEW and
+  # sent it. MEASURED 2026-10-23: one 50-int slot held for five hours was
+  # reported to its parent at 14:16, 14:26, 14:36, 14:47, 14:49 and 14:52
+  # with WATCHDOG_REPORT_REPEAT_MIN=60. So a reported key stays for one
+  # repeat interval after it was last sent (60 minutes when repeats are off):
+  # the dedupe holds per key, and a problem that really ended and comes back
+  # later than that is new again. Nudge keys keep their own rule -- one
+  # nudge per stall episode -- and are not held.
+  local hold=$(( ${REPORT_REPEAT_MIN:-0} * 60 ))
+  [ "$hold" -gt 0 ] 2>/dev/null || hold=3600
+  for key in "${!last_of[@]}"; do
+    [ -n "${keep[$key]+x}" ] && continue
+    case "$key" in nudge:*) continue ;; esac
+    last="${last_of[$key]}"
+    case "$last" in ''|*[!0-9]*) continue ;; esac
+    [ $(( now - last )) -lt "$hold" ] && keep[$key]="${first_of[$key]}"$'\t'"$last"
+  done
   : > "$REPORTS.tmp"
   for key in "${!keep[@]}"; do printf '%s\t%s\n' "$key" "${keep[$key]}" >> "$REPORTS.tmp"; done
   mv "$REPORTS.tmp" "$REPORTS"

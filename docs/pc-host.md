@@ -63,7 +63,7 @@ The command is run **as given**, in the same folder, and the same paths mean the
 **What is sent before the run:**
 
 - **The tree**: the git top level of the run's folder, or else the nearest folder with a `package.json`. It is mirrored with `rsync --delete`, without `node_modules` or `.git`. The first sync of a 9,000-file tree took 20 s over WiFi, and later ones take under a second.
-- **Inputs the command names.** An absolute path under `HOME` or `/tmp` in an argument or an environment value is mirrored if it exists here: a `MODULES_REPO`, a scene zip, an evidence folder. Environment values that describe this machine are not mirrored: `*_HOME`, `*_PATH`, a venv, anything under `~/.local`, `~/.cache` or `~/.config`. Nor is a folder in `HOME`'s first two levels.
+- **Inputs the command names.** An absolute path under `HOME` or `/tmp` in an argument or an environment value is mirrored if it exists here: a `MODULES_REPO`, a scene zip, an evidence folder. Environment values that describe this machine are not mirrored: `*_HOME`, `*_PATH`, a venv, anything under `~/.local`, `~/.cache` or `~/.config`. Nor is a folder in `HOME`'s first two levels. **`E2E_PC_INPUTS="path path"`** names more inputs, for paths that only a script the command runs knows about (a battery's `env.sh`, and the repos it points at). An input folder with a `package-lock.json`, and `node_modules` here, gets its own `node_modules` there.
 - **`node_modules`**, rebuilt from the lockfile: `npm ci` runs once per lockfile hash (and `node` version), and every later tree with the same lockfile gets a hard-linked copy in about a second. It runs only for lockfiles whose folder has `node_modules` here. There is never a `--legacy-peer-deps`.
 - **The dev server**, when the run needs one. That means `--dev DIR PORT`, or the port of `APP_URL` when its host is this machine (`localhost`, or a name `/etc/hosts` points at a loopback address). It is started on **the same port** there with `lane-dev`, from the same folder and with the same command as this machine's `lane-dev` server on that port, if there is one. Otherwise the tree's `npm run dev`. One request warms it up, because vite's first page load optimises dependencies (20 s measured). After the run it is left to `lane-dev`'s idle timer, which keeps it warm for the next run. `--dev` stops it after the run, as it does here.
 
@@ -100,7 +100,23 @@ So with `gpu = auto` and a host that has `/dev/dxg` and the d3d12 driver, `lib/p
 
 ## What it buys
 
-(measured below, once the pc runs are in)
+Measured 2026-10-23: a Steam Deck (WiFi, other lanes running) against a desktop PC (i9-13900K, RTX 4090, wired) in use by its owner at the same time, with a WSL2 distro of 24 threads and 32 GB. The same seven core suites and snapshot as the [remote slot's measurement](remote-e2e.md#what-it-buys), three repeats each, every suite its own `e2e-slot` call. The times are the whole call (probe, mirror, deps, server, run, copy-back), medians in seconds:
+
+| suite | local | remote | pc | pc green |
+|---|---:|---:|---:|---:|
+| llms-txt | 10 | 13 | 11 | 3/3 |
+| union-53 | 53 | 30 | 30 | 3/3 |
+| lock-ux | 109 | 66 | 62 | 3/3 |
+| invite-links | 227 | 132 | 122 | 3/3 |
+| lock-settings | 210 | 247 | 217 | 3/3 |
+| particles-fx | 64 | 41 | 43 | 3/3 |
+| mesh-knife | 118 | 62 | 60 | 3/3 |
+| **all** | **791** | **591** | **544** | 21/21 |
+
+- **Memory.** On the Deck, a pc run (e2e-slot and ssh) peaked at 18–26 MB, against 1.4–2.9 GB for a local run and 0.27–0.35 GB for a remote one. The dev server is not on the Deck either.
+- **Speed.** 1.45× local and 1.09× remote overall. The suites a remote slot made slower got their time back: lock-settings went from 247 s remote to 217 s (local 210 s). Its time is mostly its own waits, so no machine makes it much faster.
+- **Overhead**, from each run's timing line, on a warm tree: mirror 0.9–2.5 s, deps 0.0–0.2 s, server 0.1–0.3 s, copy-back under 0.5 s. A tree's first run also pays the first sync (20 s for 9,000 files), one `npm ci` (8 s) and vite's first page load (20 s).
+- These seven suites launch without GPU flags, so every kind of slot renders them on SwiftShader (the CPU).
 
 ## Setting up a pc host
 

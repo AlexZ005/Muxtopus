@@ -53,6 +53,7 @@
 #   MEMORY_PRESSURE_* DEBUGINFOD_* GPG_* SUDO_* OTEL_* GH_* GITHUB_* AWS_*
 #   and any name containing TOKEN, SECRET, PASSWORD, PASSWD, API_KEY,
 #   PRIVATE_KEY or CREDENTIAL.
+# E2E_PC_INPUTS="path path" names more inputs: what a script sources by itself.
 # E2E_PC_ENV="NAME NAME" sends those names anyway. LANG is C.UTF-8 there
 # (a locale this machine has may not exist on that one). NODE_OPTIONS is
 # dropped because e2e-slot's own (the remote-browser shim) names a file here.
@@ -137,7 +138,7 @@ is_local_host() {
     END { exit !f }' /etc/hosts 2>/dev/null
 }
 
-DENY_RE='^(PATH|HOME|USER|LOGNAME|SHELL|PWD|OLDPWD|SHLVL|_|TERM.*|COLORTERM|TMPDIR|LANG|LANGUAGE|LC_.*|TMUX.*|SSH_.*|DISPLAY|WAYLAND_.*|XAUTHORITY|XDG_.*|DBUS_.*|LD_.*|NODE_OPTIONS|PLAYWRIGHT_BROWSERS_PATH|PW_REMOTE_.*|npm_.*|NVM_.*|CLAUDE.*|ANTHROPIC_.*|MUXTOPUS_.*|WATCHDOG_.*|MAIL|HOSTNAME|EDITOR|VISUAL|PAGER|LS_COLORS|LESS.*|PS[1-4]|PROMPT_COMMAND|HIST.*|DESKTOP_SESSION|SESSION_MANAGER|GTK_.*|QT_.*|KDE_.*|GNOME_.*|SDL_.*|STEAM.*|PULSE_.*|PIPEWIRE_.*|XCURSOR_.*|MOZ_.*|KONSOLE_.*|VTE_.*|WINDOWID|INVOCATION_ID|JOURNAL_STREAM|SYSTEMD_.*|MANAGERPID|MEMORY_PRESSURE_.*|DEBUGINFOD_.*|GPG_.*|SUDO_.*|OTEL_.*|GH_.*|GITHUB_.*|AWS_.*|E2E_SLOT_REMOTE|E2E_PC_ENV)$'
+DENY_RE='^(PATH|HOME|USER|LOGNAME|SHELL|PWD|OLDPWD|SHLVL|_|TERM.*|COLORTERM|TMPDIR|LANG|LANGUAGE|LC_.*|TMUX.*|SSH_.*|DISPLAY|WAYLAND_.*|XAUTHORITY|XDG_.*|DBUS_.*|LD_.*|NODE_OPTIONS|PLAYWRIGHT_BROWSERS_PATH|PW_REMOTE_.*|npm_.*|NVM_.*|CLAUDE.*|ANTHROPIC_.*|MUXTOPUS_.*|WATCHDOG_.*|MAIL|HOSTNAME|EDITOR|VISUAL|PAGER|LS_COLORS|LESS.*|PS[1-4]|PROMPT_COMMAND|HIST.*|DESKTOP_SESSION|SESSION_MANAGER|GTK_.*|QT_.*|KDE_.*|GNOME_.*|SDL_.*|STEAM.*|PULSE_.*|PIPEWIRE_.*|XCURSOR_.*|MOZ_.*|KONSOLE_.*|VTE_.*|WINDOWID|INVOCATION_ID|JOURNAL_STREAM|SYSTEMD_.*|MANAGERPID|MEMORY_PRESSURE_.*|DEBUGINFOD_.*|GPG_.*|SUDO_.*|OTEL_.*|GH_.*|GITHUB_.*|AWS_.*|E2E_SLOT_REMOTE|E2E_PC_ENV|E2E_PC_INPUTS)$'
 SECRET_RE='(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIAL)'
 # Names that point at a toolchain on this machine: sent (harmless if absent
 # there), never taken as a path to mirror.
@@ -213,6 +214,11 @@ cmd_run() {
   # are on every shell's environment, and the first version of this mirrored
   # a JDK to the far side on every run (measured: 2-4 s a run, for nothing).
   local -a toks=("$@")
+  # E2E_PC_INPUTS: paths no argument or variable names -- what a script the
+  # command runs sources by itself (a battery's env.sh and the repos IT
+  # names). Mirrored and copied back like any other input.
+  local x
+  for x in ${E2E_PC_INPUTS:-}; do toks+=("$x"); done
   for n in $(compgen -e); do
     [[ "$n" =~ $DENY_RE ]] && continue
     [[ "$n" =~ $TOOL_RE ]] && continue
@@ -282,7 +288,10 @@ cmd_run() {
   local -a nm=()
   while IFS= read -r -d '' line; do
     line="${line%/package-lock.json}"; [ -d "$line/node_modules" ] && nm+=("$line")
-  done < <(for t in "${trees[@]}"; do find "$t" -maxdepth 3 -name node_modules -prune -o -name package-lock.json -print0; done)
+  done < <(for t in "${trees[@]}"; do find "$t" -maxdepth 3 -name node_modules -prune -o -name package-lock.json -print0; done
+           # An input folder that is a package of its own (a modules repo a
+           # test runs `node` in) gets its node_modules the same way.
+           for x in "${ok_inputs[@]}"; do [ -f "$x/package-lock.json" ] && printf '%s\0' "$x/package-lock.json"; done)
   if [ ${#nm[@]} -gt 0 ]; then rq prep "${nm[@]}" || { say "pc: dependencies on $host failed; not on $host"; return 76; }; fi
   deps_s="$(secs "$t2")"
 

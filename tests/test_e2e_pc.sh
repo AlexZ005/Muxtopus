@@ -146,6 +146,14 @@ rm -rf "${TREE:?}/node_modules"; mkdir -p "$TREE/node_modules"
 check "..a tree without them, same hash: from the cache, no npm" bash -c "grep -q 'from the cache' '$T/err' && ! grep -q 'npm-ci-ran' '$T/err'"
 check "..a hard-linked copy" [ -f "$TREE/node_modules/fake/installed" ]
 
+echo "== E2E_PC_INPUTS: a repo only a sourced script names"
+mkdir -p "$HOME/work/repos/modrepo/node_modules"; : > "$HOME/work/repos/modrepo/.muxtopus-mirror"
+echo '{"lockfileVersion":3,"name":"modrepo"}' > "$HOME/work/repos/modrepo/package-lock.json"
+E2E_PC_INPUTS="$HOME/work/repos/modrepo" "$ES" -- true 2>"$T/err"
+check "its node_modules are built there too" grep -q "npm ci in $HOME/work/repos/modrepo" "$T/err"
+"$ES" -- true 2>"$T/err"
+check "..and not without it" bash -c "! grep -q 'modrepo' '$T/err'"
+
 echo "== the dev server from APP_URL, on the same port"
 PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
 out="$("$ES" -- env APP_URL="http://localhost:$PORT/" bash -c 'curl -s -o /dev/null -w "%{http_code}" "$APP_URL"' 2>"$T/err")"

@@ -11,3 +11,8 @@
 ## the published repository: no private addresses
 
 - The manual's examples now use documentation addresses (`192.0.2.10`, `198.51.100.7`) and neutral paths. A test fails CI on a LAN address, a MAC address or a home folder in any tracked file. A local `~/.config/muxtopus/private-words` file adds your own names to what it looks for.
+
+## fixes
+
+- **A comment on a default's line in `profile.sh` no longer takes everything down.** `WATCHDOG_REPORT_E2E_MIN=600   # a note` turned every word of the note into a "key", and the watchdog crash-looped while every `e2e-slot` and `handover.sh` failed with it. The key list now ignores comments and keeps only `NAME=value` lines.
+- **A lane problem is reported once per `WATCHDOG_REPORT_REPEAT_MIN`, even if a pass misses it.** One pass that did not see a problem (an e2e holder the process walk missed) used to drop its key, so the next sighting was "new" and was sent again. A five-hour e2e hold reached its parent six times in 40 minutes. A reported key now stays for one repeat interval after it was last sent.

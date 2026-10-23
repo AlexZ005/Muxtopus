@@ -148,6 +148,21 @@ DASHBOARD_HINTS_FOOTER_KEYS=on
 DASHBOARD_HINTS_TABLE_NOTES=on
 MUXTOPUS_NOTIFY_TAGS=off
 "
+# A HAND-EDITED DEFAULT MUST NOT TAKE EVERYTHING DOWN. The list above is read
+# by word-splitting, and an owner who changes a default here and explains it
+# on the same line -- `WATCHDOG_REPORT_E2E_MIN=600   # 300 normally ...` --
+# turned every word of the comment into a "key": `_MUX_ENV_#` is not a valid
+# name, MUX_SUFFIX was never set, and the watchdog crash-looped under systemd
+# while every e2e-slot and handover.sh call failed with it (measured
+# 2026-10-23: 24 restarts in four minutes). So the list is cleaned once,
+# here, in bash alone (this file is sourced by every script, often): a `#`
+# starts a comment, and only NAME=value lines are kept.
+_mux_keys=""
+while IFS= read -r _l; do
+  _l="${_l%%#*}"; _l="${_l//[[:space:]]/}"
+  [[ "$_l" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && _mux_keys+="$_l"$'\n'
+done <<<"$MUX_CONFIG_KEYS"
+MUX_CONFIG_KEYS="$_mux_keys"; unset _mux_keys _l
 
 # The checkout these scripts live in, from this file's own location, so a
 # symlinked or copied `muxtopus` finds its siblings either way.
