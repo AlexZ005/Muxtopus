@@ -4,6 +4,17 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.11.2 — 2026-10-23
+
+A patch release: two fixes to `e2e-slot`, nothing renamed, nothing new to set.
+
+### e2e slots
+
+#### e2e slots: two fixes
+
+- **A pc slot no longer forwards this machine's slot choice.** `E2E_SLOTS`, `E2E_SLOT_LOCK`, `E2E_PREFER`, `E2E_REMOTE` and `E2E_PC` are no longer sent with a run. The pc host's own `e2e-slot` read them and warned that it had no `hosts.conf`. With `E2E_SLOT_LOCK` set, it would also have taken its local slot outside the lock files its own lanes share.
+- **`e2e-slot --help` prints its usage.** It used to take a slot and run `--help` as the command (exit 127). On a machine with pc slots, that run went to the pc.
+
 ## v5.11.1 — 2026-10-23
 
 A patch release: one fix, nothing renamed, nothing new to set.
