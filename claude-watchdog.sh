@@ -4954,7 +4954,7 @@ report_add() {
 # lock and exited, so it names nobody (checked on this box, 2026-10-22).
 # Prints: pid <TAB> held-seconds <TAB> owning-pane-or-empty <TAB> command
 report_e2e_holders() {
-  local d pid kid kc age best up hops owner
+  local d pid kid kc age best up hops owner c
   local -a a k
   for d in /proc/[0-9]*; do
     pid="${d#/proc/}"
@@ -4982,7 +4982,14 @@ report_e2e_holders() {
       [ -n "${RP_PIDPANE[$up]-}" ] && { owner="${RP_PIDPANE[$up]}"; break; }
       up="${PROC_PPID[$up]-}"; hops=$(( hops + 1 ))
     done
-    printf '%s\t%s\t%s\t%s\n' "$pid" "$best" "$owner" "${a[*]:0:12}"
+    # ONE ROW PER HOLDER. An argv can carry newlines -- `e2e-slot -- bash -c
+    # '<a multi-line script>'`, MEASURED 2026-10-23 on a 50-int run -- and each
+    # would have started a row of its own with no held time ("integer
+    # expected" from --health). An empty owner is written `-`: tab is IFS
+    # whitespace, so an empty field between two tabs would vanish on the read
+    # and shift the command into the owner's place.
+    c="${a[*]:0:12}"; c="${c//[$'\n\t\r']/ }"
+    printf '%s\t%s\t%s\t%s\n' "$pid" "$best" "${owner:--}" "$c"
   done
 }
 
@@ -5037,6 +5044,8 @@ report_collect() {
   # The slots. PROC_* is this pass's process walk (proc_scan).
   if [ "${REPORT_E2E_MIN:-0}" -gt 0 ] 2>/dev/null; then
     while IFS=$'\t' read -r pid held owner cmd; do
+      case "$held" in ''|*[!0-9]*) continue ;; esac
+      [ "$owner" = - ] && owner=""
       [ -n "$pid" ] && [ "$held" -ge $(( REPORT_E2E_MIN * 60 )) ] || continue
       name="-"; p=""
       if [ -n "$owner" ]; then name="${RP_NAME[$owner]:--}"; p="$(report_parent_of "$name")"; fi
@@ -5946,6 +5955,33 @@ if [ "$MODE" = daemon ]; then
     exec "$SELF" "${_ARGV[@]}"
   }
   trap 'reload SIGHUP' HUP
+  # A NEW RELEASE INSTALLED UNDER IT is reloaded onto, however it got there:
+  # `muxtopus update --apply` (which also sends SIGHUP, so this finds nothing
+  # left to do), get.sh, install.sh, or a `git pull` in a checkout. Before
+  # this, a release installed by hand ran beside a daemon still executing the
+  # old one until somebody remembered --reload. The check is VERSION beside
+  # this script, read once per pass by a builtin. A change is acted on at the
+  # end of the NEXT pass, not this one: an install is many files written one
+  # after another, and a pass's worth of quiet is what says it has finished.
+  # And only onto a script that parses -- a half-written one is waited out,
+  # never exec'd into a dead daemon.
+  RUN_VERSION=""; read -r RUN_VERSION < "$WD_SRC/VERSION" 2>/dev/null || true
+  _VSEEN=""; _VBAD=""
+  version_point() {
+    local v=""
+    read -r v < "$WD_SRC/VERSION" 2>/dev/null || return 0
+    [ -n "$v" ] && [ -n "$RUN_VERSION" ] && [ "$v" != "$RUN_VERSION" ] || return 0
+    if [ "$v" != "$_VSEEN" ]; then
+      _VSEEN="$v"; _VBAD=""
+      log "muxtopus $v is installed (this daemon runs $RUN_VERSION): reloading onto it after the next pass"
+      return 0
+    fi
+    if ! bash -n "$SELF" 2>/dev/null; then
+      [ -n "$_VBAD" ] || log "muxtopus $v is installed, but $SELF does not parse yet -- staying on $RUN_VERSION until it does"
+      _VBAD=1; return 0
+    fi
+    reload "muxtopus $RUN_VERSION -> $v installed"
+  }
   # GO NOW (--nudge). The dashboard signals the moment it writes a schedule
   # entry, so `c` opens a window in about a second instead of waiting out the
   # poll. The trap only records it and cuts a sleep short; what ANSWERS it is
@@ -5976,6 +6012,7 @@ if [ "$MODE" = daemon ]; then
        { [ -n "${MUX_PROFILE_CONF:-}" ] && [ "$MUX_PROFILE_CONF" -nt "$CONF_SEEN" ]; }; then
       reload "config changed"
     fi
+    version_point
     # A nudge that landed after the pass's last nudge_point -- during its own
     # check_schedules, the notifications or the hourly usage probe. Answered
     # here, and the sleep still follows: the pass itself has just run.

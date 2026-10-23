@@ -286,6 +286,7 @@ def main() -> int:
     try:
         tty.setcbreak(fd)
         dash.build()          # prime
+        last_key = time.monotonic()
         with Live(dash.build(), console=console, screen=True,
                   auto_refresh=False, transient=False) as live:
             while True:
@@ -337,6 +338,13 @@ def main() -> int:
                     continue
 
                 key = read_key(interval)
+                if key:
+                    last_key = time.monotonic()
+                elif dash.auto_reload_due(time.monotonic() - last_key):
+                    # A release was installed under it; R, pressed for the
+                    # owner once nobody is at the keyboard.
+                    dash.pending_reload = True
+                    continue
 
                 # THE ONE ROUTING RULE, and its first three steps are the
                 # App's: a submode (prompt, confirm, picker, or a view's own

@@ -54,6 +54,9 @@ from dashboard.menulayout import (BODY_MIN, PAGE_KEYS,
 
 # The setting that hides tabs (dashboard/menus/tabs.py draws its menu).
 TABS_KEY = "DASHBOARD_TABS_HIDDEN"
+# Seconds without a key before a dashboard on an older release than the one
+# installed reloads itself (App.auto_reload_due).
+AUTO_RELOAD_IDLE = 60.0
 
 # WHAT THE DASHBOARD EXPLAINS ON SCREEN, by the short name the call sites use
 # (dashboard/menus/hints.py draws the menu; App.guide reads them). The keys
@@ -939,6 +942,21 @@ class App:
     def in_submode(self) -> bool:
         return (self.prompt is not None or self.confirm is not None
                 or self.picker is not None or self.modal is not None)
+
+    def auto_reload_due(self, idle: float) -> bool:
+        """A NEWER RELEASE IS INSTALLED and nobody is using this dashboard:
+        reload onto it without waiting for R. The watchdog does the same at
+        the end of a pass (claude-watchdog.sh version_point), so after an
+        install nothing keeps running the old code by accident.
+
+        Only when nobody would lose anything: AUTO_RELOAD_IDLE seconds since
+        the last key, on the main view, no menu, no prompt, confirm, picker
+        or modal open. A reload drops all of those, and a menu half-way
+        through a choice re-drawn from the top under someone's finger is
+        worse than an old dashboard for another minute."""
+        return (idle >= AUTO_RELOAD_IDLE and self.view == "main"
+                and self.menu is None and not self.in_submode()
+                and bool(self.stale()))
 
     # ========================================================== the frame
     def tab_labels(self, tab) -> tuple:
