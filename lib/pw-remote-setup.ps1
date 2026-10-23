@@ -1,7 +1,7 @@
 # pw-remote-setup.ps1 -- make a Windows PC lend its browser to e2e-slot's remote slots.
 #
-#   powershell -ExecutionPolicy Bypass -File pw-remote-setup.ps1 -Root D:\muxtopus-e2e -Allow 192.168.1.15 -Versions 1.62.1,1.63.0
-#   powershell -ExecutionPolicy Bypass -File pw-remote-setup.ps1 -Root D:\muxtopus-e2e -Uninstall
+#   powershell -ExecutionPolicy Bypass -File pw-remote-setup.ps1 -Root C:\muxtopus-e2e -Allow 198.51.100.7 -Versions 1.62.1,1.63.0
+#   powershell -ExecutionPolicy Bypass -File pw-remote-setup.ps1 -Root C:\muxtopus-e2e -Uninstall
 #
 # Run it as an administrator (the firewall rule and the scheduled task need
 # one), with pw-remote-server.cjs beside it, on a machine that has Node (the

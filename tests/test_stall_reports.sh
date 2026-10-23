@@ -210,6 +210,14 @@ check "--health: no 'integer expected' from a multi-line command" bash -c "! gre
 check "..the orphan holder is one row, owned by no window" [ "$(grep -c '^e2e .*sleep 600 : second line : third' <<<"$hl")" = 1 ]
 check "..with no window and no parent" grep -qE '^e2e +- +- .*sleep 600 : second line' <<<"$hl"
 check "..not when the clock says it is young again" bash -c "! '$W' --health | grep -q '^e2e'"
+# ONE PASS THAT MISSES THE HOLDER must not make it new: the ledger used to
+# drop the key, and the next sighting was reported again at once (a 50-int
+# slot was told to its parent six times in 40 minutes).
+n1="$(heard orch | grep -c 'e2e slot held')"
+"$W" --once >/dev/null 2>&1                          # the young clock: no e2e row this pass
+MUX_UPTIME="$SB/uptime" "$W" --once >/dev/null 2>&1  # six hours again: the same holder
+check "a holder missed for one pass is not reported again within the repeat" [ "$(heard orch | grep -c 'e2e slot held')" = "$n1" ]
+check "..its key is still in the ledger" grep -q '^e2e:' "$ST/reports"
 kill -- -"$ORPHAN" 2>/dev/null
 
 echo "== entries the memory guard has held past WATCHDOG_REPORT_MEM_MIN"

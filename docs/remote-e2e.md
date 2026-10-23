@@ -18,12 +18,14 @@ e2e-slot --  node test.cjs                       pw-remote-server.cjs   :39001
    vite on localhost:5466  <---- tunnel ---------------- page.goto('https://localhost:5466/')
 ```
 
+A remote slot leaves the test's `node` and the dev server here, and every page call crosses the network. For suites of many small calls, and to keep the dev server off this machine too, a [pc slot](pc-host.md) moves the whole run.
+
 ## Turning it on
 
 ```bash
 # ~/.config/muxtopus/config
-MUXTOPUS_E2E_REMOTE=192.168.88.209:39001                       # one remote slot
-MUXTOPUS_E2E_REMOTE=192.168.88.209:39001,192.168.88.209:39001  # two on the same server
+MUXTOPUS_E2E_REMOTE=192.0.2.10:39001                       # one remote slot
+MUXTOPUS_E2E_REMOTE=192.0.2.10:39001,192.0.2.10:39001  # two on the same server
 MUXTOPUS_E2E_PREFER=remote                                     # (the default) try a remote slot first
 ```
 
@@ -59,8 +61,8 @@ The other machine needs Node and nothing else from you. `lib/pw-remote-server.cj
 **Windows** (as an administrator, with `pw-remote-server.cjs` beside the script):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File pw-remote-setup.ps1 -Root D:\muxtopus-e2e -Allow 192.168.88.15 -Versions 1.62.1,1.63.0
-powershell -ExecutionPolicy Bypass -File pw-remote-setup.ps1 -Root D:\muxtopus-e2e -Uninstall
+powershell -ExecutionPolicy Bypass -File pw-remote-setup.ps1 -Root C:\muxtopus-e2e -Allow 198.51.100.7 -Versions 1.62.1,1.63.0
+powershell -ExecutionPolicy Bypass -File pw-remote-setup.ps1 -Root C:\muxtopus-e2e -Uninstall
 ```
 
 Everything goes in `-Root`: the server, `start-servers.ps1`, one `playwright-<version>\` per version with its Chromium in `browsers\`, and `logs\`. Outside it there are exactly two things: a firewall rule (the ports, TCP, from `-Allow` only) and a scheduled task. The task starts the server at boot, logged on or not (S4U, no stored password), with no time limit. `-Uninstall` removes all three.
@@ -73,7 +75,7 @@ for v in 1.62.1 1.63.0; do
   npm install --prefix playwright-$v playwright@$v
   PLAYWRIGHT_BROWSERS_PATH=$PWD/playwright-$v/browsers playwright-$v/node_modules/.bin/playwright install --with-deps chromium
 done
-node pw-remote-server.cjs --root ~/pw-remote --port 39001 --host 0.0.0.0 --allow 192.168.88.15 --install
+node pw-remote-server.cjs --root ~/pw-remote --port 39001 --host 0.0.0.0 --allow 198.51.100.7 --install
 ```
 
 **Versions.** A Playwright client refuses a server of another major.minor, and lanes on one machine often differ (1.62 and 1.63 on the day this was written). The server keeps one `run-server` per installed version and picks it by the client's `User-Agent`, so one port serves them all. With `--install`, a version nobody installed yet installs itself on its first request. That request gets a 503, and the run falls back to a local browser while it installs. `GET /json` lists what is installed.

@@ -120,7 +120,7 @@ for md in sorted(DOCS.glob("*.md")):
         path = target.split("#", 1)[0]
         check((DOCS / path).exists(), "%s: link to %s, which does not exist" % (md.name, target))
     # Nothing in the manual is a tour of the author's machine.
-    check("/home/deck" not in text, "%s: names a real home directory" % md.name)
+    check("/home/" "deck" not in text, "%s: names a real home directory" % md.name)
 
 # A parent named by a sub-page is a page.
 titles = {fm["title"] for fm in pages.values()}

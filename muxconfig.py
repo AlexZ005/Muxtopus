@@ -88,10 +88,12 @@ KEYS = {
     "WATCHDOG_BUDGET_PROBE_MIN": "15",
     # How many e2e runs the machine takes at once (e2e-slot), the remote
     # slots whose browser runs on another machine (host:port,...), and which
-    # kind a run tries first.
+    # kind a run tries first; the pc slots, whose whole run happens on a host
+    # named in hosts.conf (name or name:count,...).
     "MUXTOPUS_E2E_SLOTS": "2",
     "MUXTOPUS_E2E_REMOTE": None,
     "MUXTOPUS_E2E_PREFER": "remote",
+    "MUXTOPUS_E2E_PC": None,
     "CLAUDE_USAGE_MAX_AGE": "20",
     "CLAUDE_USAGE_MODEL": None,
     "CLAUDE_CONTEXT_WINDOW": "1000000",

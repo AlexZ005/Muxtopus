@@ -270,4 +270,4 @@ group: project
 label: theprototype: plans are read-only, in cloud
 hint: read by absolute path under cloud/docs/plans-core; never commit core plans/
 default: off
-line: Plans are versioned in the cloud repo and are read-only for you: read them by absolute path under /home/deck/.code/theprototype-app/cloud/docs/plans-core/ and never edit or commit anything under core `plans/` (gitignored on purpose). Your status goes in your handover; the orchestrator folds it into the plan files.
+line: Plans are versioned in the cloud repo and are read-only for you: read them by absolute path under ~/code/project/cloud/docs/plans-core/ and never edit or commit anything under core `plans/` (gitignored on purpose). Your status goes in your handover; the orchestrator folds it into the plan files.

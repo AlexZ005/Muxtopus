@@ -35,6 +35,20 @@
 # (a remote run's node and dev server are still here). The command sees
 # E2E_SLOT_REMOTE=host:port on a remote slot, empty otherwise.
 #
+# PC SLOTS. MUXTOPUS_E2E_PC ("pc", "pc:2,gpu-box"; E2E_PC for one run) adds
+# slots on which the WHOLE run happens on another machine -- tree, node_modules,
+# dev server, test and browser -- named by hosts.conf (lib/hosts.sh), with
+# "name:n" or the host's e2e_slots saying how many. lib/e2e-pc.sh does it and
+# its header says how; the caller's command does not change. They come after
+# the remote slots in the letters, and first in the order when PREFER is
+# remote (a pc run leaves nothing on this machine, a remote one its node and
+# server). --local and --exclusive never take one, and --exclusive does not
+# hold them: nothing of a pc run is on this machine to disturb a timing run.
+# A pc host is probed like a remote one (asked again a minute after it did
+# not answer), and a run the pc host cannot take -- its tree is a checkout of
+# that machine's own, a dev server port is taken there -- takes another slot.
+# The command sees E2E_SLOT_PC=<name> there.
+#
 # --dev <dir> <port> starts that folder's dev server with `lane-dev` once the
 # slot is held, runs the command, and stops the server afterwards -- unless it
 # was already running before, in which case it is left as it was (its own idle
@@ -63,9 +77,9 @@ HERE="$(dirname "$(readlink -f "$0")")"
 # subshell -- read only when the environment does not say, and a broken or
 # missing profile.sh is the old two local slots, never an error.
 # shellcheck disable=SC1091
-{ IFS= read -r CFG_SLOTS; IFS= read -r CFG_REMOTE; IFS= read -r CFG_PREFER; } < <(
+{ IFS= read -r CFG_SLOTS; IFS= read -r CFG_REMOTE; IFS= read -r CFG_PREFER; IFS= read -r CFG_PC; } < <(
   . "$HERE/profile.sh" >/dev/null 2>&1
-  printf '%s\n%s\n%s\n' "${MUXTOPUS_E2E_SLOTS:-}" "${MUXTOPUS_E2E_REMOTE:-}" "${MUXTOPUS_E2E_PREFER:-}" )
+  printf '%s\n%s\n%s\n%s\n' "${MUXTOPUS_E2E_SLOTS:-}" "${MUXTOPUS_E2E_REMOTE:-}" "${MUXTOPUS_E2E_PREFER:-}" "${MUXTOPUS_E2E_PC:-}" )
 N="${E2E_SLOTS:-$CFG_SLOTS}"
 case "$N" in ''|*[!0-9]*|0) N=2 ;; esac
 [ "$N" -gt 26 ] && N=26
@@ -83,6 +97,33 @@ for r in ${RSPEC//,/ }; do
 done
 [ $((N + ${#REMOTES[@]})) -gt 26 ] && REMOTES=("${REMOTES[@]:0:$((26 - N))}")
 R=${#REMOTES[@]}
+# PC entries: name or name:count, names from hosts.conf. E2E_PC="" turns them
+# off for one run, like E2E_REMOTE.
+PCS=()
+if [ "${E2E_PC+set}" = set ]; then PSPEC="$E2E_PC"; else PSPEC="$CFG_PC"; fi
+[ "$PSPEC" = - ] && PSPEC=""
+PC_LIB="$HERE/lib/e2e-pc.sh"
+if [ -n "$PSPEC" ]; then
+  if [ -x "$PC_LIB" ]; then
+    # shellcheck source=lib/hosts.sh
+    . "$HERE/lib/hosts.sh"
+    for p in ${PSPEC//,/ }; do
+      pname="${p%%:*}"; pn=""
+      [ "$pname" != "$p" ] && pn="${p#*:}"
+      [ -n "$pn" ] || pn="$(mux_host_get "$pname" e2e_slots 1)"
+      case "$pname" in ''|*[!A-Za-z0-9_.-]*) echo "e2e-slot: ignoring pc slot '$p' (want name or name:n)" >&2; continue ;; esac
+      case "$pn" in ''|*[!0-9]*|0) echo "e2e-slot: ignoring pc slot '$p' (its count is not a number)" >&2; continue ;; esac
+      if [ -z "$(mux_host_get "$pname" ssh)" ]; then
+        echo "e2e-slot: pc host '$pname' has no ssh = in $MUX_HOSTS_FILE; skipping it" >&2; continue
+      fi
+      for (( k = 1; k <= pn; k++ )); do PCS+=("$pname:$k"); done
+    done
+  else
+    echo "e2e-slot: $PC_LIB is missing; pc slots are off" >&2
+  fi
+fi
+[ $((N + ${#REMOTES[@]} + ${#PCS[@]})) -gt 26 ] && PCS=("${PCS[@]:0:$((26 - N - ${#REMOTES[@]}))}")
+P=${#PCS[@]}
 PREFER="${E2E_PREFER:-$CFG_PREFER}"
 [ "$PREFER" = local ] || PREFER=remote
 SHIM="$HERE/lib/pw-remote-shim.cjs"
@@ -102,6 +143,9 @@ slot_lock() { if [ "$1" = 0 ]; then printf '%s' "$A"; else printf '%s.%s' "$A" "
 remote_lock() { printf '%s.remote%s' "$A" "$(( $1 + 1 ))"; }
 for (( i = 0; i < N; i++ )); do touch "$(slot_lock "$i")"; done
 for (( j = 0; j < R; j++ )); do touch "$(remote_lock "$j")"; done
+# A pc slot's lock is named by host and number, for the same reason.
+pc_lock() { local e="${PCS[$1]}"; printf '%s.pc-%s-%s' "$A" "${e%:*}" "${e##*:}"; }
+for (( j = 0; j < P; j++ )); do touch "$(pc_lock "$j")"; done
 # lane-dev from beside this script first (a checkout, or the ~/.local/bin link
 # into one), then PATH.
 LANE_DEV="$HERE/lane-dev"
@@ -138,6 +182,19 @@ remote_ok() {
   return 1
 }
 
+# IS THE PC HOST UP: e2e-pc.sh probe --quick (ssh answers). Whether it can
+# take THIS run is the run's own first step (exit 76 below). Cached like
+# remote_ok, per host name.
+pc_ok() {
+  local name="$1" rc
+  [ "${DOWN_UNTIL[pc:$name]:-0}" -gt "$SECONDS" ] && return 1
+  "$PC_LIB" probe --quick "$name" 2>/dev/null; rc=$?
+  [ "$rc" = 0 ] && return 0
+  [ -n "${DOWN_UNTIL[pc:$name]:-}" ] || echo "e2e-slot: pc host $name does not answer or cannot take runs; skipping it (asked again every minute)" >&2
+  DOWN_UNTIL[pc:$name]=$((SECONDS + 60))
+  return 1
+}
+
 # The command's environment on a remote slot: the shim in NODE_OPTIONS (kept
 # beside whatever the caller had there) and the server to connect to. Only the
 # command gets it -- lane-dev's server is started from `run` without it.
@@ -154,6 +211,20 @@ remote_env() {
 # for as long as it ran.
 run() {
   local rc started=0
+  # A pc slot: the whole thing, --dev included, happens over there.
+  # A signal here is passed on: e2e-pc.sh then closes the run's lifeline and
+  # the far side stops it. Without that a `timeout` around e2e-slot killed only
+  # this process, and the run went on over there with its slot released here.
+  if [ -n "${E2E_SLOT_PC:-}" ]; then
+    local cp
+    if [ -n "$DEV_DIR" ]; then "$PC_LIB" run "$E2E_SLOT_PC" --dev "$DEV_DIR" "$DEV_PORT" -- "$@" &
+    else "$PC_LIB" run "$E2E_SLOT_PC" -- "$@" & fi
+    cp=$!
+    trap 'kill -TERM "$cp" 2>/dev/null; wait "$cp" 2>/dev/null; exit 130' INT TERM HUP
+    wait "$cp"; rc=$?
+    trap - INT TERM HUP
+    return "$rc"
+  fi
   if [ -n "$DEV_DIR" ]; then
     [ -n "$LANE_DEV" ] || { echo "e2e-slot: --dev needs lane-dev, and none was found" >&2; return 2; }
     if lane_dev status "$DEV_PORT" --quiet; then
@@ -186,29 +257,40 @@ if [ $EXCL = 1 ]; then
     exec {fd}>"$(remote_lock "$j")"; flock -w "$WAIT" "$fd" || exit 75
     LOCK_FDS+=("$fd"); names+="$(slot_name $((N + j)))"
   done
-  E2E_SLOT="$names" E2E_SLOT_REMOTE="" run "$@"; exit $?
+  E2E_SLOT="$names" E2E_SLOT_REMOTE="" E2E_SLOT_PC="" run "$@"; exit $?
 fi
-# The order a pass tries the slots in: "L<i>" local, "R<j>" remote.
+# The order a pass tries the slots in: "L<i>" local, "R<j>" remote, "P<j>" pc.
 ORDER=()
 for (( i = 0; i < N; i++ )); do ORDER+=("L$i"); done
 if [ "$LOCAL" = 0 ]; then
   for (( j = R - 1; j >= 0; j-- )); do
     if [ "$PREFER" = remote ]; then ORDER=("R$j" "${ORDER[@]}"); else ORDER+=("R$(( R - 1 - j ))"); fi
   done
+  for (( j = P - 1; j >= 0; j-- )); do
+    if [ "$PREFER" = remote ]; then ORDER=("P$j" "${ORDER[@]}"); else ORDER+=("P$(( P - 1 - j ))"); fi
+  done
 fi
+# Hosts that refused THIS run (exit 76: its tree is theirs, its port is
+# taken there): not offered it again.
+declare -A PC_NOPE=()
 end=$((SECONDS+WAIT))
 while [ $SECONDS -lt $end ]; do
   for s in "${ORDER[@]}"; do
     k="${s#?}"
+    pc=""
     case "$s" in
       L*) lock="$(slot_lock "$k")"; name="$(slot_name "$k")"; hp="" ;;
       R*) lock="$(remote_lock "$k")"; name="$(slot_name $((N + k)))"; hp="${REMOTES[$k]}" ;;
+      P*) pc="${PCS[$k]%:*}"; [ -n "${PC_NOPE[$pc]:-}" ] && continue
+          lock="$(pc_lock "$k")"; name="$(slot_name $((N + R + k)))"; hp="" ;;
     esac
     exec {fd}>"$lock"
     # The lock first, then the health check: checking first would let two
     # waiters both see the host up and race for one slot, and is no cheaper.
-    if flock -n "$fd" && { [ -z "$hp" ] || remote_ok "$hp"; }; then
-      LOCK_FDS=("$fd"); E2E_SLOT="$name" E2E_SLOT_REMOTE="$hp" run "$@"; rc=$?; exec {fd}>&-; exit $rc
+    if flock -n "$fd" && { [ -z "$hp" ] || remote_ok "$hp"; } && { [ -z "$pc" ] || pc_ok "$pc"; }; then
+      LOCK_FDS=("$fd"); E2E_SLOT="$name" E2E_SLOT_REMOTE="$hp" E2E_SLOT_PC="$pc" run "$@"; rc=$?; exec {fd}>&-
+      if [ -n "$pc" ] && [ "$rc" = 76 ]; then PC_NOPE[$pc]=1; continue; fi
+      exit $rc
     fi
     exec {fd}>&-
   done

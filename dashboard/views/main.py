@@ -1596,7 +1596,7 @@ HELP_CLAUDE = f"""
 HELP_DIRTY = f"""
   [{DIM}]UNCOMMITTED WORK[/]
     [bold]DIRTY[/] on the lanes table is tracked files changed in that working tree.
-    It is not on the claude table because a session's cwd here is /home/deck,
+    It is not on the claude table because a session's cwd here is the home folder,
     which is not a repo -- the question is only answerable per TREE. A dirty
     repo with no dev server would then be invisible, so the system line names
     those separately. Untracked files are ignored: a scratch file is noise, a
