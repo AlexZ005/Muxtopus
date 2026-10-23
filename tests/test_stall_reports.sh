@@ -195,12 +195,22 @@ echo "== an e2e slot held past WATCHDOG_REPORT_E2E_MIN"
 lane slot e2e; printf '# slot\n' > "$HO/STATUS-slot.md"; sleep 3; tree slot orch
 pass
 check "held a few seconds: nothing" bash -c "! grep -q 'e2e slot held' \"\$(echo '$HOME/heard-orch')\""
+# A second holder that no window owns, its command a multi-line script (a
+# real 50-int run's argv): one row, not one per line of its script.
+E2E_SLOT_LOCK="$SB/e2e-orphan.lock" setsid bash -c "$REPO/e2e-slot -- bash -c \$'sleep 600\n: second line\n: third'" >/dev/null 2>&1 &
+ORPHAN=$!
+sleep 2
 # Six hours of uptime more: every process looks six hours older.
 read -r up _ < /proc/uptime
 printf '%s 0\n' "$(( ${up%.*} + 21600 ))" > "$SB/uptime"
 MUX_UPTIME="$SB/uptime" "$W" --once >/dev/null 2>&1
 check "held 6h: orch is told, naming the lane" grep -qE 'e2e slot \(claude:[0-9]+\): an e2e slot held 6h by pid [0-9]+' <<<"$(heard orch | tail -1)"
+hl="$(MUX_UPTIME="$SB/uptime" "$W" --health 2>&1)"
+check "--health: no 'integer expected' from a multi-line command" bash -c "! grep -q 'integer expected' <<<\"\$1\"" _ "$hl"
+check "..the orphan holder is one row, owned by no window" [ "$(grep -c '^e2e .*sleep 600 : second line : third' <<<"$hl")" = 1 ]
+check "..with no window and no parent" grep -qE '^e2e +- +- .*sleep 600 : second line' <<<"$hl"
 check "..not when the clock says it is young again" bash -c "! '$W' --health | grep -q '^e2e'"
+kill -- -"$ORPHAN" 2>/dev/null
 
 echo "== entries the memory guard has held past WATCHDOG_REPORT_MEM_MIN"
 printf 'MemTotal: 30408704 kB\nMemFree: 1048576 kB\nMemAvailable: 1048576 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n' > "$SB/meminfo"

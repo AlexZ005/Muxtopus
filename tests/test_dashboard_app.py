@@ -653,6 +653,40 @@ try:
 finally:
     appmod.knob = real_knob
 
+# ---------------------------------------------------- reload onto an install
+# A newer VERSION on disk than the one running: R is pressed for the owner,
+# but only when nobody is at the keyboard and nothing is half-chosen.
+print("== a release installed under it: auto-reload only when idle and closed")
+import time                               # noqa: E402
+from dashboard.app import AUTO_RELOAD_IDLE   # noqa: E402
+
+
+def installed(a, v):
+    """Pretend VERSION on disk says v, fresh enough that stale() does not
+    read the real file."""
+    a._disk_version, a._disk_at = v, time.time() + 3600
+
+
+a = app()
+a.add_view(Spy("main"))
+a.add_menu("mux", lambda: WIDE_ROWS)
+installed(a, a.version)
+check(not a.auto_reload_due(AUTO_RELOAD_IDLE * 10),
+      "the same version installed: never")
+installed(a, a.version + ".next")
+check(a.auto_reload_due(AUTO_RELOAD_IDLE),
+      "a newer one, idle %ds on the main view: reload" % AUTO_RELOAD_IDLE)
+check(not a.auto_reload_due(AUTO_RELOAD_IDLE - 1),
+      "...but not while a key was pressed in the last minute")
+a.open_menu("mux")
+check(not a.auto_reload_due(AUTO_RELOAD_IDLE * 10), "...nor with a menu open")
+a.menu = None
+a.confirm = {"text": "sure?"}
+check(not a.auto_reload_due(AUTO_RELOAD_IDLE * 10), "...nor with a confirm open")
+a.confirm = None
+a.view = "insights"
+check(not a.auto_reload_due(AUTO_RELOAD_IDLE * 10), "...nor on another view")
+
 print()
 print("%d assertions passed" % PASSES if not FAILS
       else "%d passed, %d FAILED" % (PASSES, FAILS))

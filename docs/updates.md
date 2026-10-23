@@ -63,7 +63,10 @@ Taking one does this, in order:
 
 **Your claude windows are not touched.** They are processes in tmux panes; nothing in this sequence signals them, and nothing about the tmux server changes. There is no "restart muxtopus to apply" because there is nothing that has to be restarted — the two things running muxtopus code reload themselves, and the work does not.
 
-If an update is applied from a terminal rather than from the menu, a dashboard that is already running is the one thing still on the old code. It notices, and its header says `v<running> → <new> installed, press R` until you do.
+**However a release gets installed** — this menu, `muxtopus update --apply`, `get.sh`, `install.sh`, or a `git pull` in a checkout the watchdog runs from — nothing keeps running the old code for long:
+
+- **Each watchdog** reads `VERSION` beside its script once per pass. When it changes it logs `muxtopus <new> is installed (this daemon runs <old>): reloading onto it after the next pass`, and one pass later re-executes itself onto it (`reloading: muxtopus <old> -> <new> installed`) — the same reload as `--reload`, so a pass in flight finishes first. The pass in between is there because an install writes many files one after another. A script that does not parse yet is waited out rather than executed, and the log says so once.
+- **The dashboard**'s header says `v<running> → <new> installed, press R`, and after a minute with no key pressed, on the main view with no menu, prompt or confirm open, it presses R itself. While somebody is using it, it waits.
 
 ## What it refuses
 

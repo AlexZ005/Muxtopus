@@ -2178,7 +2178,7 @@ budget_resume_wave() {
     fi
     fired+="$sid"$'\t'"$how"$'\n'
     if [ "$how" = fresh ]; then
-      log "budget: $name (pane $pane, ${ctx} tokens) will resume FRESH from its handover -- $SCHEDULES/$BUDGET_FRESH_FILE ($prio, wave)"
+      log "budget: $name (pane $pane, ${ctx} tokens) will resume FRESH from its handover -- $SCHEDULES/$BUDGET_FRESH_FILE ($prio, wave)${BUDGET_FRESH_RC:+; its remote control is on, so the entry says rc: on}"
     elif [ "$kind" = wound ]; then
       log "resumed ${sid:0:8} in $name (pane $pane): wound down hard for the budget window that reset at $(date -d "@$key" '+%H:%M' 2>/dev/null || printf '%s' "$key"), idle since, handover still open -- in a wave ($prio)"
     else
@@ -2218,7 +2218,15 @@ budget_resume_wave() {
 # row stay the lane's. The launcher closes the old window once the fresh one
 # is up (`replaces:`); its transcript stays on disk, and the log names the
 # session for `claude --resume`.
+#
+# REMOTE CONTROL GOES WITH IT. Closing the old window ends its /rc, and an
+# /rc the owner turned on BY HAND is in no entry: the fresh window came up
+# without it (DASHBOARD_NEW_RC=off), and the owner had to log in to the
+# machine to start it again (theprototype-41, 2026-10-23 01:49). So when the
+# old session has remote control on, the entry says `rc: on` -- unless the
+# original entry says `rc:` itself, which wins either way.
 BUDGET_FRESH_FILE=""
+BUDGET_FRESH_RC=""
 budget_fresh_resume() {
   local sid="$1" pane="$2" name="$3" ctx="$4" cwd="$5" prio="$6"
   local lane src f="" out model="" effort="" pmode="" pid k v body
@@ -2236,6 +2244,10 @@ budget_fresh_resume() {
   if [ -z "$f" ]; then
     pid="$(awk -F'\t' -v p="$pane" '$5 == p {print $12; exit}' "$SNAPSHOT" 2>/dev/null)"
     [ -n "$pid" ] && IFS=$'\t' read -r model effort pmode < <(snap_flags_of_pid "$pid"; printf '\n')
+  fi
+  BUDGET_FRESH_RC=""
+  if { [ -z "$f" ] || [ -z "$(sched_field "$f" rc)" ]; } && pane_rc_on "$sid" "$pane"; then
+    BUDGET_FRESH_RC=on
   fi
   {
     printf 'type: work\n'
@@ -2255,6 +2267,7 @@ budget_fresh_resume() {
       [ -n "$pmode" ] && printf 'permission-mode: %s\n' "$pmode"
       [ "$prio" != p1 ] && printf 'priority: %s\n' "$prio"
     fi
+    [ "$BUDGET_FRESH_RC" = on ] && printf 'rc: on\n'
     printf 'resume: fresh\n'
     printf 'replaces: %s %s\n' "$pane" "$sid"
     printf 'status: pending\n'
@@ -2269,6 +2282,24 @@ budget_fresh_resume() {
   } > "$out.tmp" && mv "$out.tmp" "$out" || return 1
   BUDGET_FRESH_FILE="$(basename "$out")"
   return 0
+}
+
+# IS REMOTE CONTROL ON IN THIS SESSION? Claude Code keeps one file per
+# running claude, <config>/sessions/<pid>.json, and writes `bridgeSessionId`
+# into it when /rc connects and null when it disconnects (MEASURED on 2.1.309,
+# 2026-10-23: the one window with /rc on had a session_... id there, the 14
+# without it null). Nothing on screen says it reliably -- the footer of a
+# working window does not. The pid is the pane's claude from status.tsv, and
+# the file must name the same session, so a reused pid or a stale file from a
+# dead claude never answers for this one.
+pane_rc_on() {   # pane_rc_on SID PANE
+  local sid="$1" pane="$2" pid j
+  [ -n "$sid" ] && [ -n "$pane" ] || return 1
+  pid="$(awk -F'\t' -v p="$pane" -v s="$sid" '$3 == p && $1 == s {print $19; exit}' "$STATUS" 2>/dev/null)"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  j="$MUX_CONFIG_DIR/sessions/$pid.json"
+  [ -f "$j" ] || return 1
+  grep -qE "\"sessionId\": *\"$sid\"" "$j" && grep -qE '"bridgeSessionId": *"[^"]' "$j"
 }
 
 # THE OLD WINDOW OF A FRESH RESUME, closed once the new one is up. Only if
@@ -4923,7 +4954,7 @@ report_add() {
 # lock and exited, so it names nobody (checked on this box, 2026-10-22).
 # Prints: pid <TAB> held-seconds <TAB> owning-pane-or-empty <TAB> command
 report_e2e_holders() {
-  local d pid kid kc age best up hops owner
+  local d pid kid kc age best up hops owner c
   local -a a k
   for d in /proc/[0-9]*; do
     pid="${d#/proc/}"
@@ -4951,7 +4982,14 @@ report_e2e_holders() {
       [ -n "${RP_PIDPANE[$up]-}" ] && { owner="${RP_PIDPANE[$up]}"; break; }
       up="${PROC_PPID[$up]-}"; hops=$(( hops + 1 ))
     done
-    printf '%s\t%s\t%s\t%s\n' "$pid" "$best" "$owner" "${a[*]:0:12}"
+    # ONE ROW PER HOLDER. An argv can carry newlines -- `e2e-slot -- bash -c
+    # '<a multi-line script>'`, MEASURED 2026-10-23 on a 50-int run -- and each
+    # would have started a row of its own with no held time ("integer
+    # expected" from --health). An empty owner is written `-`: tab is IFS
+    # whitespace, so an empty field between two tabs would vanish on the read
+    # and shift the command into the owner's place.
+    c="${a[*]:0:12}"; c="${c//[$'\n\t\r']/ }"
+    printf '%s\t%s\t%s\t%s\n' "$pid" "$best" "${owner:--}" "$c"
   done
 }
 
@@ -5006,6 +5044,8 @@ report_collect() {
   # The slots. PROC_* is this pass's process walk (proc_scan).
   if [ "${REPORT_E2E_MIN:-0}" -gt 0 ] 2>/dev/null; then
     while IFS=$'\t' read -r pid held owner cmd; do
+      case "$held" in ''|*[!0-9]*) continue ;; esac
+      [ "$owner" = - ] && owner=""
       [ -n "$pid" ] && [ "$held" -ge $(( REPORT_E2E_MIN * 60 )) ] || continue
       name="-"; p=""
       if [ -n "$owner" ]; then name="${RP_NAME[$owner]:--}"; p="$(report_parent_of "$name")"; fi
@@ -5915,6 +5955,33 @@ if [ "$MODE" = daemon ]; then
     exec "$SELF" "${_ARGV[@]}"
   }
   trap 'reload SIGHUP' HUP
+  # A NEW RELEASE INSTALLED UNDER IT is reloaded onto, however it got there:
+  # `muxtopus update --apply` (which also sends SIGHUP, so this finds nothing
+  # left to do), get.sh, install.sh, or a `git pull` in a checkout. Before
+  # this, a release installed by hand ran beside a daemon still executing the
+  # old one until somebody remembered --reload. The check is VERSION beside
+  # this script, read once per pass by a builtin. A change is acted on at the
+  # end of the NEXT pass, not this one: an install is many files written one
+  # after another, and a pass's worth of quiet is what says it has finished.
+  # And only onto a script that parses -- a half-written one is waited out,
+  # never exec'd into a dead daemon.
+  RUN_VERSION=""; read -r RUN_VERSION < "$WD_SRC/VERSION" 2>/dev/null || true
+  _VSEEN=""; _VBAD=""
+  version_point() {
+    local v=""
+    read -r v < "$WD_SRC/VERSION" 2>/dev/null || return 0
+    [ -n "$v" ] && [ -n "$RUN_VERSION" ] && [ "$v" != "$RUN_VERSION" ] || return 0
+    if [ "$v" != "$_VSEEN" ]; then
+      _VSEEN="$v"; _VBAD=""
+      log "muxtopus $v is installed (this daemon runs $RUN_VERSION): reloading onto it after the next pass"
+      return 0
+    fi
+    if ! bash -n "$SELF" 2>/dev/null; then
+      [ -n "$_VBAD" ] || log "muxtopus $v is installed, but $SELF does not parse yet -- staying on $RUN_VERSION until it does"
+      _VBAD=1; return 0
+    fi
+    reload "muxtopus $RUN_VERSION -> $v installed"
+  }
   # GO NOW (--nudge). The dashboard signals the moment it writes a schedule
   # entry, so `c` opens a window in about a second instead of waiting out the
   # poll. The trap only records it and cuts a sleep short; what ANSWERS it is
@@ -5945,6 +6012,7 @@ if [ "$MODE" = daemon ]; then
        { [ -n "${MUX_PROFILE_CONF:-}" ] && [ "$MUX_PROFILE_CONF" -nt "$CONF_SEEN" ]; }; then
       reload "config changed"
     fi
+    version_point
     # A nudge that landed after the pass's last nudge_point -- during its own
     # check_schedules, the notifications or the hourly usage probe. Answered
     # here, and the sleep still follows: the pass itself has just run.

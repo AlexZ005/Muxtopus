@@ -18,7 +18,7 @@ claude-watchdog.sh --tree              # the window tree it keeps
 claude-watchdog.sh --health            # what is wrong with the lanes, once; exit 1 if anything
 claude-watchdog.sh --profile work ...  # any account
 claude-watchdog.sh --on | --off        # arm / disarm (or `w` on the dashboard)
-claude-watchdog.sh --reload            # re-read the config now
+claude-watchdog.sh --reload            # re-read the config now (a newly installed release needs no reload: updates.md)
 ```
 
 It is a `systemd --user` unit where systemd exists (`claude-watchdog.service`, `claude-watchdog-work.service`), otherwise a plain background process. That process's pid file is `muxtopus-wd.pid` in `$XDG_RUNTIME_DIR` when that directory is yours, and in a private `/tmp/muxtopus-<uid>/` otherwise, which is what `su user` needs, since it keeps root's runtime dir. With lingering on it starts at boot; see [After a reboot](install.md#after-a-reboot).
