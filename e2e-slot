@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # e2e-slot -- run an e2e command in one of N machine-wide Playwright slots.
 #
-#   e2e-slot [--exclusive] [--wait SECS] [--dev <dir> <port>] -- <command...>
+#   e2e-slot [--exclusive] [--local] [--wait SECS] [--dev <dir> <port>] -- <command...>
 #
 # HOW MANY: MUXTOPUS_E2E_SLOTS (default 2; Settings ▸ Budget ▸ on the
 # dashboard, or the config file), and E2E_SLOTS in the environment beats it
@@ -15,6 +15,26 @@
 # where a third Playwright run pushed it into swap); a bigger machine can take
 # more, and a lane budget that allows twelve lanes queues most of them here.
 #
+# REMOTE SLOTS. MUXTOPUS_E2E_REMOTE ("host:port,host:port", E2E_REMOTE for
+# one run) adds one slot per entry, named after the local ones (D, E, ... with
+# three local slots), whose BROWSER runs on that host. The test, its node and
+# the dev server stay here; lib/pw-remote-shim.cjs (put in NODE_OPTIONS with
+# PW_REMOTE_WS) turns the test's chromium.launch() into a connect to the
+# Playwright server there (lib/pw-remote-server.cjs), so no test changes. The
+# same host:port twice is two slots on one server. Why: on the Deck the
+# browsers are what fill RAM -- 19 of 29 GB and 11 of 15 GB swap with three
+# local slots on the day this was added -- so the slots could not grow here.
+#
+# A remote slot is handed out only after its host answers (GET /json within
+# a few seconds); a host that does not -- the PC asleep -- is skipped for a
+# minute and the run takes a local slot as before. MUXTOPUS_E2E_PREFER
+# (remote, the default, or local) says which kind a run tries first when both
+# are free: remote saves the Deck's RAM. --local never takes a remote slot,
+# for a caller that must not leave the machine; --exclusive implies it, and
+# still holds the remote slots too, so a timing run has the Deck to itself
+# (a remote run's node and dev server are still here). The command sees
+# E2E_SLOT_REMOTE=host:port on a remote slot, empty otherwise.
+#
 # --dev <dir> <port> starts that folder's dev server with `lane-dev` once the
 # slot is held, runs the command, and stops the server afterwards -- unless it
 # was already running before, in which case it is left as it was (its own idle
@@ -25,10 +45,11 @@
 # its .b). It was written for one project's lanes, and those lanes and their
 # scripts already name these paths.
 set -uo pipefail
-EXCL=0; WAIT=5400; DEV_DIR=""; DEV_PORT=""
+EXCL=0; LOCAL=0; WAIT=5400; DEV_DIR=""; DEV_PORT=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --exclusive) EXCL=1; shift ;;
+    --exclusive) EXCL=1; LOCAL=1; shift ;;
+    --local) LOCAL=1; shift ;;
     --wait) WAIT="$2"; shift 2 ;;
     --dev) [ $# -ge 3 ] || { echo "e2e-slot: --dev takes <dir> <port>" >&2; exit 2; }
            DEV_DIR="$2"; DEV_PORT="$3"; shift 3 ;;
@@ -36,17 +57,38 @@ while [ $# -gt 0 ]; do
     *) break ;;
   esac
 done
-[ $# -gt 0 ] || { echo "usage: e2e-slot [--exclusive] [--wait S] [--dev DIR PORT] -- cmd" >&2; exit 2; }
-# The configured count, through profile.sh like every other knob -- read
-# only when the environment does not say, and a broken or missing profile.sh
-# is the old two, never an error.
-N="${E2E_SLOTS:-}"
-if [ -z "$N" ]; then
-  # shellcheck disable=SC1091
-  N="$( . "$(dirname "$(readlink -f "$0")")/profile.sh" >/dev/null 2>&1; printf '%s' "${MUXTOPUS_E2E_SLOTS:-}" )"
-fi
+[ $# -gt 0 ] || { echo "usage: e2e-slot [--exclusive] [--local] [--wait S] [--dev DIR PORT] -- cmd" >&2; exit 2; }
+HERE="$(dirname "$(readlink -f "$0")")"
+# The configured knobs, through profile.sh like every other knob, in one
+# subshell -- read only when the environment does not say, and a broken or
+# missing profile.sh is the old two local slots, never an error.
+# shellcheck disable=SC1091
+{ IFS= read -r CFG_SLOTS; IFS= read -r CFG_REMOTE; IFS= read -r CFG_PREFER; } < <(
+  . "$HERE/profile.sh" >/dev/null 2>&1
+  printf '%s\n%s\n%s\n' "${MUXTOPUS_E2E_SLOTS:-}" "${MUXTOPUS_E2E_REMOTE:-}" "${MUXTOPUS_E2E_PREFER:-}" )
+N="${E2E_SLOTS:-$CFG_SLOTS}"
 case "$N" in ''|*[!0-9]*|0) N=2 ;; esac
 [ "$N" -gt 26 ] && N=26
+# Remote entries: host:port, comma- or space-separated; "-" or empty is none.
+# E2E_REMOTE="" in the environment turns them off for one run.
+REMOTES=()
+if [ "${E2E_REMOTE+set}" = set ]; then RSPEC="$E2E_REMOTE"; else RSPEC="$CFG_REMOTE"; fi
+[ "$RSPEC" = - ] && RSPEC=""
+for r in ${RSPEC//,/ }; do
+  case "$r" in
+    *:*[!0-9]*|*:) echo "e2e-slot: ignoring remote slot '$r' (want host:port)" >&2 ;;
+    ?*:[0-9]*) REMOTES+=("$r") ;;
+    *) echo "e2e-slot: ignoring remote slot '$r' (want host:port)" >&2 ;;
+  esac
+done
+[ $((N + ${#REMOTES[@]})) -gt 26 ] && REMOTES=("${REMOTES[@]:0:$((26 - N))}")
+R=${#REMOTES[@]}
+PREFER="${E2E_PREFER:-$CFG_PREFER}"
+[ "$PREFER" = local ] || PREFER=remote
+SHIM="$HERE/lib/pw-remote-shim.cjs"
+if [ "$R" -gt 0 ] && [ ! -f "$SHIM" ]; then
+  echo "e2e-slot: $SHIM is missing; remote slots are off" >&2; R=0; REMOTES=()
+fi
 A="${E2E_SLOT_LOCK:-/tmp/tp-e2e.lock}"
 # Slot i's name and lock: A is the bare path, the rest a suffix -- which is
 # what the two-slot version called slot B (.b), so both versions on one
@@ -54,10 +96,15 @@ A="${E2E_SLOT_LOCK:-/tmp/tp-e2e.lock}"
 LETTERS=ABCDEFGHIJKLMNOPQRSTUVWXYZ
 slot_name() { printf '%s' "${LETTERS:$1:1}"; }
 slot_lock() { if [ "$1" = 0 ]; then printf '%s' "$A"; else printf '%s.%s' "$A" "$(slot_name "$1" | tr A-Z a-z)"; fi; }
+# A remote slot's lock is named by its place in the remote list, not by its
+# letter: the letters follow the local count, which E2E_SLOTS changes for one
+# run, and a remote run must never share a lock with a local slot.
+remote_lock() { printf '%s.remote%s' "$A" "$(( $1 + 1 ))"; }
 for (( i = 0; i < N; i++ )); do touch "$(slot_lock "$i")"; done
+for (( j = 0; j < R; j++ )); do touch "$(remote_lock "$j")"; done
 # lane-dev from beside this script first (a checkout, or the ~/.local/bin link
 # into one), then PATH.
-LANE_DEV="$(dirname "$(readlink -f "$0")")/lane-dev"
+LANE_DEV="$HERE/lane-dev"
 [ -x "$LANE_DEV" ] || LANE_DEV="$(command -v lane-dev 2>/dev/null)"
 
 # lane-dev with every slot's lock descriptor closed (LOCK_FDS): a lane-dev,
@@ -65,6 +112,40 @@ LANE_DEV="$(dirname "$(readlink -f "$0")")/lane-dev"
 LOCK_FDS=()
 lane_dev() {
   ( for v in "${LOCK_FDS[@]}"; do eval "exec $v>&-"; done; exec "$LANE_DEV" "$@" )
+}
+
+# IS THE REMOTE HOST UP: an HTTP GET of /json answered 200 within 3 s
+# (pw-remote-server.cjs and a plain `playwright run-server` both do). Bash's
+# /dev/tcp, so neither curl nor python is needed. Asked twice before it
+# counts as down: over the Deck's WiFi one probe in a few dozen took past the
+# timeout (measured: a whole run went local on one miss while the PC answered
+# every other probe in 60-230 ms). A host that failed both is not asked again
+# for a minute -- a sleeping PC costs the full timeout on every 5-second pass
+# otherwise -- and that is said once, so a run that went local says why.
+declare -A DOWN_UNTIL=()
+probe() {
+  # shellcheck disable=SC2016  # $0/$1 are the inner bash's, on purpose
+  timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1" || exit 1
+       printf "GET /json HTTP/1.0\r\nHost: %s\r\n\r\n" "$0" >&3; head -c 12 <&3' "$1" "$2" 2>/dev/null \
+    | grep -q '^HTTP/1\.[01] 200'
+}
+remote_ok() {
+  local hp="$1" host="${1%:*}" port="${1##*:}"
+  [ "${DOWN_UNTIL[$hp]:-0}" -gt "$SECONDS" ] && return 1
+  probe "$host" "$port" || probe "$host" "$port" && return 0
+  [ -n "${DOWN_UNTIL[$hp]:-}" ] || echo "e2e-slot: remote slot $hp does not answer; skipping it (asked again every minute)" >&2
+  DOWN_UNTIL[$hp]=$((SECONDS + 60))
+  return 1
+}
+
+# The command's environment on a remote slot: the shim in NODE_OPTIONS (kept
+# beside whatever the caller had there) and the server to connect to. Only the
+# command gets it -- lane-dev's server is started from `run` without it.
+remote_env() {
+  local hp="$1"
+  export E2E_SLOT_REMOTE="$hp" PW_REMOTE_WS="ws://$hp/"
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require \"$SHIM\""
+  echo "e2e-slot: slot $E2E_SLOT is remote: the browser runs on $hp" >&2
 }
 
 # The command, with the dev server around it when --dev asked for one. The
@@ -83,7 +164,8 @@ run() {
       trap 'lane_dev stop "$DEV_PORT" >&2; exit 130' INT TERM HUP
     fi
   fi
-  "$@"; rc=$?
+  if [ -n "${E2E_SLOT_REMOTE:-}" ]; then ( remote_env "$E2E_SLOT_REMOTE"; exec "$@" ); rc=$?
+  else E2E_SLOT_REMOTE="" "$@"; rc=$?; fi
   if [ "$started" = 1 ]; then
     lane_dev stop "$DEV_PORT" >&2
     trap - INT TERM HUP
@@ -100,14 +182,33 @@ if [ $EXCL = 1 ]; then
     exec {fd}>"$(slot_lock "$i")"; flock -w "$WAIT" "$fd" || exit 75
     LOCK_FDS+=("$fd"); names+="$(slot_name "$i")"
   done
-  E2E_SLOT="$names" run "$@"; exit $?
+  for (( j = 0; j < R; j++ )); do
+    exec {fd}>"$(remote_lock "$j")"; flock -w "$WAIT" "$fd" || exit 75
+    LOCK_FDS+=("$fd"); names+="$(slot_name $((N + j)))"
+  done
+  E2E_SLOT="$names" E2E_SLOT_REMOTE="" run "$@"; exit $?
+fi
+# The order a pass tries the slots in: "L<i>" local, "R<j>" remote.
+ORDER=()
+for (( i = 0; i < N; i++ )); do ORDER+=("L$i"); done
+if [ "$LOCAL" = 0 ]; then
+  for (( j = R - 1; j >= 0; j-- )); do
+    if [ "$PREFER" = remote ]; then ORDER=("R$j" "${ORDER[@]}"); else ORDER+=("R$(( R - 1 - j ))"); fi
+  done
 fi
 end=$((SECONDS+WAIT))
 while [ $SECONDS -lt $end ]; do
-  for (( i = 0; i < N; i++ )); do
-    exec {fd}>"$(slot_lock "$i")"
-    if flock -n "$fd"; then
-      LOCK_FDS=("$fd"); E2E_SLOT="$(slot_name "$i")" run "$@"; rc=$?; exec {fd}>&-; exit $rc
+  for s in "${ORDER[@]}"; do
+    k="${s#?}"
+    case "$s" in
+      L*) lock="$(slot_lock "$k")"; name="$(slot_name "$k")"; hp="" ;;
+      R*) lock="$(remote_lock "$k")"; name="$(slot_name $((N + k)))"; hp="${REMOTES[$k]}" ;;
+    esac
+    exec {fd}>"$lock"
+    # The lock first, then the health check: checking first would let two
+    # waiters both see the host up and race for one slot, and is no cheaper.
+    if flock -n "$fd" && { [ -z "$hp" ] || remote_ok "$hp"; }; then
+      LOCK_FDS=("$fd"); E2E_SLOT="$name" E2E_SLOT_REMOTE="$hp" run "$@"; rc=$?; exec {fd}>&-; exit $rc
     fi
     exec {fd}>&-
   done

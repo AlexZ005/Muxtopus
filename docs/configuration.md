@@ -57,6 +57,8 @@ The same keys mean the same thing in all of them; the per-account files only nar
 | `WATCHDOG_BUDGET_FRESH_CTX` | `250000` | a stopped window with more context than this and an open handover restarts fresh from it |
 | `WATCHDOG_BUDGET_PROBE_MIN` | `15` | minutes between `/usage` readings while anything works |
 | `MUXTOPUS_E2E_SLOTS` | `2` | how many `e2e-slot` runs the machine takes at once (`E2E_SLOTS` in the environment beats it for one run). Shared by every account |
+| `MUXTOPUS_E2E_REMOTE` | unset | [remote e2e slots](remote-e2e.md): `host:port,...`, one slot per entry, whose browser runs on that host; skipped while the host does not answer (`E2E_REMOTE` beats it for one run). Shared by every account |
+| `MUXTOPUS_E2E_PREFER` | `remote` | which kind of free slot a run takes first: `remote` (saves this machine's memory) or `local`. `--local` and `--exclusive` never take a remote one |
 | `WATCHDOG_RESTORE` | `ask` | what `muxtopus` does with a [frozen window snapshot](restore.md) when there is no session: `ask` offers it at a terminal; `auto` restores without asking, and the watchdog relaunches `muxtopus -d` the moment the server disappears; `off` never offers (`muxtopus --restore` still works) |
 | `WATCHDOG_RESTORE_MAX_AGE` | `24` | hours; a frozen snapshot older than this is not offered at start (`--restore` takes it regardless) |
 | `MUXTOPUS_TMUX_SOCKET` | `default` | the tmux server every muxtopus command talks to: a name (`tmux -L`) or an absolute path (`tmux -S`), passed explicitly on every call so a command run inside a pane never follows that pane's `$TMUX` elsewhere. `default` is the socket a bare `tmux` uses outside tmux |

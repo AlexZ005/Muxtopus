@@ -86,8 +86,12 @@ KEYS = {
     "WATCHDOG_BUDGET_WAVE_MIN": "10",
     "WATCHDOG_BUDGET_FRESH_CTX": "250000",
     "WATCHDOG_BUDGET_PROBE_MIN": "15",
-    # How many e2e runs the machine takes at once (e2e-slot).
+    # How many e2e runs the machine takes at once (e2e-slot), the remote
+    # slots whose browser runs on another machine (host:port,...), and which
+    # kind a run tries first.
     "MUXTOPUS_E2E_SLOTS": "2",
+    "MUXTOPUS_E2E_REMOTE": None,
+    "MUXTOPUS_E2E_PREFER": "remote",
     "CLAUDE_USAGE_MAX_AGE": "20",
     "CLAUDE_USAGE_MODEL": None,
     "CLAUDE_CONTEXT_WINDOW": "1000000",

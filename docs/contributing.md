@@ -30,6 +30,7 @@ tests/                  what CI runs, and the sandbox that runs locally
 seeds/                  options.md and prices.md, copied once by install.sh
 docs/                   this manual, and the design plans beside it
 changes/                one changelog fragment per lane
+lib/                    files another program loads: the remote e2e slot's shim and server
 ```
 
 A dashboard screen is one new file under `dashboard/views/`, discovered rather than listed; the protocol, the registries and the key routing are on [A dashboard view is one new file](dashboard-views.md).
@@ -68,7 +69,8 @@ bash tests/test_notify_*.sh           # the notify half, against a fake Telegram
 | the budget guard: the plan presets and knobs, the cap, the session line by priority class, the estimate, blind, the checkpoint, the week's pace with manual resets, priority order, waves, off, the class-shifted wind-down | `tests/test_budget.sh` | no — local |
 | after a limit: weekly / model / "said so" stops, resumes in waves in priority order, a big context resumed fresh from its handover (and the old window closed), in place without one, `--dry-run` | `tests/test_budget_resume.sh` | no — local |
 | `b` and Settings ▸ Budget ▸: the summary, blind and stale, the windows table by class, the knobs' refusals, the footer note | `tests/test_budget_view.py` | yes |
-| `e2e-slot`'s slot count: the default two, `MUXTOPUS_E2E_SLOTS`, `E2E_SLOTS`, `--exclusive` holds every slot | `tests/test_e2e_slots.sh` | no — local |
+| `e2e-slot`'s slot count: the default two, `MUXTOPUS_E2E_SLOTS`, `E2E_SLOTS`, `--exclusive` holds every slot; remote slots: the health check, a dead host skipped, `MUXTOPUS_E2E_PREFER`, `--local`, the shim in `NODE_OPTIONS` | `tests/test_e2e_slots.sh` | no — local |
+| the remote browser: the shim's connect (args kept, local paths dropped, `exposeNetwork`, local fallback, persistent contexts local) and `pw-remote-server.cjs` (a backend per version, stripped options, refused switches) | `tests/test_pw_remote.sh` | no — local |
 | one state, any number of tags: background (test, ci, sleep, job), e2e / e2e-wait, handed off, stalled, orchestrating, done (and out of the budget cap), error, paused, `serve:<port>` by folder, never stranded while a job runs, the tag alert | `tests/test_window_states.sh` | no — local |
 | `stalled` and the reports to the parent: one line per parent, deduped and repeated, the phone when no parent can hear (gone, disarmed, notify-only), `--health`, `--dry-run`, the nudge (once per episode, never an asking lane), closing a finished window under the closure rule, an e2e hold, a memory hold, a limit that did not resume | `tests/test_stall_reports.sh` | no — local |
 | Settings ▸ Reports ▸: the knobs' refusals, their defaults said, the two that are off reading off | `tests/test_reports_menu.py` | yes |
