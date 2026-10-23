@@ -2178,7 +2178,7 @@ budget_resume_wave() {
     fi
     fired+="$sid"$'\t'"$how"$'\n'
     if [ "$how" = fresh ]; then
-      log "budget: $name (pane $pane, ${ctx} tokens) will resume FRESH from its handover -- $SCHEDULES/$BUDGET_FRESH_FILE ($prio, wave)"
+      log "budget: $name (pane $pane, ${ctx} tokens) will resume FRESH from its handover -- $SCHEDULES/$BUDGET_FRESH_FILE ($prio, wave)${BUDGET_FRESH_RC:+; its remote control is on, so the entry says rc: on}"
     elif [ "$kind" = wound ]; then
       log "resumed ${sid:0:8} in $name (pane $pane): wound down hard for the budget window that reset at $(date -d "@$key" '+%H:%M' 2>/dev/null || printf '%s' "$key"), idle since, handover still open -- in a wave ($prio)"
     else
@@ -2218,7 +2218,15 @@ budget_resume_wave() {
 # row stay the lane's. The launcher closes the old window once the fresh one
 # is up (`replaces:`); its transcript stays on disk, and the log names the
 # session for `claude --resume`.
+#
+# REMOTE CONTROL GOES WITH IT. Closing the old window ends its /rc, and an
+# /rc the owner turned on BY HAND is in no entry: the fresh window came up
+# without it (DASHBOARD_NEW_RC=off), and the owner had to log in to the
+# machine to start it again (theprototype-41, 2026-10-23 01:49). So when the
+# old session has remote control on, the entry says `rc: on` -- unless the
+# original entry says `rc:` itself, which wins either way.
 BUDGET_FRESH_FILE=""
+BUDGET_FRESH_RC=""
 budget_fresh_resume() {
   local sid="$1" pane="$2" name="$3" ctx="$4" cwd="$5" prio="$6"
   local lane src f="" out model="" effort="" pmode="" pid k v body
@@ -2236,6 +2244,10 @@ budget_fresh_resume() {
   if [ -z "$f" ]; then
     pid="$(awk -F'\t' -v p="$pane" '$5 == p {print $12; exit}' "$SNAPSHOT" 2>/dev/null)"
     [ -n "$pid" ] && IFS=$'\t' read -r model effort pmode < <(snap_flags_of_pid "$pid"; printf '\n')
+  fi
+  BUDGET_FRESH_RC=""
+  if { [ -z "$f" ] || [ -z "$(sched_field "$f" rc)" ]; } && pane_rc_on "$sid" "$pane"; then
+    BUDGET_FRESH_RC=on
   fi
   {
     printf 'type: work\n'
@@ -2255,6 +2267,7 @@ budget_fresh_resume() {
       [ -n "$pmode" ] && printf 'permission-mode: %s\n' "$pmode"
       [ "$prio" != p1 ] && printf 'priority: %s\n' "$prio"
     fi
+    [ "$BUDGET_FRESH_RC" = on ] && printf 'rc: on\n'
     printf 'resume: fresh\n'
     printf 'replaces: %s %s\n' "$pane" "$sid"
     printf 'status: pending\n'
@@ -2269,6 +2282,24 @@ budget_fresh_resume() {
   } > "$out.tmp" && mv "$out.tmp" "$out" || return 1
   BUDGET_FRESH_FILE="$(basename "$out")"
   return 0
+}
+
+# IS REMOTE CONTROL ON IN THIS SESSION? Claude Code keeps one file per
+# running claude, <config>/sessions/<pid>.json, and writes `bridgeSessionId`
+# into it when /rc connects and null when it disconnects (MEASURED on 2.1.309,
+# 2026-10-23: the one window with /rc on had a session_... id there, the 14
+# without it null). Nothing on screen says it reliably -- the footer of a
+# working window does not. The pid is the pane's claude from status.tsv, and
+# the file must name the same session, so a reused pid or a stale file from a
+# dead claude never answers for this one.
+pane_rc_on() {   # pane_rc_on SID PANE
+  local sid="$1" pane="$2" pid j
+  [ -n "$sid" ] && [ -n "$pane" ] || return 1
+  pid="$(awk -F'\t' -v p="$pane" -v s="$sid" '$3 == p && $1 == s {print $19; exit}' "$STATUS" 2>/dev/null)"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  j="$MUX_CONFIG_DIR/sessions/$pid.json"
+  [ -f "$j" ] || return 1
+  grep -qE "\"sessionId\": *\"$sid\"" "$j" && grep -qE '"bridgeSessionId": *"[^"]' "$j"
 }
 
 # THE OLD WINDOW OF A FRESH RESUME, closed once the new one is up. Only if

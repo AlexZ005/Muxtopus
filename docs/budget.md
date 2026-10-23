@@ -87,7 +87,7 @@ Whatever does not fit stays due and is asked again next pass. Nothing is dropped
 
 A stopped window can be **restarted from its handover** instead of resumed. That happens when its context is over `WATCHDOG_BUDGET_FRESH_CTX` tokens (250 000) and it has an open handover. The guard writes `<slug>-resume.md`:
 
-- **the header:** the original entry's header (cwd, model, effort, permission mode, template, window, parent, priority), with `at:` set to now, `resume: fresh`, and `replaces: <pane> <session>`;
+- **the header:** the original entry's header (cwd, model, effort, permission mode, template, window, parent, priority), with `at:` set to now, `resume: fresh`, and `replaces: <pane> <session>`. When the old session has **remote control** on — `/rc` typed by hand, which no entry records — the header also says `rc: on`, so the new window gets `/rc` before the old one is closed with its remote control. An `rc:` in the original entry wins, `off` included. The watchdog reads this from Claude Code's `sessions/<pid>.json`, which carries a `bridgeSessionId` while `/rc` is connected;
 - **the body:** "You are lane X, resuming in a FRESH session … read your handover first", then the original brief.
 
 The entry is launched in the same pass. A window opened by hand has no entry, so its model, effort and mode come from its own command line.

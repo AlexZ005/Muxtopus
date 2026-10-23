@@ -152,6 +152,49 @@ check "the old session is in the prompted ledger (never typed into later)" grep 
 check "--check sees the resume entry as launched" grep -q "status is 'launched'" <<<"$("$W" --check big-resume 2>/dev/null)"
 clear_all
 
+# fresh_rc NAME BRIDGE [RC]: a big lane at a limit with an open handover,
+# remote control on (BRIDGE=on: a bridgeSessionId in its sessions/<pid>.json,
+# as Claude Code writes when /rc connects) or off (null), and its entry saying
+# `rc: RC` when RC is given. One pass later its fresh resume entry is written.
+fresh_rc() {
+  entry "$1"
+  [ -n "${3:-}" ] && sed -i "s/^status: pending$/rc: $3\nstatus: pending/" "$SC/$1.md"
+  pass; pass
+  transcript "$1" 300000 "working on it" 30
+  printf '# STATUS %s\nnext: phase 3\n' "$1" > "$HO/STATUS-$1.md"
+  local sid j; sid="$(sid_of "$1")"
+  j="$(grep -l "\"sessionId\":\"$sid\"" "$HOME/.claude/sessions"/*.json | head -1)"
+  if [ "$2" = on ]; then
+    sed -i 's/}$/,"bridgeSessionId":"session_01FAKEBRIDGE"}/' "$j"
+  else
+    sed -i 's/}$/,"bridgeSessionId":null}/' "$j"
+  fi
+  screen "You've hit your session limit · resets $AGO (Europe/Bucharest)\n❯ "
+  pass
+}
+
+echo "== remote control turned on by hand goes with a fresh resume"
+fresh_rc rcbig on
+R="$SC/rcbig-resume.md"
+check "the resume entry is written" [ -f "$R" ]
+check "..saying rc: on, though the original entry does not" bash -c "grep -q '^rc: on$' '$R' && ! grep -q '^rc:' '$SC/rcbig.md'"
+check "..and the log says why" grep -q 'rcbig .*resume FRESH.*its remote control is on, so the entry says rc: on' "$ST/log"
+check "/rc is sent to the new window" grep -q 'schedule rcbig-resume.md: sent /rc to' "$ST/log"
+clear_all
+
+echo "== no remote control: no rc line"
+fresh_rc norc off
+check "the resume entry is written" [ -f "$SC/norc-resume.md" ]
+check "..with no rc: line (the Settings default applies)" bash -c "! grep -q '^rc:' '$SC/norc-resume.md'"
+clear_all
+
+echo "== an explicit rc: off in the original entry still wins"
+fresh_rc rcoff on off
+check "the resume entry is written" [ -f "$SC/rcoff-resume.md" ]
+check "..saying rc: off, as the original does" bash -c "grep -q '^rc: off$' '$SC/rcoff-resume.md' && ! grep -q '^rc: on$' '$SC/rcoff-resume.md'"
+check "..and no /rc is sent" bash -c "! grep -q 'schedule rcoff-resume.md: sent /rc' '$ST/log'"
+clear_all
+
 echo "== a big context WITHOUT a handover is resumed in place"
 launch nohand
 transcript nohand 300000 "working on it" 30
