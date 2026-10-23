@@ -4,6 +4,19 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.9.0 — 2026-10-23
+
+A minor release: two new settings (`MUXTOPUS_E2E_REMOTE`, `MUXTOPUS_E2E_PREFER`), a new `e2e-slot` flag (`--local`) and three new files under `lib/` that another machine runs. Nothing a user's own files name is renamed or moved, and with `MUXTOPUS_E2E_REMOTE` unset `e2e-slot` behaves exactly as before.
+
+### e2e slots
+
+#### e2e-slot: remote slots, whose browser runs on another machine
+
+- `MUXTOPUS_E2E_REMOTE="host:port,..."` adds one e2e slot per entry (named after the local ones: D, E, …). The test, its node and its dev server stay on this machine; only Chromium runs on the other one, so a remote run costs this machine almost no memory. No test changes: e2e-slot puts a small shim in `NODE_OPTIONS` that turns Playwright's `chromium.launch()` into a connect, and tunnels the dev server's `localhost` (and every name `/etc/hosts` points at this machine) back here.
+- A remote slot is handed out only when its host answers; a sleeping or unplugged host is skipped and the run takes a local slot as before. If the host stops answering after that, the browser is launched here instead, with one line saying so.
+- `MUXTOPUS_E2E_PREFER` (`remote`, the default, or `local`) is which kind a run tries first. `--local` never leaves the machine; `--exclusive` implies it and holds the remote slots too.
+- The other machine runs `lib/pw-remote-server.cjs` (Node only): one port for every Playwright version the lanes use, each version's own `run-server` behind it. It refuses launch options that would run a program there. The port has no password, so firewall it to the test machine. The manual's *Remote e2e slots* page has the setup, and `lib/pw-remote-setup.ps1` does it on Windows: one folder, one firewall rule, one scheduled task, and `-Uninstall`.
+
 ## v5.8.2 — 2026-10-23
 
 A patch release of three fixes the theprototype orchestrator ran into overnight: a lane restarted fresh after a usage limit lost the remote control its owner had turned on by hand, a release installed under a running watchdog kept running the old code until someone reloaded it, and `--health` printed shell errors for an e2e run with a multi-line command. Nothing new to configure, nothing renamed.
