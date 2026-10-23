@@ -42,7 +42,15 @@ Nothing in the lane changes. On a remote slot, `e2e-slot` puts `lib/pw-remote-sh
 - **`download.path()` works.** On a connected browser it throws ("Path is not available when connecting remotely"). The shim saves the download locally with `saveAs()` and returns that path.
 - **Some launches stay local**, with one line on stderr: `launchPersistentContext` (a profile directory on this disk), `headless: false`, firefox and webkit.
 - **If the server stops answering** after the slot was handed out, the browser is launched here instead: `remote browser at … failed (…); launching here instead`. `PW_REMOTE_FALLBACK=fail` makes it an error.
-- **Platform-dependent code sees this machine.** `process.platform` in the test is `linux` even though the browser runs on Windows, so a helper that picks an ANGLE backend by platform picks Linux's (`vulkan`), and Windows runs it. The GPU behind WebGL is the remote machine's.
+- **Platform-dependent code sees this machine.** `process.platform` in the test is `linux` even though the browser runs on Windows, so a helper that picks an ANGLE backend by platform picks Linux's (`vulkan`), and Windows runs it. The GPU behind WebGL is the remote machine's. Measured on the first PC: without GPU flags both sides render on SwiftShader (the CPU), and with them the remote browser got `ANGLE (NVIDIA, Vulkan 1.4.351 (NVIDIA GeForce RTX 4090))` from the scheduled task's non-interactive session, against the Deck's `AMD Radeon 890M`. **Frame-rate and timing gates therefore belong on `--local` or `--exclusive`**, where the numbers mean this machine.
+
+## What it buys
+
+Measured 2026-10-23 on a Steam Deck (29 GB, WiFi) with three local slots busy, against a desktop PC (i9-13900K, RTX 4090, wired). Seven core suites, local slot and remote slot back to back, three repeats each, same snapshot and dev server:
+
+- **Memory.** A local run's test tree peaked at 1.4–2.9 GB on the Deck (node and Chromium). A remote run's peaked at 0.27–0.35 GB (node alone). Each busy remote slot is about 1–2.5 GB the Deck keeps.
+- **Speed.** The seven suites took 591 s remotely against 791 s locally (medians, 1.34×). The remote side wins where the browser does the work (render, layout, SwiftShader frames: 1.5–1.9×). It loses on chatty suites, whose many small `page.evaluate` and locator round trips each cross the network: lock-settings, with 359 checks, took 247 s against 210 s.
+- **Results.** Every remote run was green. On the loaded Deck, three suites failed locally on starvation (a 30 s click timeout, a velocity read as 0, a button that never became clickable) that were green on the same commit earlier in the day.
 
 ## Setting up the other machine
 
