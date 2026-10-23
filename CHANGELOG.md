@@ -4,6 +4,19 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.11.0 — 2026-10-23
+
+A minor release: a new schedule header (`host:`), a new setting (`MUXTOPUS_LANE_HOST`), a new `hosts.conf` key (`lanes`), a HOST column in `--status`, `--health` and the dashboard, and a new state file (`tokens-by-lane.jsonl`). Nothing a user's own files name is renamed or moved. Without `lanes =` in `hosts.conf`, every lane runs here exactly as before, and the new columns do not appear.
+
+### lanes on another host
+
+#### a second lane host: lanes on the pc host
+
+- **A schedule entry can run on another machine.** `host: pc` in its header, or `MUXTOPUS_LANE_HOST=pc` for every entry without one. `MUXTOPUS_LANE_HOST=pc:held` sends entries there only while this machine's memory guard holds launches. This watchdog stays the one scheduler: when the entry is due, it hands it to the pc host's watchdog, which opens the window there with the same templates, flags and footer. A host's `lanes = N` in `hosts.conf` caps how many run there. While the host does not answer, its entries wait and say why.
+- **The pc host's lanes are seen here.** The dashboard's claude table lists them with a HOST column, which appears only while there are any. `claude-watchdog.sh --status` lists them with a HOST column, and `--health` names each host and its lanes. Their stalls, prompts, limits and finished windows are reported to their parent wherever the parent runs, as `stalled 57-x (pc claude:4): …`.
+- **One handover folder on both machines.** It is synced every pass, and `handover.sh done` on either machine moves the file into `done/` on both. Nothing is deleted without a record of the last sync. Only this machine connects to the other one; the pc host holds no key to this machine.
+- **Token use by lane, for every host.** `~/.local/state/claude-watchdog/tokens-by-lane.jsonl` gets one line per day, host and lane, `{date, host, slug, roadmap, spent, cached}`. It is built from each machine's own deduplicated stats ledger and rewritten every five minutes.
+
 ## v5.10.0 — 2026-10-23
 
 A minor release: one new setting (`MUXTOPUS_E2E_PC`), a new local file (`~/.config/muxtopus/hosts.conf`, read only when a setting names a host), two new environment variables a caller may set (`E2E_PC_ENV`, `E2E_PC_INPUTS`) and new files under `lib/`. Nothing a user's own files name is renamed or moved, and with `MUXTOPUS_E2E_PC` unset `e2e-slot` behaves exactly as before. Two fixes ride along: a comment in `profile.sh`'s defaults no longer takes every script down, and a lane problem is no longer re-reported every few passes.
