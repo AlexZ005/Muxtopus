@@ -116,19 +116,24 @@ lane_dev() {
 
 # IS THE REMOTE HOST UP: an HTTP GET of /json answered 200 within 3 s
 # (pw-remote-server.cjs and a plain `playwright run-server` both do). Bash's
-# /dev/tcp, so neither curl nor python is needed. A host that failed is not
-# asked again for a minute -- a sleeping PC costs the full timeout on every
-# 5-second pass otherwise.
+# /dev/tcp, so neither curl nor python is needed. Asked twice before it
+# counts as down: over the Deck's WiFi one probe in a few dozen took past the
+# timeout (measured: a whole run went local on one miss while the PC answered
+# every other probe in 60-230 ms). A host that failed both is not asked again
+# for a minute -- a sleeping PC costs the full timeout on every 5-second pass
+# otherwise -- and that is said once, so a run that went local says why.
 declare -A DOWN_UNTIL=()
+probe() {
+  # shellcheck disable=SC2016  # $0/$1 are the inner bash's, on purpose
+  timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1" || exit 1
+       printf "GET /json HTTP/1.0\r\nHost: %s\r\n\r\n" "$0" >&3; head -c 12 <&3' "$1" "$2" 2>/dev/null \
+    | grep -q '^HTTP/1\.[01] 200'
+}
 remote_ok() {
   local hp="$1" host="${1%:*}" port="${1##*:}"
   [ "${DOWN_UNTIL[$hp]:-0}" -gt "$SECONDS" ] && return 1
-  # shellcheck disable=SC2016  # $0/$1 are the inner bash's, on purpose
-  if timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1" || exit 1
-       printf "GET /json HTTP/1.0\r\nHost: %s\r\n\r\n" "$0" >&3; head -c 12 <&3' "$host" "$port" 2>/dev/null \
-     | grep -q '^HTTP/1\.[01] 200'; then
-    return 0
-  fi
+  probe "$host" "$port" || probe "$host" "$port" && return 0
+  [ -n "${DOWN_UNTIL[$hp]:-}" ] || echo "e2e-slot: remote slot $hp does not answer; skipping it (asked again every minute)" >&2
   DOWN_UNTIL[$hp]=$((SECONDS + 60))
   return 1
 }

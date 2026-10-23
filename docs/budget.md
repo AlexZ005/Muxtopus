@@ -132,6 +132,7 @@ These do not change with the plan:
 | `WATCHDOG_BUDGET_PROBE_MIN` | `15` | minutes between usage readings while anything works |
 | `WATCHDOG_HARD_PCT` / `WATCHDOG_SOFT_PCT` | `85` / `65` | the wind-down lines (p1's; the class shift applies) |
 | `MUXTOPUS_E2E_SLOTS` | `2` | how many `e2e-slot` runs the machine takes at once; shared by every account |
+| `MUXTOPUS_E2E_REMOTE` | unset | [remote slots](remote-e2e.md) on top of those, `host:port,...`; their browsers do not count against this machine's memory |
 
 ### Where the numbers come from
 
