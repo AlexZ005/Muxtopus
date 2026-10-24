@@ -82,6 +82,7 @@ WATCHDOG_REPORT_E2E_MIN=300
 WATCHDOG_REPORT_MEM_MIN=30
 WATCHDOG_NUDGE_STALLED=off
 WATCHDOG_CLOSE_FINISHED=off
+WATCHDOG_DONE_NUDGE=5
 WATCHDOG_WOUND_RESUME=on
 WATCHDOG_MEM_GUARD=on
 WATCHDOG_MEM_MIN_GB=4
@@ -397,6 +398,9 @@ mux_key_help() {
                             echo "idle this long is closed -- unless a pending entry names it or opens"
                             echo "under it, or a child window of it is still open. claude --resume <id>"
                             echo "(in the log) brings one back." ;;
+    WATCHDOG_DONE_NUDGE)    echo "off, or minutes: a run wrapped in mux-done that ended this long ago, in a"
+                            echo "window idle since before it ended (its notification lost), is typed its"
+                            echo "summary line, once. Same gates as the stall nudge."  ;;
     WATCHDOG_WOUND_RESUME)  echo "on|off. A window wound down at the HARD band was told to stop, so it"
                             echo "never prints the limit banner the resume path watches for. With this"
                             echo "on, such a window is sent the continue message once its budget window"

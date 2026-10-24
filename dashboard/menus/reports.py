@@ -59,6 +59,10 @@ REPORT_KEYS: dict[str, dict] = {
         "label": "Close a finished window after (minutes)", "kind": "text",
         "check": _off_or_minutes, "default": "off",
         "hint": "handover in done/, nothing pending under it; off keeps it"},
+    "WATCHDOG_DONE_NUDGE": {
+        "label": "Re-nudge a finished run after (minutes)", "kind": "text",
+        "check": _off_or_minutes, "default": "5",
+        "hint": "a mux-done marker whose notification was lost; off never"},
 }
 
 
