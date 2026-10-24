@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# mux-send -- type one line into a Claude window, and make sure it was sent.
+#
+#   mux-send <target> <text...>     target: a tmux target (claude:12, %41, or a window name)
+#
+# Exit 0 when the line left the input box, 1 when it is still sitting there
+# after the retries (it is NOT cleared: a person can see it and press Enter),
+# 2 when there is no such pane.
+#
+# WHY A TOOL FOR THREE SEND-KEYS. Everybody who drives a lane by hand gets it
+# wrong once, and the failure is silent:
+#  - text and Enter in ONE send-keys leave the text unsent: Claude Code's paste
+#    detection swallows an Enter that arrives with the text (MEASURED
+#    2026-10-11, and again by every orchestrator since);
+#  - so the text goes LITERALLY (-l: nothing in it is read as a key name), then
+#    Enter as a call of its own a second later -- which is what the watchdog's
+#    own reports do;
+#  - and even then a busy terminal sometimes eats that Enter, so this LOOKS:
+#    the input box is the last line that starts with the prompt mark, and if
+#    it still begins with the text, Enter is pressed again (twice at most).
+# A newline in the text would submit half of it, so newlines become spaces.
+set -uo pipefail
+HERE="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=profile.sh
+. "$HERE/profile.sh"
+
+[ $# -ge 2 ] || { echo "usage: mux-send <target> <text...>" >&2; exit 2; }
+case "$1" in -h|--help) sed -n '2,/^set -uo/{/^#/s/^# \{0,1\}//p}' "$0"; exit 0 ;; esac
+target="$1"; shift
+text="$*"; text="${text//$'\n'/ }"; text="${text//$'\r'/ }"
+# Resolved with list-panes, never display-message: MEASURED, display-message
+# -t with a window that does not exist answers for the current pane, exit 0,
+# so a typo would have typed into somebody else's window.
+case "$target" in
+  %*) pane="$(mux_tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -Fx -- "$target")" ;;
+  *)  pane="$(mux_tmux list-panes -t "$target" -F '#{pane_active} #{pane_id}' 2>/dev/null | awk '$1 == 1 {print $2; exit}')" ;;
+esac
+[ -n "$pane" ] || { echo "mux-send: no pane '$target' on this account's tmux server" >&2; exit 2; }
+
+# What the input box holds now: the last prompt line, without the mark, the
+# no-break space Claude Code puts after it, and surrounding blanks.
+box() {
+  mux_tmux capture-pane -p -t "$pane" 2>/dev/null | awk '/^(❯|>) /{l=$0} END{print l}' |
+    sed -E 's/^(❯|>)( | )*//; s/[[:space:]]+$//'
+}
+# The first words of the text, as the box would show them (it wraps long lines).
+head="${text:0:24}"; head="${head%"${head##*[![:space:]]}"}"
+
+mux_tmux send-keys -t "$pane" -l "$text" || exit 2
+for try in 1 2 3; do
+  sleep "${MUX_SEND_DELAY:-1}"
+  mux_tmux send-keys -t "$pane" Enter || exit 2
+  sleep "${MUX_SEND_DELAY:-1}"
+  b="$(box)"
+  case "$b" in
+    "$head"*) [ "$try" -lt 3 ] && continue
+              echo "mux-send: the text is still in $target's input box after $try Enter presses" >&2; exit 1 ;;
+  esac
+  [ "$try" -gt 1 ] && echo "mux-send: sent ($try Enter presses: the first was swallowed)" >&2
+  exit 0
+done

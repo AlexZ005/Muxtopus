@@ -38,6 +38,51 @@ _mux_json() (
 # whether or not it is needed, and a fork here would be paid on every tool call.
 IFS= read -r -d '' payload || true
 
+# PRE-FLIGHT (mux-lint): a session that has just written a schedule entry or
+# profile.sh hears in the same turn whether it will work -- both fail SILENTLY
+# otherwise (an entry that never launches, a watchdog that crash-loops; see
+# mux-lint's header for the measurements). Matched on the payload with
+# builtins, so a tool call that touches neither still forks nothing. A Bash
+# call is matched on the words in its command: lanes write entries with
+# heredocs, and then no file_path is in the payload, so the entries changed
+# in the last two minutes are the ones checked.
+preflight() {
+  local here tool fp sched out="" f
+  here="$(dirname "$(readlink -f "$0")")"
+  tool="${payload#*\"tool_name\":\"}"; tool="${tool%%\"*}"
+  sched="$( . "$here/profile.sh" >/dev/null 2>&1; printf '%s' "${MUX_SCHEDULES:-}")"
+  case "$tool" in
+    Write|Edit|MultiEdit)
+      fp="${payload#*\"file_path\":\"}"; fp="${fp%%\"*}"
+      case "$fp" in
+        */profile.sh) out="$("$here/mux-lint" profile "$fp" 2>&1)" ;;
+        "$sched"/*.md) out="$("$here/mux-lint" schedule "$fp" 2>&1)" ;;
+      esac ;;
+    Bash)
+      case "$payload" in *profile.sh*) out="$("$here/mux-lint" profile 2>&1)" ;; esac
+      if [ -n "$sched" ] && [ -d "$sched" ]; then
+        while IFS= read -r f; do
+          out+="${out:+$'\n'}$("$here/mux-lint" schedule "$f" 2>&1)"
+        done < <(find "$sched" -maxdepth 1 -name '*.md' ! -name README.md -newermt '-120 seconds' 2>/dev/null)
+      fi ;;
+  esac
+  out="$(printf '%s' "$out" | sed '/^$/d')"
+  [ -n "$out" ] || return 1
+  PREFLIGHT="PRE-FLIGHT (mux-lint) found a problem in what you just wrote -- fix it now: $out"
+}
+case "$payload" in
+  *'"tool_name":"Write"'*|*'"tool_name":"Edit"'*|*'"tool_name":"MultiEdit"'*|*'"tool_name":"Bash"'*)
+    case "$payload" in
+      *schedules*|*profile.sh*)
+        if preflight; then
+          esc="$(printf '%s' "$PREFLIGHT" | _mux_json -Rs . 2>/dev/null)" && \
+            printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":%s}}\n' "$esc"
+          # A directive waiting as well goes out on the next tool call.
+          exit 0
+        fi ;;
+    esac ;;
+esac
+
 # THE ACCOUNT, resolved with parameter expansion only. This hook runs after
 # every tool call and its whole design is to fork nothing in the common case,
 # so it does NOT source profile.sh: three expansions give the same answer for

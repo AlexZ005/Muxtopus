@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# mux-done -- a long run leaves one line behind for the lane that started it.
+#
+#   mux-done run  [--slug S] <label> -- <command...>   run it, then write the marker
+#   mux-done mark [--slug S] <label> <summary...>      write a marker yourself
+#   mux-done ack  [--slug S] [<label>]                 the lane has read it (or all of them)
+#   mux-done list [--slug S]                           what is waiting
+#
+# THE PROBLEM. A lane starts a three-hour battery in the background and ends
+# its turn; Claude Code wakes it with a task notification when the command
+# exits. Usually. MEASURED 2026-10-22: three lanes were compacted while idle
+# and the notification never came; each sat at an empty prompt for 20-30
+# minutes until a person typed into it. Polling instead costs a turn a check.
+#
+# THE MARKER. `run` keeps the command's output as it is (stdout, exit code) and,
+# when it exits, writes <state>/done/<slug>/<label>.done holding ONE line:
+# "<label> rc=<n> <minutes>: <summary>", the summary being the last output
+# line matching MUX_DONE_MATCH (an extended regex; default: the last line that
+# is not blank). The notification is still the wake-up. The marker is the
+# fallback: a watchdog pass that finds one older than WATCHDOG_DONE_NUDGE
+# minutes, for a window that has been idle at its prompt since BEFORE the
+# marker was written -- no turn has started since, so the notification did not
+# arrive -- types that line into the window, once (mux-send's way: text, Enter,
+# check). A window that had a turn after the marker heard about it; the marker
+# is put aside unsent.
+#
+# The slug: --slug, else MUXTOPUS_SLUG, else this pane's window name.
+set -uo pipefail
+HERE="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=profile.sh
+. "$HERE/profile.sh"
+
+cmd="${1:-}"; shift || true
+slug="${MUXTOPUS_SLUG:-}"
+if [ "${1:-}" = --slug ]; then slug="${2:-}"; shift 2 || true; fi
+if [ -z "$slug" ] && [ -n "${TMUX_PANE:-}" ]; then
+  # A window is named for its slug; an older release prefixed depth markers.
+  slug="$(mux_tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null | sed -E 's/^[^A-Za-z0-9]+//')"
+fi
+need_slug() { [ -n "$slug" ] || { echo "mux-done: no lane slug (pass --slug, or run it inside the lane's window)" >&2; exit 2; }; }
+dir() { printf '%s/done/%s' "$MUX_STATE" "$slug"; }
+safe() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-'; }
+
+case "$cmd" in
+  run)
+    need_slug
+    label="$(safe "${1:-}")"; shift || true
+    [ -n "$label" ] && [ "${1:-}" = -- ] || { echo "usage: mux-done run [--slug S] <label> -- <command...>" >&2; exit 2; }
+    shift
+    mkdir -p "$(dir)"
+    log="$(dir)/$label.log"; t0="$(date +%s)"
+    # The command's own output, untouched, and a copy to read the summary from.
+    "$@" 2>&1 | tee "$log"
+    rc="${PIPESTATUS[0]}"
+    if [ -n "${MUX_DONE_MATCH:-}" ]; then sum="$(grep -E -- "$MUX_DONE_MATCH" "$log" | tail -1)"
+    else sum="$(grep -v '^[[:space:]]*$' "$log" | tail -1)"; fi
+    sum="${sum//$'\t'/ }"
+    printf '%s rc=%s %sm: %s (log %s)\n' "$label" "$rc" $(( ($(date +%s) - t0 + 59) / 60 )) "${sum:0:400}" "$log" > "$(dir)/$label.done.tmp"
+    mv -f "$(dir)/$label.done.tmp" "$(dir)/$label.done"
+    exit "$rc" ;;
+  mark)
+    need_slug
+    label="$(safe "${1:-}")"; shift || true
+    [ -n "$label" ] && [ $# -gt 0 ] || { echo "usage: mux-done mark [--slug S] <label> <summary...>" >&2; exit 2; }
+    mkdir -p "$(dir)"
+    printf '%s %s\n' "$label" "$*" > "$(dir)/$label.done.tmp" && mv -f "$(dir)/$label.done.tmp" "$(dir)/$label.done" ;;
+  ack)
+    need_slug
+    if [ -n "${1:-}" ]; then rm -f "$(dir)/$(safe "$1").done"
+    else rm -f "$(dir)"/*.done; fi ;;
+  list)
+    need_slug
+    for f in "$(dir)"/*.done; do [ -f "$f" ] && cat "$f"; done; exit 0 ;;
+  -h|--help) sed -n '2,/^set -uo/{/^#/s/^# \{0,1\}//p}' "$0" ;;
+  *) echo "usage: mux-done run|mark|ack|list ... (--help)" >&2; exit 2 ;;
+esac

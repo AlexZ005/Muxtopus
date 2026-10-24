@@ -306,8 +306,8 @@ ok "$BIN/muxtopus -> $SRC/muxtopus"
 # start one for a run. Linked only where the name is free or already ours:
 # e2e-slot existed as a hand-made file before it was versioned here, and a
 # file somebody wrote is not this installer's to replace.
-run chmod +x "$SRC/lane-dev" "$SRC/e2e-slot"
-for tool in lane-dev e2e-slot; do
+run chmod +x "$SRC/lane-dev" "$SRC/e2e-slot" "$SRC/mux-send" "$SRC/mux-done" "$SRC/mux-lint"
+for tool in lane-dev e2e-slot mux-send mux-done mux-lint; do
   cur="$(readlink "$BIN/$tool" 2>/dev/null)"
   # Ours: a link into this checkout or another muxtopus checkout (one with a
   # `muxtopus` beside it), or a link to nothing at all.

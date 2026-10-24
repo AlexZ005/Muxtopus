@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # e2e-slot -- run an e2e command in one of N machine-wide Playwright slots.
 #
-#   e2e-slot [--exclusive] [--local] [--wait SECS] [--dev <dir> <port>] -- <command...>
+#   e2e-slot [--exclusive] [--local] [--pc-first SECS] [--wait SECS] [--dev <dir> <port>] -- <command...>
 #
 # HOW MANY: MUXTOPUS_E2E_SLOTS (default 2; Settings ▸ Budget ▸ on the
 # dashboard, or the config file), and E2E_SLOTS in the environment beats it
@@ -49,6 +49,14 @@
 # that machine's own, a dev server port is taken there -- takes another slot.
 # The command sees E2E_SLOT_PC=<name> there.
 #
+# --pc-first SECS waits up to SECS for a PC slot before it takes any other.
+# For a battery half: three hours of node + Chromium on the Deck is the load
+# that starves every other lane's run there (MEASURED on 2026-10-23: three
+# local reds that were starvation, green on pc), while a pc slot frees in
+# minutes once a sibling's suite ends. A pc host that does not answer ends
+# the wait at once -- waiting SECS for a sleeping machine is the wrong trade.
+# --local and --exclusive ignore it.
+#
 # --dev <dir> <port> starts that folder's dev server with `lane-dev` once the
 # slot is held, runs the command, and stops the server afterwards -- unless it
 # was already running before, in which case it is left as it was (its own idle
@@ -59,7 +67,7 @@
 # its .b). It was written for one project's lanes, and those lanes and their
 # scripts already name these paths.
 set -uo pipefail
-EXCL=0; LOCAL=0; WAIT=5400; DEV_DIR=""; DEV_PORT=""
+EXCL=0; LOCAL=0; WAIT=5400; DEV_DIR=""; DEV_PORT=""; PCFIRST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     # The header above IS the help. Without this, `e2e-slot --help` took a
@@ -68,13 +76,15 @@ while [ $# -gt 0 ]; do
     --exclusive) EXCL=1; LOCAL=1; shift ;;
     --local) LOCAL=1; shift ;;
     --wait) WAIT="$2"; shift 2 ;;
+    --pc-first) PCFIRST="${2:-}"; shift 2
+                case "$PCFIRST" in ''|*[!0-9]*) echo "e2e-slot: --pc-first takes seconds" >&2; exit 2 ;; esac ;;
     --dev) [ $# -ge 3 ] || { echo "e2e-slot: --dev takes <dir> <port>" >&2; exit 2; }
            DEV_DIR="$2"; DEV_PORT="$3"; shift 3 ;;
     --) shift; break ;;
     *) break ;;
   esac
 done
-[ $# -gt 0 ] || { echo "usage: e2e-slot [--exclusive] [--local] [--wait S] [--dev DIR PORT] -- cmd" >&2; exit 2; }
+[ $# -gt 0 ] || { echo "usage: e2e-slot [--exclusive] [--local] [--pc-first S] [--wait S] [--dev DIR PORT] -- cmd" >&2; exit 2; }
 HERE="$(dirname "$(readlink -f "$0")")"
 # The configured knobs, through profile.sh like every other knob, in one
 # subshell -- read only when the environment does not say, and a broken or
@@ -277,10 +287,14 @@ fi
 # taken there): not offered it again.
 declare -A PC_NOPE=()
 end=$((SECONDS+WAIT))
+# --pc-first: only P slots until this moment (or until a pc host is found down).
+pcuntil=0
+[ "$LOCAL" = 0 ] && [ "$P" -gt 0 ] && [ "$PCFIRST" -gt 0 ] && pcuntil=$((SECONDS + PCFIRST))
 while [ $SECONDS -lt $end ]; do
   for s in "${ORDER[@]}"; do
     k="${s#?}"
     pc=""
+    case "$s" in P*) ;; *) [ $SECONDS -lt $pcuntil ] && continue ;; esac
     case "$s" in
       L*) lock="$(slot_lock "$k")"; name="$(slot_name "$k")"; hp="" ;;
       R*) lock="$(remote_lock "$k")"; name="$(slot_name $((N + k)))"; hp="${REMOTES[$k]}" ;;
@@ -290,10 +304,15 @@ while [ $SECONDS -lt $end ]; do
     exec {fd}>"$lock"
     # The lock first, then the health check: checking first would let two
     # waiters both see the host up and race for one slot, and is no cheaper.
-    if flock -n "$fd" && { [ -z "$hp" ] || remote_ok "$hp"; } && { [ -z "$pc" ] || pc_ok "$pc"; }; then
-      LOCK_FDS=("$fd"); E2E_SLOT="$name" E2E_SLOT_REMOTE="$hp" E2E_SLOT_PC="$pc" run "$@"; rc=$?; exec {fd}>&-
-      if [ -n "$pc" ] && [ "$rc" = 76 ]; then PC_NOPE[$pc]=1; continue; fi
-      exit $rc
+    if flock -n "$fd" && { [ -z "$hp" ] || remote_ok "$hp"; }; then
+      if [ -z "$pc" ] || pc_ok "$pc"; then
+        LOCK_FDS=("$fd"); E2E_SLOT="$name" E2E_SLOT_REMOTE="$hp" E2E_SLOT_PC="$pc" run "$@"; rc=$?; exec {fd}>&-
+        if [ -n "$pc" ] && [ "$rc" = 76 ]; then PC_NOPE[$pc]=1; pcuntil=0; continue; fi
+        exit $rc
+      fi
+      # A pc slot free and its host not answering: asleep or gone. --pc-first
+      # stops holding out for it.
+      pcuntil=0
     fi
     exec {fd}>&-
   done

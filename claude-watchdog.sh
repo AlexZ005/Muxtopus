@@ -281,6 +281,13 @@ REPORT_MEM_MIN="${WATCHDOG_REPORT_MEM_MIN:-30}"
 # stalled lane is sent one short line, once per stall episode.
 NUDGE_STALLED="${WATCHDOG_NUDGE_STALLED:-off}"
 NUDGE_MSG="Your background job has ended, but its notification did not reach you (this window has been idle with your handover open and nothing running). Read its output or log, then continue your brief from your handover's next step."
+# A FINISHED RUN WHOSE NOTIFICATION WAS LOST (done_pass; mux-done's header).
+# A lane opts in by wrapping the run in `mux-done run`; the line it left is
+# typed into the window when the window has been idle since before the run
+# ended, this many minutes after it ended. On by default because the lane
+# asked for it by writing the marker. off turns it off.
+DONE_NUDGE="${WATCHDOG_DONE_NUDGE:-5}"
+DONE_DIR="$STATE_DIR/done"
 # off, or minutes: a `done` window idle this long is closed, under the
 # sweep's closure rule (report_close). off by default: closing is the one
 # thing here that cannot be taken back.
@@ -3878,6 +3885,9 @@ sched_check_one() {
   case "$type" in plan|work) ;; *) kv "" "-- type must be plan or work"; rcout=1 ;; esac
 
   [ -n "$warn" ] && printf '  %-14s %s\n' WARNING "$warn"
+  if [ "$(head -1 "$f" 2>/dev/null)" = "---" ]; then
+    printf '  %-14s %s\n' WARNING "the file starts with a '---' line: every field above reads empty; the watchdog drops that line on its next pass (mux-lint does it now)"
+  fi
   pwarn="$(sched_placeholder_warn "$f")"
   [ -n "$pwarn" ] && printf '  %-14s %s\n' WARNING "$pwarn"
   resolved="$(sched_placeholders "$f" | paste -sd' ' -)"
@@ -3963,6 +3973,25 @@ sched_check() {
   return "$rc"
 }
 
+# A YAML-STYLE LEADING `---` EMPTIES THE FRONT MATTER for every reader here:
+# they all stop at the first `---`, so the entry has no type and no status and
+# is skipped as "not pending" -- the silent never-launches of mux-lint's
+# header. The line is dropped, once, and said in the log; only when a later
+# `---` closes the front matter (dropping it otherwise would make the whole
+# file front matter). mux-lint does the same the moment a session writes one.
+sched_front_fix() {
+  local f="$1" tmp
+  IFS= read -r tmp < "$f" 2>/dev/null || return 0
+  [ "$tmp" = "---" ] || return 0
+  [ "$(grep -c '^---$' "$f")" -ge 2 ] || return 0
+  tmp="$(mktemp "$f.XXXXXX")" || return 0
+  if tail -n +2 "$f" > "$tmp" && mv -f "$tmp" "$f"; then
+    log "schedule $(basename "$f"): dropped a leading '---' line (YAML-style front matter reads as empty here; an entry starts with type:)"
+  else
+    rm -f "$tmp"
+  fi
+}
+
 # One pass over the folder. Gated on the same master switch as the restart
 # prompt -- opening a window spends tokens exactly the way re-prompting does --
 # and a dry run reports without acting, like everywhere else in this file.
@@ -3990,6 +4019,7 @@ check_schedules() {
   for f in "$SCHEDULES"/*.md; do
     [ -f "$f" ] || continue
     case "$f" in */README.md) continue ;; esac
+    sched_front_fix "$f"
     st="$(sched_field "$f" status)"
     [ "$st" = pending ] || continue
     type="$(sched_field "$f" type)"
@@ -5227,6 +5257,54 @@ report_nudge() {
   return 0
 }
 
+# THE LOST NOTIFICATION, WITH EVIDENCE (WATCHDOG_DONE_NUDGE; mux-done's header).
+# The stall report above can only say "idle, nothing running"; a marker says
+# WHICH run ended and how. Typed once per marker: the file is renamed .nudged
+# when typed, .seen when the window had a turn after the run ended (it heard),
+# and either is swept after a week. Same gates as the stall nudge: at its
+# prompt, not asking, not opted out, inside the budget.
+done_pass() {
+  local now="$1" enabled="$2" pane name lane st idle m mt age text prio
+  [ "$DONE_NUDGE" = off ] || [ "$DRY" = 1 ] || [ "$enabled" != 1 ] && return 0
+  case "$DONE_NUDGE" in ''|*[!0-9]*) return 0 ;; esac
+  [ -d "$DONE_DIR" ] || return 0
+  find "$DONE_DIR" -type f \( -name '*.nudged' -o -name '*.seen' \) -mtime +7 -delete 2>/dev/null
+  report_load
+  for pane in "${!RP_STATE[@]}"; do
+    case "$pane" in *:%*) continue ;; esac
+    name="${RP_NAME[$pane]}"; lane="$(lane_slug_of "$name")"
+    [ -n "$lane" ] && [ -d "$DONE_DIR/$lane" ] || continue
+    st="${RP_STATE[$pane]}"; idle="${RP_IDLE[$pane]}"
+    case "$idle" in ''|*[!0-9]*) continue ;; esac
+    for m in "$DONE_DIR/$lane"/*.done; do
+      [ -f "$m" ] || continue
+      mt="$(stat -c %Y "$m" 2>/dev/null)" || continue
+      age=$(( now - mt ))
+      [ "$age" -ge $(( DONE_NUDGE * 60 )) ] || continue
+      # A turn began after the run ended -- the notification, most likely: idle
+      # counts from the last activity, so it is SHORTER than the marker's age.
+      # A minute of slack for the turn that wrote the line and ended.
+      if [ "$idle" -lt $(( age - 60 )) ]; then mv -f "$m" "$m.seen"; continue; fi
+      case "$st" in idle|stalled|stranded|orchestrating) ;; *) continue ;; esac
+      [ "${RP_OPT[$pane]-0}" = 1 ] && continue
+      [[ ",${RP_TAGS[$pane]-}," == *",asking,"* ]] && continue
+      if [ "$BUDGET" = on ]; then
+        prio="${TAG_PRIO[$lane]-p1}"
+        budget_gate "$prio" 0 || continue
+      fi
+      text="$(pane_tmux "$pane" capture-pane -p 2>/dev/null)" || continue
+      if grep -q "esc to interrupt" <<<"$text" || prompt_scan "$text"; then continue; fi
+      text="[muxtopus] A background run of yours finished $(dur_hm "$age") ago and this window has been idle since, so its notification looks lost: $(head -c 500 "$m" | tr '\n\t' '  '). Read its output, then continue from your handover's next step."
+      report_type "$pane" "$text" || continue
+      mv -f "$m" "$m.nudged"
+      [ "$BUDGET" = on ] && budget_started nudge "$lane"
+      log "done-nudged $name (pane $pane): $(basename "$m") is $(dur_hm "$age") old and the window idle $(dur_hm "$idle"), WATCHDOG_DONE_NUDGE=${DONE_NUDGE}m"
+      break
+    done
+  done
+  return 0
+}
+
 # WATCHDOG_CLOSE_FINISHED: the sweep's closure rule (docs/orchestration.md),
 # applied by the daemon. 0 when it closed the window.
 report_close() {
@@ -6103,6 +6181,7 @@ pass() {
   # After every state and every verdict this pass publishes, and before
   # notify_end, which writes the phone's ledger the fallback adds to.
   report_pass "$now" "$enabled"
+  done_pass "$now" "$enabled"
   check_update "$now"
   notify_end
   heartbeat "$(grep -c '' "$STATUS" 2>/dev/null)"

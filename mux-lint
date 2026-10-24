@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# mux-lint -- the pre-flight check for the two files a typo silently breaks.
+#
+#   mux-lint schedule <file>...    a schedule entry: the front matter, then `--check`
+#   mux-lint profile [<file>]      profile.sh: syntax, a clean source, KEY= lines
+#
+# Prints one line per problem and exits 1 when there is one (0: clean). The
+# PostToolUse hook (claude-winddown-hook.sh) runs it the moment a session
+# writes either file, so the session that made the mistake hears about it in
+# the same turn instead of a day later.
+#
+# WHY THESE TWO. Both fail SILENTLY, which is what makes them expensive:
+#  - A schedule entry that starts with a YAML-style `---` line has an EMPTY
+#    front matter to every reader here (they stop at the first `---`), so it
+#    has no type, is never due, and never launches -- with nothing saying so.
+#    MEASURED: three lanes' worth of entries written that way waited a night.
+#    That one is FIXED here, not just reported: the leading line is dropped,
+#    which is the shape every reader expects. The watchdog does the same on
+#    its next pass for a file written by something that is not a session.
+#  - profile.sh is sourced by every script. MEASURED 2026-10-23: a `# note` on
+#    a KEY= line crash-looped the watchdog and broke e2e-slot and handover.sh
+#    until somebody noticed. A syntax error does the same.
+set -uo pipefail
+HERE="$(dirname "$(readlink -f "$0")")"
+
+# The leading `---` line, dropped -- only when a later `---` closes the front
+# matter, or dropping it would turn the whole file into front matter.
+front_fix() {
+  local f="$1"
+  [ "$(head -1 "$f" 2>/dev/null)" = "---" ] || return 1
+  [ "$(grep -c '^---$' "$f")" -ge 2 ] || return 1
+  local tmp; tmp="$(mktemp "$f.XXXXXX")" || return 1
+  tail -n +2 "$f" > "$tmp" && mv -f "$tmp" "$f"
+}
+
+lint_schedule() {
+  local f="$1" out rc problems=0 line
+  [ -f "$f" ] || { echo "$f: no such file"; return 1; }
+  case "$(basename "$f")" in README.md) return 0 ;; esac
+  if front_fix "$f"; then
+    echo "$f: started with a '---' line, which every reader takes as an empty front matter (the entry would never run) -- FIXED, the line is dropped; a schedule entry starts with 'type:'"
+  fi
+  grep -q '^---$' "$f" || { echo "$f: no '---' line: the front matter has no end and the entry has no body"; problems=1; }
+  # The watchdog's own --check is the authority on everything else: it is the
+  # same code that decides whether the entry ever runs.
+  out="$("$HERE/claude-watchdog.sh" --check "$f" 2>&1)"; rc=$?
+  local t
+  while IFS= read -r line; do
+    t="${line#"${line%%[![:space:]]*}"}"
+    case "$t" in
+      # "-- <why>" is how --check says why a value cannot work.
+      "-- "*|*"CAN NEVER RUN"*|WARNING*|*"(missing)"*|*"is DROPPED"*|*"NOT A DIRECTORY"*)
+        echo "$f: $t"; problems=1 ;;
+    esac
+  done <<<"$out"
+  [ "$rc" = 1 ] && problems=1
+  return "$problems"
+}
+
+lint_profile() {
+  local f="${1:-$HERE/profile.sh}" problems=0 n line
+  [ -f "$f" ] || { echo "$f: no such file"; return 1; }
+  if ! out="$(bash -n "$f" 2>&1)"; then
+    echo "$f: syntax error: ${out//$'\n'/ / }"; return 1
+  fi
+  # Sourced the way every script sources it, in a clean environment.
+  if ! out="$(env -i HOME="$HOME" PATH="$PATH" bash -c '. "$1" >/dev/null' _ "$f" 2>&1)"; then
+    echo "$f: sourcing it fails: ${out//$'\n'/ / }"; problems=1
+  fi
+  n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    # KEY=value # note  -- outside quotes. A '#' inside "..." or '...' is a value.
+    [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?[A-Z][A-Z0-9_]*= ]] || continue
+    local v="${line#*=}" s
+    s="$(sed -E "s/\"([^\"\\\\]|\\\\.)*\"//g; s/'[^']*'//g" <<<"$v")"
+    if [[ "$s" =~ [[:space:]]# ]]; then
+      echo "$f:$n: a comment on a KEY= line ($line) -- put the note on its own line above it"
+      problems=1
+    fi
+  done < "$f"
+  return "$problems"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  schedule)
+    [ $# -gt 0 ] || { echo "usage: mux-lint schedule <file>..." >&2; exit 2; }
+    rc=0; for f in "$@"; do lint_schedule "$f" || rc=1; done; exit "$rc" ;;
+  profile) lint_profile "${1:-}"; exit $? ;;
+  -h|--help) sed -n '2,/^set -uo/{/^#/s/^# \{0,1\}//p}' "$0"; exit 0 ;;
+  *) echo "usage: mux-lint schedule <file>... | profile [<file>]" >&2; exit 2 ;;
+esac
