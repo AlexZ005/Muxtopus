@@ -4,6 +4,15 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.12.1 — 2026-10-24
+
+A patch release: one fix to `mux-send`, nothing renamed, nothing new to set.
+
+### lanes
+#### lanes: mux-send into a busy window
+
+- `mux-send` into a window that is mid-turn no longer reports the line as unsent: Claude Code queues it ("Press up to edit queued messages"), and mux-send now says it was queued and exits 0; it reads the input box between the last two rule lines, not the last prompt mark on screen
+
 ## v5.12.0 — 2026-10-24
 
 A minor release: three new commands (`mux-done`, `mux-send`, `mux-lint`), one new setting (`WATCHDOG_DONE_NUDGE`)

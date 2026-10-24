@@ -35,7 +35,7 @@ case "\$3" in
   # A box that keeps what is typed: the prompt line, then the tty's echo on it.
   stuck) printf '● ready\\n❯ '; exec sleep 900 ;;
   # A window mid-turn: its box holds the queued-messages hint, and the line it queues is drawn as one more "❯ <text>"
-  # line -- here after the box, so a reader taking "the last ❯ line" sees the text and calls it unsent (the 5.12.0 bug).
+  # line -- here after the box, so a reader taking "the last ❯ line" sees the text and calls it unsent (the bug the previous release shipped).
   busy)  printf '● working\\n────\\n❯ Press up to edit queued messages\\n────\\n'; stty -echo; read -r l; printf '❯ %s\\n  ctrl+x ctrl+s to send now\\n' "\$l"; exec sleep 900 ;;
 esac
 printf '● ready\\\\n❯ \\\\n'
