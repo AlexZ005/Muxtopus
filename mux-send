@@ -17,7 +17,9 @@
 #    own reports do;
 #  - and even then a busy terminal sometimes eats that Enter, so this LOOKS:
 #    the input box is the last line that starts with the prompt mark, and if
-#    it still begins with the text, Enter is pressed again (twice at most).
+#    it still begins with the text, Enter is pressed again (twice at most). A window
+#    that is mid-turn QUEUES the line ("Press up to edit queued messages" in the
+#    box): that is delivered, exit 0.
 # A newline in the text would submit half of it, so newlines become spaces.
 set -uo pipefail
 HERE="$(dirname "$(readlink -f "$0")")"
@@ -37,10 +39,18 @@ case "$target" in
 esac
 [ -n "$pane" ] || { echo "mux-send: no pane '$target' on this account's tmux server" >&2; exit 2; }
 
-# What the input box holds now: the last prompt line, without the mark, the
-# no-break space Claude Code puts after it, and surrounding blanks.
+# What the input box holds now. It is the prompt line BETWEEN the last two rule lines (─): a busy window also
+# draws each QUEUED message as a "❯ <text>" line above them, so "the last ❯ line anywhere" read a queued message
+# as the box (MEASURED 2026-10-24: a line typed into a busy orchestrator was queued and reported unsent). The mark,
+# Claude Code's no-break space after it and trailing blanks come off.
 box() {
-  mux_tmux capture-pane -p -t "$pane" 2>/dev/null | awk '/^(❯|>) /{l=$0} END{print l}' |
+  mux_tmux capture-pane -p -t "$pane" 2>/dev/null | awk '
+    /^─/ { r2 = r1; r1 = NR; next }
+    { line[NR] = $0; if ($0 ~ /^(❯|>) /) last = $0 }
+    END {
+      if (r2) { for (i = r2 + 1; i < r1; i++) if (line[i] ~ /^(❯|>) /) { print line[i]; exit } }
+      else print last   # no box drawn (a plain prompt): its last prompt line
+    }' |
     sed -E 's/^(❯|>)( | )*//; s/[[:space:]]+$//'
 }
 # The first words of the text, as the box would show them (it wraps long lines).
@@ -53,6 +63,8 @@ for try in 1 2 3; do
   sleep "${MUX_SEND_DELAY:-1}"
   b="$(box)"
   case "$b" in
+    # Typed into a window that is mid-turn: Claude Code took it as a queued message. Delivered.
+    "Press up to edit queued messages"*) echo "mux-send: queued (the window is busy; it reads the line when its turn ends)" >&2; exit 0 ;;
     "$head"*) [ "$try" -lt 3 ] && continue
               echo "mux-send: the text is still in $target's input box after $try Enter presses" >&2; exit 1 ;;
   esac

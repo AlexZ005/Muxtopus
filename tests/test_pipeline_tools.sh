@@ -34,6 +34,9 @@ cd "\$2"
 case "\$3" in
   # A box that keeps what is typed: the prompt line, then the tty's echo on it.
   stuck) printf '● ready\\n❯ '; exec sleep 900 ;;
+  # A window mid-turn: its box holds the queued-messages hint, and the line it queues is drawn as one more "❯ <text>"
+  # line -- here after the box, so a reader taking "the last ❯ line" sees the text and calls it unsent (the 5.12.0 bug).
+  busy)  printf '● working\\n────\\n❯ Press up to edit queued messages\\n────\\n'; stty -echo; read -r l; printf '❯ %s\\n  ctrl+x ctrl+s to send now\\n' "\$l"; exec sleep 900 ;;
 esac
 printf '● ready\\\\n❯ \\\\n'
 exec cat >> "\$HOME/heard-\$1"
@@ -134,6 +137,10 @@ lane stuck stuck; sleep 1
 MUX_SEND_DELAY=0.3 "$REPO/mux-send" claude:stuck "this stays in the box" 2>"$SB/send.err"; rc=$?
 check "a box that keeps the text: exit 1 after the retries" [ "$rc" = 1 ]
 check "..saying so" grep -q "still in claude:stuck's input box" "$SB/send.err"
+lane busy2 busy; sleep 1
+MUX_SEND_DELAY=0.3 "$REPO/mux-send" claude:busy2 "for the busy one" 2>"$SB/send.err"; rc=$?
+check "a busy window that queued the line: exit 0" [ "$rc" = 0 ]
+check "..saying it was queued" grep -q "queued (the window is busy" "$SB/send.err"
 check "no such pane: exit 2" bash -c "'$REPO/mux-send' claude:nowhere x 2>/dev/null; [ \$? = 2 ]"
 
 echo "== e2e-slot --pc-first"
