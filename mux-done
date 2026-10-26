@@ -4,7 +4,7 @@
 #   mux-done run  [--slug S] <label> -- <command...>   run it, then write the marker
 #   mux-done mark [--slug S] <label> <summary...>      write a marker yourself
 #   mux-done ack  [--slug S] [<label>]                 the lane has read it (or all of them)
-#   mux-done list [--slug S]                           what is waiting
+#   mux-done list [--slug S]                           what is waiting, running, or lost
 #
 # THE PROBLEM. A lane starts a three-hour battery in the background and ends
 # its turn; Claude Code wakes it with a task notification when the command
@@ -24,6 +24,23 @@
 # check). A window that had a turn after the marker heard about it; the marker
 # is put aside unsent.
 #
+# A RUN THAT NEVER FINISHED. Claude Code stops an idle session's background
+# shells under critical memory pressure (its "low-memory reaper": the shell's
+# process group and every descendant, SIGTERM then SIGKILL) and tells the
+# agent "do not start it again on your own ... start it again only when
+# asked". MEASURED 2026-10-24: a lane's queued e2e rerun was stopped that way
+# while it waited for a slot; nothing was written, the lane did as it was told,
+# and a green release sat 13 h. A killed run writes no marker, so `run` also
+# leaves <label>.run while the command is in flight -- one line: its pid, that
+# pid's start time (field 22 of /proc/<pid>/stat, so a recycled pid is not
+# taken for it), the start epoch, how many times this label was lost before,
+# the folder and the command -- and removes it when it writes the marker. A
+# .run whose process is gone with no marker newer than it is a LOST run: the
+# watchdog renames it .lost, types the lane one line asking it to requeue the
+# same command (WATCHDOG_LOST_RUN_NUDGE), and tells the parent when the same
+# label is lost twice. Starting the label again clears its .lost and carries
+# the count; `ack <label>` clears it too (a run you stopped on purpose).
+#
 # The slug: --slug, else MUXTOPUS_SLUG, else this pane's window name.
 set -uo pipefail
 HERE="$(dirname "$(readlink -f "$0")")"
@@ -40,6 +57,9 @@ fi
 need_slug() { [ -n "$slug" ] || { echo "mux-done: no lane slug (pass --slug, or run it inside the lane's window)" >&2; exit 2; }; }
 dir() { printf '%s/done/%s' "$MUX_STATE" "$slug"; }
 safe() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-'; }
+# Field 22 of /proc/<pid>/stat, counted after the ")" that ends the name (a
+# name may hold spaces and parentheses of its own).
+pid_start() { local s; s="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1; s="${s##*) }"; set -- $s; printf '%s' "${20:-}"; }
 
 case "$cmd" in
   run)
@@ -48,7 +68,16 @@ case "$cmd" in
     [ -n "$label" ] && [ "${1:-}" = -- ] || { echo "usage: mux-done run [--slug S] <label> -- <command...>" >&2; exit 2; }
     shift
     mkdir -p "$(dir)"
-    log="$(dir)/$label.log"; t0="$(date +%s)"
+    log="$(dir)/$label.log"; t0="$(date +%s)"; run="$(dir)/$label.run"
+    # IN FLIGHT. A requeue of a lost label clears its .lost and keeps the count.
+    lost=0
+    if [ -f "$(dir)/$label.lost" ]; then
+      IFS=$'\t' read -r _ _ _ lost _ < "$(dir)/$label.lost"
+      case "$lost" in ''|*[!0-9]*) lost=0 ;; esac
+      lost=$(( lost + 1 )); rm -f "$(dir)/$label.lost"
+    fi
+    printf -v c '%q ' "$@"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$$" "$(pid_start $$)" "$t0" "$lost" "$PWD" "${c% }" > "$run.tmp" && mv -f "$run.tmp" "$run"
     # The command's own output, untouched, and a copy to read the summary from.
     "$@" 2>&1 | tee "$log"
     rc="${PIPESTATUS[0]}"
@@ -57,6 +86,8 @@ case "$cmd" in
     sum="${sum//$'\t'/ }"
     printf '%s rc=%s %sm: %s (log %s)\n' "$label" "$rc" $(( ($(date +%s) - t0 + 59) / 60 )) "${sum:0:400}" "$log" > "$(dir)/$label.done.tmp"
     mv -f "$(dir)/$label.done.tmp" "$(dir)/$label.done"
+    # Only our own: a second run of the same label may have written it since.
+    [ "$(cut -f1 "$run" 2>/dev/null)" = "$$" ] && rm -f "$run"
     exit "$rc" ;;
   mark)
     need_slug
@@ -66,11 +97,21 @@ case "$cmd" in
     printf '%s %s\n' "$label" "$*" > "$(dir)/$label.done.tmp" && mv -f "$(dir)/$label.done.tmp" "$(dir)/$label.done" ;;
   ack)
     need_slug
-    if [ -n "${1:-}" ]; then rm -f "$(dir)/$(safe "$1").done"
-    else rm -f "$(dir)"/*.done; fi ;;
+    if [ -n "${1:-}" ]; then rm -f "$(dir)/$(safe "$1").done" "$(dir)/$(safe "$1").lost"
+    else rm -f "$(dir)"/*.done "$(dir)"/*.lost; fi ;;
   list)
     need_slug
-    for f in "$(dir)"/*.done; do [ -f "$f" ] && cat "$f"; done; exit 0 ;;
+    for f in "$(dir)"/*.done; do [ -f "$f" ] && cat "$f"; done
+    for f in "$(dir)"/*.run "$(dir)"/*.lost; do
+      [ -f "$f" ] || continue
+      IFS=$'\t' read -r p ps t0 _ _ c < "$f"
+      l="$(basename "$f")"
+      if [ "${f##*.}" = lost ] || [ "$(pid_start "$p")" != "$ps" ]; then
+        printf '%s LOST: its process is gone and it wrote no result (started %s): %s\n' "${l%.*}" "$(date -d "@$t0" '+%F %H:%M' 2>/dev/null)" "$c"
+      else
+        printf '%s running, pid %s since %s: %s\n' "${l%.*}" "$p" "$(date -d "@$t0" '+%H:%M' 2>/dev/null)" "$c"
+      fi
+    done; exit 0 ;;
   -h|--help) sed -n '2,/^set -uo/{/^#/s/^# \{0,1\}//p}' "$0" ;;
   *) echo "usage: mux-done run|mark|ack|list ... (--help)" >&2; exit 2 ;;
 esac
