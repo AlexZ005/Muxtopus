@@ -114,10 +114,11 @@ def usage_rows() -> list[Text]:
     ]
 
 
-# THE TAGS CELL. Two of them are something to do -- a lane waiting for an
-# e2e slot, a question waiting for an answer -- and are yellow; an API error
-# stays with the state. Everything else is a fact, dim.
-TAG_LOUD = ("e2e-wait", "asking")
+# THE TAGS CELL. Three of them are something to do -- a lane waiting for an
+# e2e slot, a question waiting for an answer, a run of its own stopped before
+# it finished -- and are yellow; an API error stays with the state.
+# Everything else is a fact, dim.
+TAG_LOUD = ("e2e-wait", "asking", "lost")
 
 
 def tags_text(tags) -> Text:
@@ -1654,7 +1655,8 @@ HELP_DIRTY = f"""
     [bold]TAGS[/] is everything true at the same time as the state, comma
     separated: e2e / e2e-wait, test, ci, sleep, job:<name>, serve:<port>,
     session / week / model (which limit), asking, its priority class,
-    compacting. One state is what the watchdog acts on; tags never trigger.
+    compacting, lost (a mux-done run stopped before it finished). One
+    state is what the watchdog acts on; tags never trigger.
     [{RED}]stalled[/]  a lane at its prompt past WATCHDOG_STALL_MIN (15m), handover
              open, nothing running: its parent window is told
     [{RED}]stranded[/] NOTHING IS EVER GOING TO TOUCH THIS. A lane, idle past

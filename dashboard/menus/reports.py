@@ -63,6 +63,9 @@ REPORT_KEYS: dict[str, dict] = {
         "label": "Re-nudge a finished run after (minutes)", "kind": "text",
         "check": _off_or_minutes, "default": "5",
         "hint": "a mux-done marker whose notification was lost; off never"},
+    "WATCHDOG_LOST_RUN_NUDGE": {
+        "label": "Ask a lane to requeue a lost run", "kind": "onoff", "default": "on",
+        "hint": "a mux-done run stopped before it finished (the low-memory reaper)"},
 }
 
 
