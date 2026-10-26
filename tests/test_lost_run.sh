@@ -2,8 +2,9 @@
 # A RUN STOPPED BEFORE IT FINISHED: mux-done's .run file, the watchdog's lost
 # run (WATCHDOG_LOST_RUN_NUDGE) -- the one line to the lane, the second after
 # 30 minutes and no third, the parent told when a label is lost twice or the
-# second line went unanswered, --health, the `lost` tag -- and a run that
-# finished, one still running and a recycled pid, which are not lost.
+# second line went unanswered, --health, the `lost` tag -- a run that
+# finished, one still running and a recycled pid, which are not lost -- and
+# `run --detach`, which the shell's kill does not reach, and `stop`.
 #
 #   bash tests/test_lost_run.sh
 #
@@ -152,6 +153,38 @@ check "off: still marked lost" [ -f "$D/quiet.lost" ]
 check "..nothing typed" [ "$(nlost job)" = "$n" ]
 check "..--health still lists it" bash -c "'$W' --health 2>&1 | grep -q 'e2e job lost: job quiet'"
 setkey WATCHDOG_LOST_RUN_NUDGE on
+
+echo "== mux-done run --detach: out of the shell's reach"
+MUXTOPUS_SLUG=job "$MD" ack
+out="$(MUXTOPUS_SLUG=job "$MD" run --detach det -- bash -c 'echo one; echo "BATTERY-DONE det"; exit 4' 2>"$SB/det.err")"; rc=$?
+check "the output passes through" grep -q '^one$' <<<"$out"
+check "..and the exit code" [ "$rc" = 4 ]
+check "..it says it detached" grep -q 'det detached as pid' "$SB/det.err"
+check "..the marker is written" grep -q '^det rc=4 .*BATTERY-DONE det' "$D/det.done"
+# The waiter in a shell's process group, which the "reaper" then kills.
+setsid bash -c 'printf %s "$$" > "$1"; shift; exec "$@"' _ "$SB/w.pid" env MUXTOPUS_SLUG=job "$MD" run --detach det2 -- bash -c 'sleep 3; echo DET2-DONE' >/dev/null 2>&1 &
+for _ in $(seq 50); do [ -s "$SB/w.pid" ] && [ -f "$D/det2.run" ] && break; sleep 0.1; done
+wp="$(cat "$SB/w.pid")"; rp="$(cut -f1 "$D/det2.run")"
+check "the run is in a process group of its own, not the shell's" [ "$(ps -o pgid= -p "$rp" | tr -d ' ')" = "$rp" ] && [ "$rp" != "$wp" ]
+reap "$wp"
+check "..the shell's group killed, the run goes on" bash -c "! kill -0 $wp 2>/dev/null && kill -0 $rp"
+pass
+check "..and is not lost" [ ! -f "$D/det2.lost" ]
+for _ in $(seq 60); do [ -f "$D/det2.done" ] && break; sleep 0.1; done
+check "..and writes its marker when it ends" grep -q '^det2 rc=0 .*DET2-DONE' "$D/det2.done"
+MUXTOPUS_SLUG=job "$MD" run --detach det3 -- sleep 60 >/dev/null 2>&1 & wp=$!
+for _ in $(seq 50); do [ -f "$D/det3.run" ] && break; sleep 0.1; done
+rp="$(cut -f1 "$D/det3.run")"
+check "mux-done stop stops a detached run" bash -c "MUXTOPUS_SLUG=job '$MD' stop det3 >/dev/null && sleep 0.5 && ! kill -0 $rp 2>/dev/null"
+wait "$wp"; rc=$?
+check "..its waiter ends, not 0" [ "$rc" != 0 ]
+pass
+check "..and a stopped run is not lost" [ ! -f "$D/det3.lost" ] && [ ! -f "$D/det3.run" ]
+MUXTOPUS_SLUG=job "$MD" run inshell -- sleep 60 >/dev/null 2>&1 & ip=$!
+for _ in $(seq 50); do [ -f "$D/inshell.run" ] && break; sleep 0.1; done
+MUXTOPUS_SLUG=job "$MD" stop inshell 2>"$SB/stop.err"; rc=$?
+check "stop refuses a run in its shell's process group (exit 2)" [ "$rc" = 2 ] && grep -q 'not detached' "$SB/stop.err"
+kill "$ip" 2>/dev/null; pkill -P "$ip" 2>/dev/null; wait "$ip" 2>/dev/null
 
 echo "== the config key"
 check "WATCHDOG_LOST_RUN_NUDGE is a config key" grep -q '^WATCHDOG_LOST_RUN_NUDGE=on' "$REPO/profile.sh"
