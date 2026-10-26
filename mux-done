@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # mux-done -- a long run leaves one line behind for the lane that started it.
 #
-#   mux-done run  [--slug S] [--detach] <label> -- <command...>   run it, then write the marker
+#   mux-done run  [--slug S] [--detach] <label> -- <command...>  run it, then write the marker
 #   mux-done stop [--slug S] <label>                   stop a detached run
 #   mux-done mark [--slug S] <label> <summary...>      write a marker yourself
 #   mux-done ack  [--slug S] [<label>]                 the lane has read it (or all of them)
