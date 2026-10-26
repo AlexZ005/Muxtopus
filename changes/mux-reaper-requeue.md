@@ -1,5 +1,0 @@
-## lanes: a run the low-memory reaper stopped is noticed, and its lane asked to requeue it
-
-- Claude Code stops an idle session's background shells when memory is critically low, and tells the agent not to start them again until asked; a `mux-done run` stopped that way used to leave nothing behind. Now it is a **lost run**: the watchdog types the lane one line asking it to requeue the same command (with the command), once more after 30 minutes, and tells the lane's parent when the same label is lost twice (`WATCHDOG_LOST_RUN_NUDGE`, default on). `claude-watchdog.sh --health` lists it as `e2e job lost: <slug> <label>`, and the window's TAGS read `lost`
-- `mux-done list` says which runs are running and which are lost; `mux-done ack <label>` clears a run you stopped on purpose
-- `mux-done run --detach <label> -- <command>` runs the command out of the background shell's reach, so the reaper cannot stop it; the shell still prints its output and exits with its code, and `mux-done stop <label>` stops it
