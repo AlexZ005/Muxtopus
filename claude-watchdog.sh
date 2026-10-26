@@ -288,6 +288,15 @@ NUDGE_MSG="Your background job has ended, but its notification did not reach you
 # asked for it by writing the marker. off turns it off.
 DONE_NUDGE="${WATCHDOG_DONE_NUDGE:-5}"
 DONE_DIR="$STATE_DIR/done"
+# A RUN THAT WAS STOPPED BEFORE IT FINISHED (lost_pass; mux-done's header): a
+# `mux-done run` whose process is gone with no marker. Its lane is typed ONE
+# line asking it to requeue the same command, once more LOST_RENUDGE_MIN
+# later if it has not, and a label lost twice is reported to the parent. On
+# by default for the done nudge's reason -- the lane asked to be watched by
+# wrapping the run -- and because Claude Code's own notice tells the lane NOT
+# to restart it "until asked". off types nothing; --health still lists it.
+LOST_NUDGE="${WATCHDOG_LOST_RUN_NUDGE:-on}"
+LOST_RENUDGE_MIN=30
 # off, or minutes: a `done` window idle this long is closed, under the
 # sweep's closure rule (report_close). off by default: closing is the one
 # thing here that cannot be taken back.
@@ -5152,6 +5161,25 @@ report_collect() {
         "an e2e slot held $(dur_hm "$held") by pid $pid: ${cmd:0:100}"
     done < <(report_e2e_holders)
   fi
+  # The lost runs. The lane is told first (lost_pass); its parent only when
+  # the same label was lost twice, or the second line to the lane has had
+  # LOST_RENUDGE_MIN without a requeue -- `lost` is --health's alone.
+  local lslug llabel lcnt lwhen lnud llast lcause lcmd lcwd lkind
+  while IFS=$'\t' read -r lslug llabel lcnt lwhen lnud llast lcause lcmd lcwd; do
+    [ -n "$llabel" ] || continue
+    d="$(lost_what "$lcmd") lost: $lslug $llabel"
+    [ "$lcause" != - ] && d+=" ($lcause)"
+    d+=", lost $(( lcnt + 1 )) time(s), the lane told ${lnud}x"
+    [ "$lnud" -gt 0 ] 2>/dev/null && d+=" (last $(date -d "@$llast" '+%H:%M' 2>/dev/null))"
+    lkind=lost
+    if [ "$lcnt" -ge 1 ] 2>/dev/null; then lkind=lost-again
+    elif [ "$lnud" -ge 2 ] 2>/dev/null && [ $(( now - llast )) -ge $(( LOST_RENUDGE_MIN * 60 )) ]; then
+      lkind=lost-again; d+=" and it has not requeued it"
+    fi
+    pane="$(lane_pane_of "$lslug")"; name="$lslug"
+    [ -n "$pane" ] && name="${RP_NAME[$pane]:-$lslug}"
+    report_add "$lkind" "lost:$lslug:$llabel:$(( lcnt + 1 ))" "$name" "$pane" "${RP_TPAR[$lslug]-}" 0 "$d: ${lcmd:0:120}"
+  done < <([ -d "$DONE_DIR" ] && lost_runs)
   # Memory: the guard's own verdict, and the entries it is holding.
   if [ "${REPORT_MEM_MIN:-0}" -gt 0 ] 2>/dev/null && [ -f "$MEMORY" ] && [ -f "$SCHED_WHY" ]; then
     local mst msince mreason
@@ -5305,6 +5333,149 @@ done_pass() {
   return 0
 }
 
+# THE LOST RUN (WATCHDOG_LOST_RUN_NUDGE; mux-done's header). MEASURED
+# 2026-10-24: a lane's queued e2e rerun -- `mux-done run ... -- e2e-slot ...`
+# in a background shell, still waiting for a slot, swap 13 of 15 GB -- was
+# stopped by Claude Code's low-memory reaper. Its notice (read from the
+# binary, 2026-10-26) says the command "was stopped because the system is
+# running low on memory" and tells the agent "Do not start it again on your
+# own ... start it again only when asked". The lane did exactly that, and a
+# green release sat 13 h waiting for a rerun nobody had asked for. A lane
+# rule to requeue at once loses to the notice in front of it; a typed line is
+# the "asked".
+#
+# What the files say: <label>.run while mux-done runs (pid, its start time,
+# start epoch, lost-before count, folder, command); <label>.done once it
+# finished. A .run whose pid is gone -- or is somebody else now: the start
+# time differs -- with no marker as new as the run is LOST: renamed .lost, a
+# second line added (lost <TAB> when <TAB> nudges <TAB> last nudge <TAB>
+# cause). Starting the label again removes the .lost and carries the count.
+
+# The lane's live pane here, by slug. Empty when it has none on this host.
+lane_pane_of() {
+  local pane
+  for pane in "${!RP_STATE[@]}"; do
+    case "$pane" in *:%*) continue ;; esac
+    [ "$(lane_slug_of "${RP_NAME[$pane]}")" = "$1" ] && { printf '%s' "$pane"; return 0; }
+  done
+  return 1
+}
+
+# A run finished if a marker for its label is at least as new as its start
+# (an acked one is gone, but then a person or the lane read it).
+run_finished() {   # run_finished DIR LABEL T0
+  local m mt
+  for m in "$1/$2.done" "$1/$2.done.nudged" "$1/$2.done.seen"; do
+    mt="$(stat -c %Y "$m" 2>/dev/null)" || continue
+    [ "$mt" -ge "$3" ] && return 0
+  done
+  return 1
+}
+
+# What stopped it, as far as anything here can tell: the reaper's own notice
+# in the lane's transcript, timestamped after the run started -- an older one
+# was about some other shell, and blaming the reaper for a reboot or a kill
+# would be a guess. Only without a transcript is the screen read, where the
+# notification is drawn. Else nothing is claimed.
+lost_cause() {    # lost_cause SLUG T0
+  local pane sid tf ts
+  pane="$(lane_pane_of "$1")" || { printf 'no result, process gone'; return 0; }
+  sid="${RP_SID[$pane]-}"
+  if [ -n "$sid" ] && tf="$(transcript_of "$sid")"; then
+    ts="$(tail -c 4000000 "$tf" 2>/dev/null | grep -F 'stopped because the system is running low on memory' | tail -1 \
+          | sed -nE 's/.*"timestamp":"([^"]+)".*/\1/p')"
+    if [ -n "$ts" ] && [ "$(date -d "$ts" +%s 2>/dev/null || echo 0)" -ge "${2:-0}" ]; then
+      printf 'low-memory reaper'; return 0
+    fi
+  elif pane_tmux "$pane" capture-pane -p -S -300 2>/dev/null | grep -q 'running low on memory'; then
+    printf 'low-memory reaper'; return 0
+  fi
+  printf 'no result, process gone'
+}
+
+# Every lost run, the ones not yet renamed included, read-only (--health uses
+# it): slug, label, lost-before count, when lost, nudges, last nudge, cause,
+# the command line, the folder.
+lost_runs() {
+  local f d label p ps t0 cnt cwd cmd k when nud last cause
+  for f in "$DONE_DIR"/*/*.run "$DONE_DIR"/*/*.lost; do
+    [ -f "$f" ] || continue
+    d="${f%/*}"; label="${f##*/}"; label="${label%.*}"
+    { IFS=$'\t' read -r p ps t0 cnt cwd cmd; IFS=$'\t' read -r k when nud last cause; } < "$f"
+    case "$cnt" in ''|*[!0-9]*) cnt=0 ;; esac
+    if [ "${f##*.}" = run ]; then
+      [ "$(pid_start_of "$p")" = "$ps" ] && continue
+      run_finished "$d" "$label" "${t0:-0}" && continue
+      when=""; nud=0; last=0; cause="-"
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${d##*/}" "$label" "$cnt" "${when:--}" "${nud:-0}" "${last:-0}" "${cause:--}" "${cmd//$'\t'/ }" "${cwd:--}"
+  done
+}
+pid_start_of() { local s; read -r s 2>/dev/null < "/proc/$1/stat" || return 0; s="${s##*) }"; set -- $s; printf '%s' "${20:-}"; }
+
+# What a lost run is called: an e2e job when it ran one.
+lost_what() { case "$1" in *e2e*) printf 'e2e job' ;; *) printf 'job' ;; esac; }
+
+lost_pass() {
+  local now="$1" enabled="$2" f d label p ps t0 cnt cwd cmd cause pane st text msg prio
+  local slug when nud last k rest
+  [ -d "$DONE_DIR" ] && [ "$DRY" != 1 ] || return 0
+  find "$DONE_DIR" -type f -name '*.lost' -mtime +7 -delete 2>/dev/null
+  report_load
+  # 1. The runs that are gone without a result become .lost.
+  for f in "$DONE_DIR"/*/*.run; do
+    [ -f "$f" ] || continue
+    IFS=$'\t' read -r p ps t0 cnt cwd cmd < "$f" || continue
+    [ "$(pid_start_of "$p")" = "$ps" ] && continue
+    d="${f%/*}"; label="${f##*/}"; label="${label%.run}"; slug="${d##*/}"
+    if run_finished "$d" "$label" "${t0:-0}"; then rm -f "$f"; continue; fi
+    case "$cnt" in ''|*[!0-9]*) cnt=0 ;; esac
+    cause="$(lost_cause "$slug" "${t0:-0}")"
+    { head -1 "$f"; printf 'lost\t%s\t0\t0\t%s\n' "$now" "$cause"; } > "$d/$label.lost.tmp" \
+      && mv -f "$d/$label.lost.tmp" "$d/$label.lost"
+    # Not a requeue that started between the read and now.
+    [ "$(cut -f1 "$f" 2>/dev/null)" = "$p" ] && rm -f "$f"
+    log "run lost: $slug $label ($cause) -- pid $p gone, no result; lost $(( cnt + 1 )) time(s): ${cmd:0:200}"
+  done
+  # 2. ONE line to the lane, and one more after LOST_RENUDGE_MIN if the label
+  # was not started again. The stall nudge's gates, except that a working
+  # window is fine: mux-send queues the line and the turn reads it.
+  [ "$LOST_NUDGE" = on ] && [ "$enabled" = 1 ] || return 0
+  for f in "$DONE_DIR"/*/*.lost; do
+    [ -f "$f" ] || continue
+    d="${f%/*}"; label="${f##*/}"; label="${label%.lost}"; slug="${d##*/}"
+    { IFS=$'\t' read -r p ps t0 cnt cwd cmd; IFS=$'\t' read -r k when nud last cause; } < "$f"
+    case "$nud" in ''|*[!0-9]*) nud=0 ;; esac
+    case "$last" in ''|*[!0-9]*) last=0 ;; esac
+    [ "$nud" -ge 2 ] && continue
+    [ "$nud" = 1 ] && [ $(( now - last )) -lt $(( LOST_RENUDGE_MIN * 60 )) ] && continue
+    # A finished lane is not told to requeue anything.
+    [ -f "$HANDOVERS/done/STATUS-$slug.md" ] && [ ! -f "$HANDOVERS/STATUS-$slug.md" ] && continue
+    pane="$(lane_pane_of "$slug")" || continue
+    st="${RP_STATE[$pane]}"
+    case "$st" in waiting|limited|due|queued|resume-due|paused) continue ;; esac
+    [ "${RP_OPT[$pane]-0}" = 1 ] && continue
+    [[ ",${RP_TAGS[$pane]-}," == *",asking,"* ]] && continue
+    if [ "$BUDGET" = on ]; then
+      prio="${TAG_PRIO[$slug]-p1}"
+      budget_gate "$prio" 0 || continue
+    fi
+    text="$(pane_tmux "$pane" capture-pane -p 2>/dev/null)" || continue
+    prompt_scan "$text" && continue
+    case "$cause" in
+      low-memory*) rest="(low-memory reaper)" ;;
+      *) rest="(its process is gone and it wrote no result: the low-memory reaper, a reboot or a kill)" ;;
+    esac
+    msg="[muxtopus] $([ "$nud" = 1 ] && printf 'Second notice: ')Your run $label was stopped before it finished $rest. Requeue the same command now (lane rule); say so in STATUS. This is the ask to start it again that Claude Code's notice waits for. It was, in ${cwd:-its folder}: mux-done run $label -- ${cmd:0:300} (in the background, as before). If you stopped it on purpose: mux-done ack $label."
+    if "$WD_SRC/mux-send" "$pane" "$msg" >/dev/null 2>&1; then :
+    else log "lost-nudge $slug $label: mux-send could not confirm the line left the box (pane $pane)"; fi
+    { head -1 "$f"; printf 'lost\t%s\t%s\t%s\t%s\n' "$when" $(( nud + 1 )) "$now" "$cause"; } > "$f.tmp" && mv -f "$f.tmp" "$f"
+    [ "$BUDGET" = on ] && budget_started nudge "$slug"
+    log "lost-nudged ${RP_NAME[$pane]} (pane $pane): $label lost $(( cnt + 1 )) time(s), nudge $(( nud + 1 )) of 2, WATCHDOG_LOST_RUN_NUDGE=on"
+  done
+  return 0
+}
+
 # WATCHDOG_CLOSE_FINISHED: the sweep's closure rule (docs/orchestration.md),
 # applied by the daemon. 0 when it closed the window.
 report_close() {
@@ -5344,7 +5515,7 @@ report_close() {
 # (MUXTOPUS_NOTIFY_DONE, _WAITING, _STRANDED), and a second message for the
 # same news is noise -- on this box, four lanes stranded for weeks would have
 # been one message an hour, forever.
-report_phone_kind() { case "$1" in stalled|limit|e2e|memory) return 0 ;; esac; return 1; }
+report_phone_kind() { case "$1" in stalled|limit|e2e|memory|lost-again) return 0 ;; esac; return 1; }
 
 # Once a pass, after the states and the schedules are judged.
 report_pass() {
@@ -5364,6 +5535,8 @@ report_pass() {
     first="${first_of[$key]:-$now}"; last="${last_of[$key]-}"
     keep[$key]="$first"$'\t'"$last"
     [ $(( now - first )) -ge "$minage" ] || continue
+    # A run lost once is the lane's to requeue: lost_pass has told it.
+    [ "$kind" = lost ] && continue
     due=""; nudged=""
     # THE NUDGE, before the report, so the report can say it happened.
     if { [ "$kind" = stalled ] || [ "$kind" = stranded ]; } && [ "$NUDGE_STALLED" = on ] && [ "$DRY" != 1 ] && [ -n "$pane" ]; then
@@ -5478,7 +5651,7 @@ report_health() {
   proc_scan
   tag_prio_map
   report_collect "$now"
-  echo "# account=$MUX_LABEL report=$REPORT stall=${STALL_MIN}m repeat=${REPORT_REPEAT_MIN}m e2e=${REPORT_E2E_MIN}m memory=${REPORT_MEM_MIN}m nudge=$NUDGE_STALLED close-finished=$CLOSE_FINISHED"
+  echo "# account=$MUX_LABEL report=$REPORT stall=${STALL_MIN}m repeat=${REPORT_REPEAT_MIN}m e2e=${REPORT_E2E_MIN}m memory=${REPORT_MEM_MIN}m nudge=$NUDGE_STALLED close-finished=$CLOSE_FINISHED lost-run-nudge=$LOST_NUDGE"
   # The lane hosts: up or not, their lanes, how old their last status is.
   local lh lf hcol=""
   [ -n "$(lane_hosts)" ] && hcol=1
@@ -5506,7 +5679,9 @@ report_health() {
     [ -n "$kind" ] || continue
     [ "$parent" = - ] && parent=""
     first="${first_of[$key]:-$now}"; last="${last_of[$key]-}"
-    if [ -z "$parent" ] && ! report_phone_kind "$kind"; then
+    if [ "$kind" = lost ]; then
+      state="the lane's"
+    elif [ -z "$parent" ] && ! report_phone_kind "$kind"; then
       state="phone has it"
     elif [ $(( now - first )) -lt "$minage" ]; then
       state="in $(dur_hm $(( minage - now + first )))"
@@ -5519,7 +5694,7 @@ report_health() {
     n=$(( n + 1 ))
   done <<<"$REPORT_ROWS"
   if [ "$n" = 0 ]; then
-    echo "all good: no stalled, finished, prompting or limit-stuck lane, no long e2e hold, no long memory hold"
+    echo "all good: no stalled, finished, prompting or limit-stuck lane, no long e2e hold, no long memory hold, no lost run"
     return 0
   fi
   # The HOST column only with lane hosts; without, it is dropped whole.
@@ -6123,6 +6298,8 @@ pass() {
       case "${TAG_PRIO[$lane]-p1}" in p1) ;; *) tags+="${tags:+,}${TAG_PRIO[$lane]}" ;; esac
     fi
     [[ "$text" == *"Compacting conversation"* ]] && tags+="${tags:+,}compacting"
+    # A run of its own stopped before it finished, not yet requeued (lost_pass).
+    [ -n "$lane" ] && [ "$lane" != - ] && compgen -G "$DONE_DIR/$lane/*.lost" >/dev/null && tags+="${tags:+,}lost"
 
     # PID IS THE LAST COLUMN, and it is there for the dashboard rather than for
     # this daemon. A closed window's row is correct here only until the next
@@ -6180,6 +6357,9 @@ pass() {
   notify_sessions
   # After every state and every verdict this pass publishes, and before
   # notify_end, which writes the phone's ledger the fallback adds to.
+  # The lost runs first: the lane is told before its parent hears of it, and
+  # the report can say what stopped it.
+  lost_pass "$now" "$enabled"
   report_pass "$now" "$enabled"
   done_pass "$now" "$enabled"
   check_update "$now"

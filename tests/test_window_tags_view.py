@@ -10,7 +10,7 @@ processes); this holds what the dashboard and the phone make of the row:
     watchdog's 20-field row both meaning none;
   * every new state has a label and a colour, and `limited` reads "limit hit"
     while its NAME stays limited (everything that acts keys on the name);
-  * the tags cell: the two that mean "do something" are loud, the rest dim;
+  * the tags cell: the three that mean "do something" are loud, the rest dim;
   * the phone's /windows words, and the states a "questions answered" line
     may be typed into -- a handed-off lane is exactly the one that asked.
 """
@@ -79,7 +79,9 @@ t = tags_text(("e2e-wait", "serve:5380", "asking"))
 ok(t.plain == "e2e-wait,serve:5380,asking", "comma separated: %r" % t.plain)
 loud = {t.plain[s.start:s.end] for s in t.spans if s.style == YELLOW}
 ok(loud == {"e2e-wait", "asking"}, "e2e-wait and asking are loud, nothing else: %r" % loud)
-ok(set(TAG_LOUD) == {"e2e-wait", "asking"}, "TAG_LOUD is those two")
+ok(set(TAG_LOUD) == {"e2e-wait", "asking", "lost"}, "TAG_LOUD is those two and lost")
+t = tags_text(["e2e", "lost"])
+ok({t.plain[s.start:s.end] for s in t.spans if s.style == YELLOW} == {"lost"}, "a lost run is loud")
 ok(tags_text(()).plain == "—", "no tags: a dash, like every unknown cell")
 
 print("== the phone")

@@ -83,6 +83,7 @@ WATCHDOG_REPORT_MEM_MIN=30
 WATCHDOG_NUDGE_STALLED=off
 WATCHDOG_CLOSE_FINISHED=off
 WATCHDOG_DONE_NUDGE=5
+WATCHDOG_LOST_RUN_NUDGE=on
 WATCHDOG_WOUND_RESUME=on
 WATCHDOG_MEM_GUARD=on
 WATCHDOG_MEM_MIN_GB=4
@@ -401,6 +402,10 @@ mux_key_help() {
     WATCHDOG_DONE_NUDGE)    echo "off, or minutes: a run wrapped in mux-done that ended this long ago, in a"
                             echo "window idle since before it ended (its notification lost), is typed its"
                             echo "summary line, once. Same gates as the stall nudge."  ;;
+    WATCHDOG_LOST_RUN_NUDGE) echo "on|off. A run wrapped in mux-done whose process is gone with no result"
+                            echo "(Claude Code's low-memory reaper stops idle background shells) is a lost"
+                            echo "run: its lane is typed one line asking it to requeue the same command,"
+                            echo "once more after 30 minutes, and a label lost twice goes to the parent."  ;;
     WATCHDOG_WOUND_RESUME)  echo "on|off. A window wound down at the HARD band was told to stop, so it"
                             echo "never prints the limit banner the resume path watches for. With this"
                             echo "on, such a window is sent the continue message once its budget window"
