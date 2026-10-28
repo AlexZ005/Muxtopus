@@ -89,6 +89,7 @@ const { chromium } = require('playwright');
   await chromium.launch({ args: ['--use-gl=angle', '--use-angle=vulkan', '--enable-features=Vulkan', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu'] });
   await chromium.launch({ args: ['--use-angle=vulkan', '--enable-features=Vulkan,CanvasOopRasterization'] });
   await chromium.launch({ args: ['--no-sandbox', '--enable-features=Vulkan'] });
+  await chromium.launch({ args: ['--use-angle=vulkan', '--disable-dawn-features=foo'] });
   const sent = chromium.calls.filter((x) => x[0] === 'connect').map((x) => JSON.parse(x[2].headers['x-playwright-launch-options']).args.join(' '));
   const local = chromium.calls.filter((x) => x[0] === 'launch').map((x) => x[1].args.join(' '));
   console.log(JSON.stringify({ sent, local }));
@@ -98,8 +99,9 @@ run_gpu() { (cd "$T/app" && NODE_OPTIONS="--require \"$REPO/lib/pw-remote-shim.c
 nth() { node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); console.log(r[process.argv[2]][+process.argv[3]] ?? "")' "$T/out" "$1" "$2"; }
 PW_REMOTE_WS=ws://pc:39001/ PW_REMOTE_GPU=d3d11 run_gpu
 check "mapped: vulkan -> d3d11, the Vulkan feature dropped, every other arg kept" \
-  [ "$(nth sent 0)" = "--use-gl=angle --use-angle=d3d11 --enable-gpu --ignore-gpu-blocklist --enable-unsafe-webgpu" ]
-check "..another feature in the list is kept" [ "$(nth sent 1)" = "--use-angle=d3d11 --enable-features=CanvasOopRasterization" ]
+  [ "$(nth sent 0)" = "--use-gl=angle --use-angle=d3d11 --enable-gpu --ignore-gpu-blocklist --enable-unsafe-webgpu --disable-dawn-features=use_dxc" ]
+check "..another feature in the list is kept" [ "$(nth sent 1)" = "--use-angle=d3d11 --enable-features=CanvasOopRasterization --disable-dawn-features=use_dxc" ]
+check "..an existing --disable-dawn-features gains use_dxc" [ "$(nth sent 3)" = "--use-angle=d3d11 --disable-dawn-features=foo,use_dxc" ]
 check "..a launch without --use-angle=vulkan is untouched" [ "$(nth sent 2)" = "--no-sandbox --enable-features=Vulkan" ]
 check "..said once on stderr" bash -c "[ \"\$(grep -c 'pw-remote-shim: --use-angle=vulkan -> d3d11 on ws://pc:39001/' '$T/err')\" = 1 ]"
 PW_REMOTE_WS=ws://pc:39001/ run_gpu
@@ -178,7 +180,7 @@ PW_REMOTE_PLATFORM=win32 node "$REPO/lib/pw-remote-server.cjs" --root "$T/root" 
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break; sleep 0.1; done
 r="$(up 'Playwright/1.63.0' "$GPU_LO")"
 check "--use-angle=d3d11, no Vulkan feature, the other args kept" \
-  bash -c '[[ "$1" == "200 "* && "$1" == *"--use-gl=angle"*"--use-angle=d3d11"*"--enable-unsafe-webgpu"* && "$1" != *Vulkan* && "$1" != *vulkan* ]]' _ "$r"
+  bash -c '[[ "$1" == "200 "* && "$1" == *"--use-gl=angle"*"--use-angle=d3d11"*"--enable-unsafe-webgpu"* && "$1" == *"--disable-dawn-features=use_dxc"* && "$1" != *Vulkan* && "$1" != *vulkan* ]]' _ "$r"
 r="$(up 'Playwright/1.63.0' '{"args":["--no-sandbox","--enable-features=Vulkan"]}')"
 check "..a launch without --use-angle=vulkan is untouched" bash -c '[[ "$1" == "200 "*"--enable-features=Vulkan"* ]]' _ "$r"
 r="$(up 'Playwright/1.63.0' '{"headless":true}')"

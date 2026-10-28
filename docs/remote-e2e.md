@@ -57,7 +57,7 @@ A test picks its GPU flags from the platform of the machine its `node` runs on, 
 | `--use-angle=d3d11 --enable-unsafe-webgpu --ignore-gpu-blocklist --enable-gpu` | D3D11 on the RTX 4090 | nvidia / lovelace |
 | channel `chromium` (new headless) | none at all | — |
 
-So with the Linux flags the WebGPU suites fail or fall back. **`MUXTOPUS_E2E_REMOTE_GPU=d3d11`** fixes it: `e2e-slot` passes it to a remote run as `PW_REMOTE_GPU=d3d11`, and the shim sends `--use-angle=d3d11` instead of `--use-angle=vulkan`, drops `Vulkan` from `--enable-features` (and the switch, if nothing else is left in it) and keeps every other arg. It says so once on stderr: `pw-remote-shim: --use-angle=vulkan -> d3d11 on …`. `E2E_REMOTE_GPU=keep` or `d3d11` overrides it for one run.
+So with the Linux flags the WebGPU suites fail or fall back. **`MUXTOPUS_E2E_REMOTE_GPU=d3d11`** fixes it: `e2e-slot` passes it to a remote run as `PW_REMOTE_GPU=d3d11`, and the shim sends `--use-angle=d3d11` instead of `--use-angle=vulkan`, drops `Vulkan` from `--enable-features` (and the switch, if nothing else is left in it) and keeps every other arg. It also adds `--disable-dawn-features=use_dxc`: Playwright's Chromium on Windows cannot load `dxcompiler.dll` / `dxil.dll`, so the adapter appears but `requestDevice()` rejects (`DynamicLib.Open: dxil.dll Windows Error: 87`); without DXC, Dawn compiles shaders with FXC and the device works. It says so once on stderr: `pw-remote-shim: --use-angle=vulkan -> d3d11 on …`. `E2E_REMOTE_GPU=keep` or `d3d11` overrides it for one run.
 
 - **A launch that asks for no GPU is not changed.** It gets SwiftShader on any host, as before.
 - **A local fallback keeps Vulkan**, because then the browser runs on this machine after all.
