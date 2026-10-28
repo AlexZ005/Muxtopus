@@ -80,6 +80,38 @@ check "PW_REMOTE_FALLBACK=fail makes it an error" [ "$rc" != 0 ]
 (cd "$T/app" && NODE_OPTIONS="--require \"$REPO/lib/pw-remote-shim.cjs\"" node t.cjs) > "$T/out" 2> "$T/err"
 check "no PW_REMOTE_WS: the shim does nothing" bash -c "grep -q '\"how\":\"local\"' '$T/out' && ! grep -q connect '$T/out' && [ ! -s '$T/err' ]"
 
+echo "== the shim: PW_REMOTE_GPU=d3d11 on a Windows host"
+# A launch with the Linux GPU flags a core suite passes, one with no GPU flag,
+# and the args each connect sent.
+cat > "$T/app/g.cjs" <<'EOF2'
+const { chromium } = require('playwright');
+(async () => {
+  await chromium.launch({ args: ['--use-gl=angle', '--use-angle=vulkan', '--enable-features=Vulkan', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu'] });
+  await chromium.launch({ args: ['--use-angle=vulkan', '--enable-features=Vulkan,CanvasOopRasterization'] });
+  await chromium.launch({ args: ['--no-sandbox', '--enable-features=Vulkan'] });
+  const sent = chromium.calls.filter((x) => x[0] === 'connect').map((x) => JSON.parse(x[2].headers['x-playwright-launch-options']).args.join(' '));
+  const local = chromium.calls.filter((x) => x[0] === 'launch').map((x) => x[1].args.join(' '));
+  console.log(JSON.stringify({ sent, local }));
+})();
+EOF2
+run_gpu() { (cd "$T/app" && NODE_OPTIONS="--require \"$REPO/lib/pw-remote-shim.cjs\"" node g.cjs) > "$T/out" 2> "$T/err"; }
+nth() { node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); console.log(r[process.argv[2]][+process.argv[3]] ?? "")' "$T/out" "$1" "$2"; }
+PW_REMOTE_WS=ws://pc:39001/ PW_REMOTE_GPU=d3d11 run_gpu
+check "mapped: vulkan -> d3d11, the Vulkan feature dropped, every other arg kept" \
+  [ "$(nth sent 0)" = "--use-gl=angle --use-angle=d3d11 --enable-gpu --ignore-gpu-blocklist --enable-unsafe-webgpu" ]
+check "..another feature in the list is kept" [ "$(nth sent 1)" = "--use-angle=d3d11 --enable-features=CanvasOopRasterization" ]
+check "..a launch without --use-angle=vulkan is untouched" [ "$(nth sent 2)" = "--no-sandbox --enable-features=Vulkan" ]
+check "..said once on stderr" bash -c "[ \"\$(grep -c 'pw-remote-shim: --use-angle=vulkan -> d3d11 on ws://pc:39001/' '$T/err')\" = 1 ]"
+PW_REMOTE_WS=ws://pc:39001/ run_gpu
+check "PW_REMOTE_GPU unset: the vulkan args go as they are" \
+  [ "$(nth sent 0)" = "--use-gl=angle --use-angle=vulkan --enable-features=Vulkan --enable-gpu --ignore-gpu-blocklist --enable-unsafe-webgpu" ]
+check "..and nothing is said about the GPU" bash -c "! grep -q 'use-angle' '$T/err'"
+PW_REMOTE_WS=ws://pc:39001/ PW_REMOTE_GPU=keep run_gpu
+check "PW_REMOTE_GPU=keep: unchanged too" [ "$(nth sent 1)" = "--use-angle=vulkan --enable-features=Vulkan,CanvasOopRasterization" ]
+PW_REMOTE_WS=ws://pc:39001/ PW_REMOTE_GPU=d3d11 FAKE_CONNECT_FAILS=1 run_gpu
+check "a local fallback keeps vulkan (this machine is not the Windows host)" \
+  [ "$(nth local 0)" = "--use-gl=angle --use-angle=vulkan --enable-features=Vulkan --enable-gpu --ignore-gpu-blocklist --enable-unsafe-webgpu" ]
+
 echo "== the server: one port, a backend per version"
 # Fake installs: each cli.js is a tiny server that answers /json and, on an
 # upgrade, sends back the request it got -- so the test sees what the router
@@ -136,6 +168,21 @@ check "launch options in the query string are cleaned too" bash -c "[[ '$r' == '
 r="$(up 'Playwright/1.63.0' 'not json')"
 check "launch options that are not JSON: 403" bash -c "[[ '$r' == '403 '* ]]"
 check "the log names each refusal" bash -c "[ \"\$(grep -c 'refused 127.0.0.1' '$T/srv.log')\" -ge 5 ]"
+GPU_LO='{"args":["--use-gl=angle","--use-angle=vulkan","--enable-features=Vulkan","--enable-unsafe-webgpu"]}'
+r="$(up 'Playwright/1.63.0' "$GPU_LO")"
+check "a Linux host keeps --use-angle=vulkan" bash -c '[[ "$1" == "200 "*"--use-angle=vulkan"*"--enable-features=Vulkan"* ]]' _ "$r"
+
+echo "== the server on a Windows host: vulkan becomes d3d11"
+kill "$SRV_PID" 2>/dev/null; wait "$SRV_PID" 2>/dev/null
+PW_REMOTE_PLATFORM=win32 node "$REPO/lib/pw-remote-server.cjs" --root "$T/root" --port "$PORT" --host 127.0.0.1 > "$T/srv.log" 2>&1 & SRV_PID=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break; sleep 0.1; done
+r="$(up 'Playwright/1.63.0' "$GPU_LO")"
+check "--use-angle=d3d11, no Vulkan feature, the other args kept" \
+  bash -c '[[ "$1" == "200 "* && "$1" == *"--use-gl=angle"*"--use-angle=d3d11"*"--enable-unsafe-webgpu"* && "$1" != *Vulkan* && "$1" != *vulkan* ]]' _ "$r"
+r="$(up 'Playwright/1.63.0' '{"args":["--no-sandbox","--enable-features=Vulkan"]}')"
+check "..a launch without --use-angle=vulkan is untouched" bash -c '[[ "$1" == "200 "*"--enable-features=Vulkan"* ]]' _ "$r"
+r="$(up 'Playwright/1.63.0' '{"headless":true}')"
+check "..and one with no args at all" bash -c '[[ "$1" == "200 "*"{\\\"headless\\\":true}"* ]]' _ "$r"
 
 echo
 if [ "$FAILS" = 0 ]; then echo "$PASSES passed"; else echo "$FAILS FAILED, $PASSES passed"; fi

@@ -91,9 +91,11 @@ KEYS = {
     # How many e2e runs the machine takes at once (e2e-slot), the remote
     # slots whose browser runs on another machine (host:port,...), and which
     # kind a run tries first; the pc slots, whose whole run happens on a host
-    # named in hosts.conf (name or name:count,...).
+    # named in hosts.conf (name or name:count,...). REMOTE_GPU: what a remote
+    # slot's host does with a test's Vulkan flags (keep, or d3d11).
     "MUXTOPUS_E2E_SLOTS": "2",
     "MUXTOPUS_E2E_REMOTE": None,
+    "MUXTOPUS_E2E_REMOTE_GPU": None,
     "MUXTOPUS_E2E_PREFER": "remote",
     "MUXTOPUS_E2E_PC": None,
     # Where a scheduled entry without a `host:` runs: here (unset), a host

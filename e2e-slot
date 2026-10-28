@@ -35,6 +35,14 @@
 # (a remote run's node and dev server are still here). The command sees
 # E2E_SLOT_REMOTE=host:port on a remote slot, empty otherwise.
 #
+# MUXTOPUS_E2E_REMOTE_GPU (keep, the default, or d3d11; E2E_REMOTE_GPU for one
+# run) is what a remote slot's browser host does with a test's Linux GPU
+# flags. A test picks its ANGLE backend from THIS machine's platform, so it
+# asks for Vulkan; on a Windows host that gives WebGL but no WebGPU adapter.
+# d3d11 is exported to the command as PW_REMOTE_GPU, and the shim swaps
+# --use-angle=vulkan for --use-angle=d3d11 (docs/remote-e2e.md has the
+# measurements). A launch that asks for no GPU is never changed.
+#
 # PC SLOTS. MUXTOPUS_E2E_PC ("pc", "pc:2,gpu-box"; E2E_PC for one run) adds
 # slots on which the WHOLE run happens on another machine -- tree, node_modules,
 # dev server, test and browser -- named by hosts.conf (lib/hosts.sh), with
@@ -90,9 +98,10 @@ HERE="$(dirname "$(readlink -f "$0")")"
 # subshell -- read only when the environment does not say, and a broken or
 # missing profile.sh is the old two local slots, never an error.
 # shellcheck disable=SC1091
-{ IFS= read -r CFG_SLOTS; IFS= read -r CFG_REMOTE; IFS= read -r CFG_PREFER; IFS= read -r CFG_PC; } < <(
+{ IFS= read -r CFG_SLOTS; IFS= read -r CFG_REMOTE; IFS= read -r CFG_PREFER; IFS= read -r CFG_PC; IFS= read -r CFG_GPU; } < <(
   . "$HERE/profile.sh" >/dev/null 2>&1
-  printf '%s\n%s\n%s\n%s\n' "${MUXTOPUS_E2E_SLOTS:-}" "${MUXTOPUS_E2E_REMOTE:-}" "${MUXTOPUS_E2E_PREFER:-}" "${MUXTOPUS_E2E_PC:-}" )
+  printf '%s\n%s\n%s\n%s\n%s\n' "${MUXTOPUS_E2E_SLOTS:-}" "${MUXTOPUS_E2E_REMOTE:-}" "${MUXTOPUS_E2E_PREFER:-}" "${MUXTOPUS_E2E_PC:-}" \
+    "${MUXTOPUS_E2E_REMOTE_GPU:-}" )
 N="${E2E_SLOTS:-$CFG_SLOTS}"
 case "$N" in ''|*[!0-9]*|0) N=2 ;; esac
 [ "$N" -gt 26 ] && N=26
@@ -110,6 +119,13 @@ for r in ${RSPEC//,/ }; do
 done
 [ $((N + ${#REMOTES[@]})) -gt 26 ] && REMOTES=("${REMOTES[@]:0:$((26 - N))}")
 R=${#REMOTES[@]}
+# What a remote slot's host does with Vulkan GPU flags: keep them, or d3d11.
+REMOTE_GPU="${E2E_REMOTE_GPU-$CFG_GPU}"
+case "$REMOTE_GPU" in
+  ''|-|keep) REMOTE_GPU="" ;;
+  d3d11) ;;
+  *) echo "e2e-slot: ignoring remote GPU setting '$REMOTE_GPU' (want keep or d3d11)" >&2; REMOTE_GPU="" ;;
+esac
 # PC entries: name or name:count, names from hosts.conf. E2E_PC="" turns them
 # off for one run, like E2E_REMOTE.
 PCS=()
@@ -215,6 +231,7 @@ remote_env() {
   local hp="$1"
   export E2E_SLOT_REMOTE="$hp" PW_REMOTE_WS="ws://$hp/"
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require \"$SHIM\""
+  if [ -n "$REMOTE_GPU" ]; then export PW_REMOTE_GPU="$REMOTE_GPU"; else unset PW_REMOTE_GPU; fi
   echo "e2e-slot: slot $E2E_SLOT is remote: the browser runs on $hp" >&2
 }
 
