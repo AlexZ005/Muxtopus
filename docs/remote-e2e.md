@@ -44,7 +44,24 @@ Nothing in the lane changes. On a remote slot, `e2e-slot` puts `lib/pw-remote-sh
 - **`download.path()` works.** On a connected browser it throws ("Path is not available when connecting remotely"). The shim saves the download locally with `saveAs()` and returns that path.
 - **Some launches stay local**, with one line on stderr: `launchPersistentContext` (a profile directory on this disk), `headless: false`, firefox and webkit.
 - **If the server stops answering** after the slot was handed out, the browser is launched here instead: `remote browser at … failed (…); launching here instead`. `PW_REMOTE_FALLBACK=fail` makes it an error.
-- **Platform-dependent code sees this machine.** `process.platform` in the test is `linux` even though the browser runs on Windows, so a helper that picks an ANGLE backend by platform picks Linux's (`vulkan`), and Windows runs it. The GPU behind WebGL is the remote machine's. Measured on the first PC: without GPU flags both sides render on SwiftShader (the CPU), and with them the remote browser got `ANGLE (NVIDIA, Vulkan 1.4.351 (NVIDIA GeForce RTX 4090))` from the scheduled task's non-interactive session, against the Deck's `AMD Radeon 890M`. **Frame-rate and timing gates therefore belong on `--local` or `--exclusive`**, where the numbers mean this machine.
+- **Platform-dependent code sees this machine.** `process.platform` in the test is `linux` even though the browser runs on Windows, so a helper that picks an ANGLE backend by platform picks Linux's (`vulkan`), and Windows runs it. The GPU behind WebGL is the remote machine's. Measured on the first PC: without GPU flags both sides render on SwiftShader (the CPU), and with them the remote browser got `ANGLE (NVIDIA, Vulkan 1.4.351 (NVIDIA GeForce RTX 4090))` from the scheduled task's non-interactive session, against the Deck's `AMD Radeon 890M`. **Frame-rate and timing gates therefore belong on `--local` or `--exclusive`**, where the numbers mean this machine.  On a Windows host, WebGPU needs [the d3d11 setting](#the-gpu-on-a-windows-host).
+
+## The GPU on a Windows host
+
+A test picks its GPU flags from the platform of the machine its `node` runs on, so a Linux test machine asks for `--use-gl=angle --use-angle=vulkan --enable-features=Vulkan --enable-gpu --ignore-gpu-blocklist`, plus `--enable-unsafe-webgpu` for the WebGPU suites. Measured on a Windows desktop with an RTX 4090 as the browser host:
+
+| flags the browser got | WebGL | WebGPU (`navigator.gpu.requestAdapter()`) |
+|---|---|---|
+| none | SwiftShader | null |
+| the Linux ones (`--use-angle=vulkan`) | ANGLE Vulkan on the RTX 4090 | **null** |
+| `--use-angle=d3d11 --enable-unsafe-webgpu --ignore-gpu-blocklist --enable-gpu` | D3D11 on the RTX 4090 | nvidia / lovelace |
+| channel `chromium` (new headless) | none at all | — |
+
+So with the Linux flags the WebGPU suites fail or fall back. **`MUXTOPUS_E2E_REMOTE_GPU=d3d11`** fixes it: `e2e-slot` passes it to a remote run as `PW_REMOTE_GPU=d3d11`, and the shim sends `--use-angle=d3d11` instead of `--use-angle=vulkan`, drops `Vulkan` from `--enable-features` (and the switch, if nothing else is left in it) and keeps every other arg. It says so once on stderr: `pw-remote-shim: --use-angle=vulkan -> d3d11 on …`. `E2E_REMOTE_GPU=keep` or `d3d11` overrides it for one run.
+
+- **A launch that asks for no GPU is not changed.** It gets SwiftShader on any host, as before.
+- **A local fallback keeps Vulkan**, because then the browser runs on this machine after all.
+- **A server running on Windows does the same mapping itself** (`pw-remote-server.cjs`, from this version on). Keep the setting anyway for a host whose server predates it: the client's mapping reaches it without touching that machine.
 
 ## What it buys
 
