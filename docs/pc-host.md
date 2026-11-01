@@ -96,7 +96,9 @@ Tests that ask for a GPU pass ANGLE flags chosen for the machine they were writt
 | `--use-angle=vulkan` | `ANGLE (Mesa, Vulkan 1.4 (llvmpipe ...))` |
 | `--use-angle=gl-egl`, `GALLIUM_DRIVER=d3d12` | `ANGLE (Microsoft Corporation, D3D12 (<the card>), OpenGL ES 3.1)` |
 
-So with `gpu = auto` and a host that has `/dev/dxg` and the d3d12 driver, `lib/pw-pc-shim.cjs` turns a launch's `--use-angle=vulkan` into `gl-egl`, and the run gets `GALLIUM_DRIVER=d3d12`. A launch that asks for no GPU keeps SwiftShader, as it would anywhere else. On one GPU suite (animated-models) d3d12 took 36–40 s green, and llvmpipe 46 s, then 76 s red. `gpu = cpu` turns the mapping off. It is still not this machine's GPU, so **frame-rate and timing gates belong on `--local` or `--exclusive`**.
+So with `gpu = auto` and a host that has `/dev/dxg` and the d3d12 driver, `lib/pw-pc-shim.cjs` turns a launch's `--use-angle=vulkan` into `gl-egl`, and the run gets `GALLIUM_DRIVER=d3d12`. A launch that asks for no GPU keeps SwiftShader, as it would anywhere else. **`MUXTOPUS_E2E_GPU_ALL=on` changes that** (see below). On one GPU suite (animated-models) d3d12 took 36–40 s green, and llvmpipe 46 s, then 76 s red. `gpu = cpu` turns the mapping off. It is still not this machine's GPU, so **frame-rate and timing gates belong on `--local` or `--exclusive`**.
+
+**A whole battery on the GPU.** Most end-to-end suites never ask for a GPU, so on every kind of slot they render WebGL on SwiftShader, and that CPU rasteriser is most of what a slot costs a host. With `MUXTOPUS_E2E_GPU_ALL=on` such a launch takes the GPU path too. Measured on nine suites, one slot, one after another on a 24-core PC with an RTX-class card: 16 min on SwiftShader against 5 min on d3d12, every suite green both ways, the VM's CPU about 60 % against about 6 %, 6 frames a second against 60. A suite that needs software GL passes `--use-angle=swiftshader` itself, and the setting leaves it alone.
 
 ## What it buys
 
@@ -136,7 +138,7 @@ It imports a **new** distro from Ubuntu 24.04's WSL root filesystem into `-Root\
 
 `-Uninstall` removes those three and keeps the distro. `-Uninstall -RemoveDistro` also unregisters it, which **deletes its disk**.
 
-**Memory and processors** are one setting for the whole WSL VM, in `%UserProfile%\.wslconfig`, and applying it needs `wsl --shutdown`, which stops **every** distro. The script does not do it, because that is the PC owner's call. An example, with swap kept off the system disk:
+**Memory and processors** are one setting for the whole WSL VM, in `%UserProfile%\.wslconfig`, and applying it needs `wsl --shutdown`, which stops **every** distro. The distro does not come back by itself afterwards: the keep-alive task ended without a failure, so its restart rule does not fire. Run `Start-ScheduledTask <Distro>-keepalive` on the PC, or reboot it. The script does not do it, because that is the PC owner's call. An example, with swap kept off the system disk:
 
 ```ini
 [wsl2]

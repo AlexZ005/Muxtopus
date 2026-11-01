@@ -96,6 +96,7 @@ KEYS = {
     "MUXTOPUS_E2E_SLOTS": "2",
     "MUXTOPUS_E2E_REMOTE": None,
     "MUXTOPUS_E2E_REMOTE_GPU": None,
+    "MUXTOPUS_E2E_GPU_ALL": None,
     "MUXTOPUS_E2E_PREFER": "remote",
     "MUXTOPUS_E2E_PC": None,
     # Where a scheduled entry without a `host:` runs: here (unset), a host

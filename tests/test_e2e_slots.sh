@@ -20,7 +20,7 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/mxslots-XXXXXX")"
 HEALTH_PID=""
 trap '[ -n "$HEALTH_PID" ] && kill "$HEALTH_PID" 2>/dev/null; rm -rf "${T:?}"' EXIT
 export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" MUXTOPUS_CONFIG="$T/home/.config/muxtopus/config"
-unset E2E_SLOTS E2E_REMOTE E2E_PREFER E2E_REMOTE_GPU PW_REMOTE_GPU MUXTOPUS_E2E_SLOTS MUXTOPUS_E2E_REMOTE MUXTOPUS_E2E_PREFER MUXTOPUS_E2E_REMOTE_GPU NODE_OPTIONS MUXTOPUS_HOME MUXTOPUS_DIR CLAUDE_CONFIG_DIR
+unset E2E_SLOTS E2E_REMOTE E2E_PREFER E2E_REMOTE_GPU E2E_GPU_ALL PW_GPU_ALL PW_REMOTE_GPU MUXTOPUS_E2E_GPU_ALL MUXTOPUS_E2E_SLOTS MUXTOPUS_E2E_REMOTE MUXTOPUS_E2E_PREFER MUXTOPUS_E2E_REMOTE_GPU NODE_OPTIONS MUXTOPUS_HOME MUXTOPUS_DIR CLAUDE_CONFIG_DIR
 mkdir -p "$HOME/.config/muxtopus"; : > "$MUXTOPUS_CONFIG"
 export E2E_SLOT_LOCK="$T/lock"
 FAILS=0; PASSES=0
@@ -105,6 +105,19 @@ printf 'MUXTOPUS_E2E_SLOTS=2\nMUXTOPUS_E2E_REMOTE=127.0.0.1:%s\n' "$HPORT" > "$M
 check "E2E_REMOTE_GPU=d3d11 for one run" [ "$(E2E_REMOTE_GPU=d3d11 "$ES" -- bash -c "$gshow" 2>/dev/null)" = "C|d3d11" ]
 err="$(E2E_REMOTE_GPU=metal "$ES" -- bash -c "$gshow" 2>&1)"
 check "a value it does not know is said and treated as keep" bash -c 'grep -q "ignoring remote GPU setting .metal." <<<"$1" && grep -q "^C|unset$" <<<"$1"' _ "$err"
+
+echo "== MUXTOPUS_E2E_GPU_ALL reaches a remote or pc run as PW_GPU_ALL, never a local one"
+ashow='echo "$E2E_SLOT|${PW_GPU_ALL-unset}"'
+check "unset: no PW_GPU_ALL" [ "$("$ES" -- bash -c "$ashow" 2>/dev/null)" = "C|unset" ]
+check "E2E_GPU_ALL=on: the remote run sees it" [ "$(E2E_GPU_ALL=on "$ES" -- bash -c "$ashow" 2>/dev/null)" = "C|1" ]
+check "..a local run does not" [ "$(E2E_GPU_ALL=on "$ES" --local -- bash -c "$ashow" 2>/dev/null)" = "A|unset" ]
+check "..and a caller's stray PW_GPU_ALL is not passed to a local run" [ "$(PW_GPU_ALL=1 "$ES" --local -- bash -c "$ashow" 2>/dev/null)" = "A|unset" ]
+printf 'MUXTOPUS_E2E_SLOTS=2\nMUXTOPUS_E2E_REMOTE=127.0.0.1:%s\nMUXTOPUS_E2E_GPU_ALL=on\n' "$HPORT" > "$MUXTOPUS_CONFIG"
+check "on in the config: the remote run sees it" [ "$("$ES" -- bash -c "$ashow" 2>/dev/null)" = "C|1" ]
+check "E2E_GPU_ALL=off beats it for one run" [ "$(E2E_GPU_ALL=off "$ES" -- bash -c "$ashow" 2>/dev/null)" = "C|unset" ]
+printf 'MUXTOPUS_E2E_SLOTS=2\nMUXTOPUS_E2E_REMOTE=127.0.0.1:%s\n' "$HPORT" > "$MUXTOPUS_CONFIG"
+err="$(E2E_GPU_ALL=maybe "$ES" -- bash -c "$ashow" 2>&1)"
+check "a value it does not know is said and treated as off" bash -c 'grep -q "ignoring GPU-all setting .maybe." <<<"$1" && grep -q "^C|unset$" <<<"$1"' _ "$err"
 
 echo "== a remote host that does not answer is skipped"
 out="$(E2E_REMOTE="127.0.0.1:$DEAD" "$ES" -- bash -c "$show" 2>/dev/null)"

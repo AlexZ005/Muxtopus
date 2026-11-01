@@ -80,6 +80,41 @@ check "PW_REMOTE_FALLBACK=fail makes it an error" [ "$rc" != 0 ]
 (cd "$T/app" && NODE_OPTIONS="--require \"$REPO/lib/pw-remote-shim.cjs\"" node t.cjs) > "$T/out" 2> "$T/err"
 check "no PW_REMOTE_WS: the shim does nothing" bash -c "grep -q '\"how\":\"local\"' '$T/out' && ! grep -q connect '$T/out' && [ ! -s '$T/err' ]"
 
+echo "== the shims: PW_GPU_ALL hands a launch that names no GPU the host's GPU"
+cat > "$T/app/ga.cjs" <<'EOF2'
+const { chromium } = require('playwright');
+(async () => {
+  await chromium.launch({ args: ['--no-sandbox'] });
+  await chromium.launch({});
+  await chromium.launch({ args: ['--use-angle=swiftshader'] });
+  await chromium.launch({ args: ['--disable-gpu'] });
+  await chromium.launch({ args: ['--use-gl=angle', '--use-angle=vulkan', '--enable-features=Vulkan'] });
+  const sent = chromium.calls.filter((x) => x[0] === 'connect').map((x) => (JSON.parse(x[2].headers['x-playwright-launch-options']).args || []).join(' '));
+  const local = chromium.calls.filter((x) => x[0] === 'launch').map((x) => ((x[1] || {}).args || []).join(' '));
+  console.log(JSON.stringify({ sent, local }));
+})();
+EOF2
+run_ga() { (cd "$T/app" && NODE_OPTIONS="--require \"$REPO/lib/$1\"" node ga.cjs) > "$T/out" 2> "$T/err"; }
+gaout() { node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); console.log(r[process.argv[2]][+process.argv[3]] ?? "")' "$T/out" "$1" "$2"; }
+PW_REMOTE_WS=ws://pc:39001/ run_ga pw-remote-shim.cjs
+check "remote, PW_GPU_ALL unset: a launch with no GPU flag is left alone" [ "$(gaout sent 0)" = "--no-sandbox" ]
+PW_GPU_ALL=1 PW_REMOTE_WS=ws://pc:39001/ PW_REMOTE_GPU=d3d11 run_ga pw-remote-shim.cjs
+check "remote, on + d3d11: it gets the d3d11 path" [ "$(gaout sent 0)" = "--no-sandbox --use-gl=angle --use-angle=d3d11 --enable-gpu --ignore-gpu-blocklist --disable-dawn-features=use_dxc" ]
+check "..so does a launch with no args at all" [ "$(gaout sent 1)" = "--use-gl=angle --use-angle=d3d11 --enable-gpu --ignore-gpu-blocklist --disable-dawn-features=use_dxc" ]
+check "..a launch naming software GL keeps it (the opt-out)" [ "$(gaout sent 2)" = "--use-angle=swiftshader" ]
+check "..--disable-gpu keeps it too" [ "$(gaout sent 3)" = "--disable-gpu" ]
+PW_GPU_ALL=1 PW_REMOTE_WS=ws://pc:39001/ FAKE_CONNECT_FAILS=1 run_ga pw-remote-shim.cjs
+check "..a local fallback launches what the test asked for" [ "$(gaout local 0)" = "--no-sandbox" ]
+PW_PC_GPU=d3d12 run_ga pw-pc-shim.cjs
+check "pc, PW_GPU_ALL unset: a launch with no GPU flag is left alone" [ "$(gaout local 0)" = "--no-sandbox" ]
+PW_GPU_ALL=1 PW_PC_GPU=d3d12 run_ga pw-pc-shim.cjs
+check "pc, on: it gets gl-egl (the d3d12 driver)" [ "$(gaout local 0)" = "--no-sandbox --use-gl=angle --use-angle=gl-egl --enable-gpu --ignore-gpu-blocklist" ]
+check "..so does a launch with no args at all" [ "$(gaout local 1)" = "--use-gl=angle --use-angle=gl-egl --enable-gpu --ignore-gpu-blocklist" ]
+check "..a launch naming software GL keeps it (the opt-out)" [ "$(gaout local 2)" = "--use-angle=swiftshader" ]
+check "..a test's vulkan flags still map as before" [ "$(gaout local 4)" = "--use-gl=angle --use-angle=gl-egl" ]
+PW_GPU_ALL=1 run_ga pw-pc-shim.cjs
+check "..on a host with no d3d12 driver the shim stays out" [ "$(gaout local 0)" = "--no-sandbox" ]
+
 echo "== the shim: PW_REMOTE_GPU=d3d11 on a Windows host"
 # A launch with the Linux GPU flags a core suite passes, one with no GPU flag,
 # and the args each connect sent.
