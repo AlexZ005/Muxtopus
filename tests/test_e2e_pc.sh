@@ -125,6 +125,12 @@ out="$("$ES" -- bash -c "$show" 2>"$T/err")"
 check "a tree that is a checkout there (no marker): local A" [ "${out%%|*}" = A ]
 check "..saying why" grep -q 'is a folder of this machine.s own' "$T/err"
 cd "$TREE" || exit 1
+mkdir -p "$HOME/work/own/in" && echo mine > "$HOME/work/own/in/keep"
+out="$(MY_IN="$HOME/work/own/in" "$ES" -- bash -c "$show" 2>"$T/err")"
+check "an input that is a folder of its own there: local A, not the host's copy" [ "${out%%|*}" = A ]
+check "..naming the folder" grep -q "pc: pc: $HOME/work/own/in is a folder of this machine.s own" "$T/err"
+out="$(MY_IN="$HOME/work/own/in/keep" "$ES" -- bash -c "$show" 2>"$T/err")"
+check "a file input: still pc" [ "${out%%|*}" = C ]
 out="$(E2E_PC=dead "$ES" -- bash -c "$show" 2>"$T/err")"
 check "a dead host: local A" [ "${out%%|*}" = A ]
 check "..said once" [ "$(grep -c 'pc host dead does not answer' "$T/err")" = 1 ]
