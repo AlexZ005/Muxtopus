@@ -5,7 +5,8 @@
 #
 #   probe                         HOME, the GPU path, whether muxtopus is installed here
 #   claim d:<path>|f:<path>...    may a mirror be written there? ("ok"/"no <why>" lines; an
-#                                 ok folder gets its marker, an ok file its parent folder)
+#                                 ok folder gets its marker, an ok file its parent folder;
+#                                 the topmost folder a claim makes is marked)
 #   prep <dir>...                 node_modules for each dir, by its lockfile's hash
 #   serve <dir> <port> [<url>]    that dir's dev server on that port (lane-dev), warmed up
 #   status <port>                 is lane-dev running a server on it here (rc)
@@ -64,8 +65,29 @@ in_checkout() {
   return 1
 }
 
+# The topmost folder `mkdir -p "$1"` is about to make, if any may carry a
+# marker: one at least two levels under HOME (~/.code/x, never ~/.code -- a
+# marker there would make every later checkout under it a "mirror" that
+# rsync --delete may write over), or one under /tmp.
+first_missing() {
+  local p="$1" top=""
+  while [ -n "$p" ] && [ ! -e "$p" ]; do
+    case "$p" in "$HOME"/?*/?*|/tmp/?*) top="$p" ;; *) break ;; esac
+    p="${p%/*}"
+  done
+  printf '%s' "$top"
+}
+
+# THE FOLDERS A CLAIM MAKES ARE A MIRROR'S. A file input (a scene file deep
+# in a scenes checkout) used to have its parents made with a bare mkdir -p,
+# unmarked; the file landed in them, and the next run's FOLDER input over the
+# same tree (<scenes>/games) was then "a folder of this machine's own" -- every
+# pc run of a 550-suite battery was refused and went to slower slots (220 min
+# instead of about 50). A folder claim had the same hole one level up: its
+# missing ancestors were made unmarked. So the marker goes at the topmost
+# folder the claim made; a folder that was there before stays as it was.
 cmd_claim() {
-  local a p kind why
+  local a p kind why dir top
   for a in "$@"; do
     kind="${a%%:*}"; p="${a#?:}"; why=""
     case "$p" in "$HOME"/?*|/tmp/?*) ;; *) why="outside HOME and /tmp" ;; esac
@@ -75,8 +97,14 @@ cmd_claim() {
       fi
     fi
     if [ -n "$why" ]; then echo "no $p $why"; continue; fi
-    if [ "$kind" = d ]; then mkdir -p "$p" && { [ -e "$p/$MARK" ] || in_mirror "$p" || : > "$p/$MARK"; }
-    else mkdir -p "${p%/*}"; fi
+    if [ "$kind" = d ]; then dir="$p"; else dir="${p%/*}"; fi
+    top="$(first_missing "$dir")"
+    if mkdir -p "$dir"; then
+      if [ -n "$top" ]; then in_mirror "$top" || : > "$top/$MARK"
+      # An empty folder that was already there: a folder input may have it.
+      elif [ "$kind" = d ]; then in_mirror "$p" || : > "$p/$MARK"
+      fi
+    fi
     echo "ok $p"
   done
 }
