@@ -125,6 +125,12 @@ out="$("$ES" -- bash -c "$show" 2>"$T/err")"
 check "a tree that is a checkout there (no marker): local A" [ "${out%%|*}" = A ]
 check "..saying why" grep -q 'is a folder of this machine.s own' "$T/err"
 cd "$TREE" || exit 1
+mkdir -p "$HOME/work/own/in" && echo mine > "$HOME/work/own/in/keep"
+out="$(MY_IN="$HOME/work/own/in" "$ES" -- bash -c "$show" 2>"$T/err")"
+check "an input that is a folder of its own there: local A, not the host's copy" [ "${out%%|*}" = A ]
+check "..naming the folder" grep -q "pc: pc: $HOME/work/own/in is a folder of this machine.s own" "$T/err"
+out="$(MY_IN="$HOME/work/own/in/keep" "$ES" -- bash -c "$show" 2>"$T/err")"
+check "a file input: still pc" [ "${out%%|*}" = C ]
 out="$(E2E_PC=dead "$ES" -- bash -c "$show" 2>"$T/err")"
 check "a dead host: local A" [ "${out%%|*}" = A ]
 check "..said once" [ "$(grep -c 'pc host dead does not answer' "$T/err")" = 1 ]
@@ -188,6 +194,38 @@ check "a new folder: ok" grep -qx "ok $HOME/new/dir" <<<"$out"
 check "..and made" [ -d "$HOME/new/dir" ]
 check "a file inside a mirror: ok" grep -q "^ok $TREE/x.zip$" <<<"$out"
 check "outside HOME and /tmp: no" grep -q "^no /etc " <<<"$out"
+
+# The folders a claim MAKES are a mirror's, so a later folder input under them
+# is not "a folder of this machine's own". A battery mirrored one scene FILE
+# (<scenes>/games/pool.tpscene): its parents were made unmarked, the next run's
+# folder input <scenes>/games was refused, and every pc run of that battery
+# went to a slower slot. The rsync of the file is faked with a cp: the far
+# machine is this one.
+echo "== the claim: folders it makes are a mirror's"
+S="$HOME/lanes/scenes-x"
+out="$(bash "$R" claim "f:$S/games/pool.tpscene")"; echo x > "$S/games/pool.tpscene"
+check "a file in folders that are not there: ok" grep -qx "ok $S/games/pool.tpscene" <<<"$out"
+check "..the topmost folder made is marked" [ -f "$S/.muxtopus-mirror" ]
+check "..HOME's first level is never marked" [ ! -e "$HOME/lanes/.muxtopus-mirror" ]
+out="$(bash "$R" claim "d:$S/games" "d:$S")"
+check "..then a folder input under them: ok" grep -qx "ok $S/games" <<<"$out"
+check "..and the folder above it: ok" grep -qx "ok $S" <<<"$out"
+S2="$HOME/lanes/scenes-y"
+out="$(bash "$R" claim "d:$S2/games")"; echo x > "$S2/games/a.tpscene"
+check "a folder in folders that are not there: the topmost one made is marked" [ -f "$S2/.muxtopus-mirror" ]
+out="$(bash "$R" claim "f:$S2/games/pool.tpscene" "f:$S2/other/b.tpscene" "d:$S2")"
+check "..then a file inside it: ok" grep -qx "ok $S2/games/pool.tpscene" <<<"$out"
+check "..a file beside it: ok" grep -qx "ok $S2/other/b.tpscene" <<<"$out"
+check "..and the folder above both: ok" grep -qx "ok $S2" <<<"$out"
+# A folder that was already there, with things in it and no marker, is this
+# machine's own: a file claim may put a file in it, but never marks it.
+OWN="$HOME/lanes/real"; mkdir -p "$OWN/games"; echo mine > "$OWN/games/keep.tpscene"
+out="$(bash "$R" claim "f:$OWN/games/pool.tpscene" "f:$OWN/new/c.tpscene")"
+check "a file in a folder of its own: no marker there" bash -c "[ ! -e '$OWN/.muxtopus-mirror' ] && [ ! -e '$OWN/games/.muxtopus-mirror' ]"
+check "..a new folder under it is marked, not it" [ -f "$OWN/new/.muxtopus-mirror" ]
+out="$(bash "$R" claim "d:$OWN/games" "d:$OWN")"
+check "..that folder stays refused" grep -q "^no $OWN/games is a folder of this machine.s own" <<<"$out"
+check "..and the one above it" grep -q "^no $OWN is a folder of this machine.s own" <<<"$out"
 
 echo "== the copy-back list (the far half, directly)"
 echo 'export X=1' | bash "$R" envin t1; sleep 1.1

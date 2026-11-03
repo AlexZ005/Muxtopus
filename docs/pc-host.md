@@ -82,7 +82,9 @@ The command is run **as given**, in the same folder, and the same paths mean the
 
 **What stays there:** the mirror, `node_modules` and the warm dev server, ready for the next run. A `node_modules` cache nobody used for two weeks is removed.
 
-**The host's own checkouts are safe.** A mirror is written only where nothing is, or where a mirror already is (a `.muxtopus-mirror` marker at its top). A folder of the host's own, such as a lane that lives there or a git checkout, is never synced over. A run whose tree would be is refused, and an input that would be is left alone, so the run sees the host's copy and says so.
+**The host's own checkouts are safe.** A mirror is written only where nothing is, or where a mirror already is (a `.muxtopus-mirror` marker at its top). A folder of the host's own, such as a lane that lives there or a git checkout, is never synced over. A run whose tree or any of whose inputs would be is refused there and goes to another slot, naming the folder. The host's copy of an input is not used in its place, because it may be stale: an older mirror, or the host's own clone at the same path. Folders a mirror has to make, such as the parents of a single file input, get the marker on the topmost one it made, so a later folder input in the same tree is not taken for the host's own. A folder that was there before is never marked, and a folder directly under `HOME` never is.
+
+If an older muxtopus left such folders unmarked, a run refuses them as `a folder of this machine's own (no .muxtopus-mirror)`. Once you know a folder is only a mirror, `touch <folder>/.muxtopus-mirror` on the host clears it.
 
 **When muxtopus is installed on the host**, the run goes through that machine's own `e2e-slot --local`. Runs sent from here and lanes that live there then share that machine's slots, so neither side assumes all of its capacity.
 

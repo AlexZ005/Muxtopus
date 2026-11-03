@@ -249,6 +249,13 @@ cmd_run() {
   done
 
   # 2. MIRROR. The claim first: a folder of the far machine's own is never synced over.
+  # ANY refusal -- the tree's or an input's -- sends the run to another slot.
+  # An input the far side keeps would be read from ITS copy there: whatever an
+  # older mirror left, or that machine's own clone at the same path, which is
+  # a stale scenes or modules folder and a red nobody can explain. The first
+  # version meant to run on with the host's copy, but its "is this one of the
+  # trees" test was always true, so a refused input has always sent the run
+  # away; this says so on purpose.
   local t1 out ok_inputs=() line
   t1="$(now_ms)"
   local -a claims=()
@@ -256,10 +263,7 @@ cmd_run() {
   out="$(rq claim "${claims[@]}" "${inputs[@]}")" || { say "pc: $host did not answer the claim; not on $host"; return 76; }
   while IFS= read -r line; do
     case "$line" in
-      "no "*) for t in "${trees[@]}"; do
-                [ "${line#no }" != "${line#no "$t" }" ] && { say "pc: $host: ${line#no }; not on $host"; return 76; }
-              done
-              say "pc: not mirroring ${line#no } -- the run sees $host's own copy" ;;
+      "no "*) say "pc: $host: ${line#no }; not on $host"; return 76 ;;
       "ok "*) ok_inputs+=("${line#ok }") ;;
     esac
   done <<<"$out"

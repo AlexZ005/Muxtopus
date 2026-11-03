@@ -4,6 +4,29 @@ What a user of muxtopus would notice, one entry per release, newest first.
 Each entry is assembled from the `changes/*.md` fragments the lanes wrote;
 how that is done is [docs/releasing.md](docs/releasing.md).
 
+## v5.14.0 — 2026-11-03
+
+A minor release: two new settings (`MUXTOPUS_E2E_REMOTE_GPU`, `MUXTOPUS_E2E_GPU_ALL`) and one fix to pc slots. Nothing renamed, nothing removed.
+
+### e2e-slot
+#### e2e-slot: WebGPU on a Windows browser host
+
+- New setting `MUXTOPUS_E2E_REMOTE_GPU` (`keep`, the default, or `d3d11`; `E2E_REMOTE_GPU` for one run). With `d3d11`, a remote slot sends a test's `--use-angle=vulkan` as `--use-angle=d3d11` and drops the `Vulkan` feature. On a Windows browser host the Vulkan flags gave WebGL but no WebGPU adapter; d3d11 gives both. A launch that asks for no GPU is not changed.
+- `pw-remote-server.cjs` running on Windows now makes the same change itself, so a redeployed host needs no setting on the client.
+- On a Windows host the d3d11 mapping also turns off DXC (`--disable-dawn-features=use_dxc`), so WebGPU tests get a working device, not just an adapter
+
+#### e2e-slot: a whole battery on the host's GPU
+
+- New setting `MUXTOPUS_E2E_GPU_ALL` (`off`, the default, or `on`; `E2E_GPU_ALL` for one run). With `on`, a remote or pc slot gives a browser launch that names no GPU path the host's GPU instead of SwiftShader. On a PC with an RTX-class card nine suites took 5 minutes instead of 16, and the VM's CPU fell from about 60 % to about 6 %, so the same host can carry more slots.
+- A launch that names `--use-angle=`, `--use-gl=` or `--disable-gpu` keeps what it named, so a suite that needs software GL can stay on it.
+- `docs/pc-host.md` now says that a distro does not come back by itself after `wsl --shutdown`.
+
+#### e2e-slot: a file input no longer blocks the pc slot for later runs
+
+- A pc slot that mirrored a single file (a scene file inside a scenes checkout) made that file's folders on the host without the `.muxtopus-mirror` marker. A later run whose input was a folder in that tree was then refused as "a folder of this machine's own", and it waited for a slower slot every time. The folders a mirror makes now carry the marker on the topmost one, for file and folder inputs alike. A folder that was already on the host is still never marked, and still refused.
+- A run whose input the host refuses goes to another slot and names the folder. That is what it always did; the docs said the run would use the host's copy instead, and they now say what happens.
+- `docs/pc-host.md` says how to clear a folder an older version left unmarked: `touch <folder>/.muxtopus-mirror` on the host.
+
 ## v5.13.0 — 2026-10-26
 
 A minor release: one new setting (`WATCHDOG_LOST_RUN_NUDGE`, on by default) and two new `mux-done` options (`run --detach`, `stop`). Nothing renamed, nothing removed.
